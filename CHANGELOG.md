@@ -29,7 +29,6 @@ Clipboard history that can expire old items and a hidden Dynamic Island that sti
 - Focus follows mouse keeps Chrome's address bar suggestions and other pop-ups open when the pointer moves between them and their window.
 - App Switcher, Dock Preview and Watch pause window captures while macOS is slow to check the app's permission to see the screen, which could log you out under heavy load. Thumbnails also stop updating while the displays sleep or the screen is locked.
 - App Updates stops showing false updates for Private Internet Access, and lists apps it can't compare, such as Unified Remote and Android Studio, under Versions not compared.
-- When the window switcher replaces macOS ⌘Tab, the shortcut no longer goes dead while another app has secure input on, as password fields do. macOS's switcher answers until it turns off.
 
 ### Contributors
 Thanks to @andrewgribben, @bebricoOOOOOOf, @becastellani, @bharathvbcr, @cdbrandt729-code, @Chubi01, @Dusk-afk, @emreertunc, @iltonandrew, @jainnam-1993, @juanra, @Likheet, @marianhoenscheid, @mendozal, @mikeknight85, @mmoradi97, @mschoeffmann, @pedro-fontinele, @RKeyProg, @rohanod, @root-daemon, @StudioKeys and @webipsum.
