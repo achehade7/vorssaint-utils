@@ -1192,7 +1192,8 @@ struct PermissionRow: View {
 /// trigger then does nothing at all, while the snippet library and the
 /// Command Bar's typing actions beep; none of the four paths says what is
 /// wrong or who is holding it. This row is the only place the app explains
-/// that, and it names the holder when the session can attribute it.
+/// that. macOS never names the holder, only the app that was active when it
+/// turned on, so the row offers that app as a lead rather than as the holder.
 ///
 /// Both call sites instantiate it only once secure input is on, and the
 /// snippets page waits for one of its own toggles as well, so the `.off`

@@ -1986,8 +1986,8 @@ extension Strings {
         permissionRequest: "Conceder acesso",
         permissionRestartNote: "O macOS pode pedir para reabrir o app depois de conceder.",
         secureInputTitle: "A entrada segura está ativa",
-        secureInputHeldFormat: "%@ está mantendo-a ativa, então o Vorssaint não consegue digitar por você. Saia do campo de senha do app, ou encerre-o, para liberá-la.",
-        secureInputUnattributed: "Nenhum app em execução a reivindica. Encerre a sessão e entre novamente para limpá-la.",
+        secureInputHeldFormat: "%@ era o app em primeiro plano quando ela foi ligada e pode estar mantendo-a ativa, então o Vorssaint não consegue digitar por você. Saia do campo de senha do app, ou encerre-o, para liberá-la.",
+        secureInputUnattributed: "Não é possível dizer qual app a está mantendo ativa, então o Vorssaint não consegue digitar por você. Saia de qualquer campo de senha aberto, ou encerre a sessão e entre novamente, para limpá-la.",
         secureInputUnidentified: "Não foi possível identificar o app que a está mantendo ativa, então o Vorssaint não consegue digitar por você.",
         secureInputRevealFormat: "Mostrar %@",
 
@@ -3094,8 +3094,8 @@ extension Strings {
         permissionRequest: "Grant access",
         permissionRestartNote: "macOS may ask to reopen the app after granting.",
         secureInputTitle: "Secure input is on",
-        secureInputHeldFormat: "%@ is holding it, so Vorssaint cannot type for you. Dismiss its password field, or quit it, to release it.",
-        secureInputUnattributed: "No running app claims it. Log out and back in to clear it.",
+        secureInputHeldFormat: "%@ was the active app when it turned on and may be holding it, so Vorssaint cannot type for you. Dismiss its password field, or quit it, to release it.",
+        secureInputUnattributed: "The app holding it cannot be named, so Vorssaint cannot type for you. Dismiss any open password field, or log out and back in, to clear it.",
         secureInputUnidentified: "The app holding it could not be identified, so Vorssaint cannot type for you.",
         secureInputRevealFormat: "Show %@",
 

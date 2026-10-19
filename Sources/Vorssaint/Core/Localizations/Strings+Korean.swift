@@ -676,8 +676,8 @@ extension Strings {
         permissionRequest: "접근 허용",
         permissionRestartNote: "권한을 허용한 뒤 macOS에서 앱을 다시 열도록 요청할 수 있습니다.",
         secureInputTitle: "보안 입력이 켜져 있습니다",
-        secureInputHeldFormat: "%@이(가) 보안 입력을 유지하고 있어 Vorssaint가 대신 입력할 수 없습니다. 암호 필드에서 포커스를 옮기거나 앱을 종료하면 해제됩니다.",
-        secureInputUnattributed: "실행 중인 앱 중 보안 입력을 사용하는 앱이 없습니다. 로그아웃한 후 다시 로그인하면 해제됩니다.",
+        secureInputHeldFormat: "보안 입력이 켜질 때 %@이(가) 활성 앱이었으며, 이 앱이 보안 입력을 유지하고 있을 수 있어 Vorssaint가 대신 입력할 수 없습니다. 암호 필드에서 포커스를 옮기거나 앱을 종료하면 해제됩니다.",
+        secureInputUnattributed: "보안 입력을 유지하는 앱을 알 수 없어 Vorssaint가 대신 입력할 수 없습니다. 열려 있는 암호 필드에서 포커스를 옮기거나 로그아웃한 후 다시 로그인하면 해제됩니다.",
         secureInputUnidentified: "보안 입력을 유지하는 앱을 확인할 수 없어 Vorssaint가 대신 입력할 수 없습니다.",
         secureInputRevealFormat: "%@ 보기",
 

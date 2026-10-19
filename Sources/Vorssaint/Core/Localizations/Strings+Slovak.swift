@@ -675,8 +675,8 @@ extension Strings {
         permissionRequest: "Udeliť prístup",
         permissionRestartNote: "macOS môže po udelení požiadať o opätovné otvorenie aplikácie.",
         secureInputTitle: "Zabezpečený vstup je zapnutý",
-        secureInputHeldFormat: "Drží ho %@, takže Vorssaint nemôže písať za vás. Zavrite jeho pole s heslom alebo ho ukončite, aby ho uvoľnil.",
-        secureInputUnattributed: "Nehlási sa k nemu žiadna spustená aplikácia. Odhláste sa a znova prihláste, aby sa uvoľnil.",
+        secureInputHeldFormat: "Keď sa zapol, aktívnou aplikáciou bola %@ a možno ho drží, takže Vorssaint nemôže písať za vás. Zavrite jej pole s heslom alebo ju ukončite, aby ho uvoľnila.",
+        secureInputUnattributed: "Nedá sa určiť, ktorá aplikácia ho drží, takže Vorssaint nemôže písať za vás. Zavrite otvorené pole s heslom alebo sa odhláste a znova prihláste, aby sa uvoľnil.",
         secureInputUnidentified: "Aplikáciu, ktorá ho drží, sa nepodarilo identifikovať, takže Vorssaint nemôže písať za vás.",
         secureInputRevealFormat: "Zobraziť %@",
 

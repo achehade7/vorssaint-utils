@@ -675,8 +675,8 @@ extension Strings {
         permissionRequest: "アクセスを許可",
         permissionRestartNote: "許可後、macOS がアプリの再オープンを求めることがあります。",
         secureInputTitle: "セキュア入力がオンです",
-        secureInputHeldFormat: "%@ が保持しているため、Vorssaint が代わりに入力できません。パスワード欄からフォーカスを外すか、アプリを終了すると解除されます。",
-        secureInputUnattributed: "実行中のどのアプリも保持していません。ログアウトしてから再度ログインすると解除されます。",
+        secureInputHeldFormat: "オンになったときに最前面にあったのは %@ で、このアプリが保持している可能性があるため、Vorssaint が代わりに入力できません。パスワード欄からフォーカスを外すか、アプリを終了すると解除されます。",
+        secureInputUnattributed: "保持しているアプリを特定できないため、Vorssaint が代わりに入力できません。開いているパスワード欄からフォーカスを外すか、ログアウトしてから再度ログインすると解除されます。",
         secureInputUnidentified: "保持しているアプリを特定できないため、Vorssaint が代わりに入力できません。",
         secureInputRevealFormat: "%@ を表示",
 
