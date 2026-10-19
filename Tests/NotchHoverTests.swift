@@ -128,6 +128,7 @@ enum NotchHoverTests {
         var hiddenHoverMonitors: [Any] = []
         var hoverExitMonitors: [Any] = []
         var hoverWork: DispatchWorkItem?
+        var shelfDragExitWork: DispatchWorkItem?
         var captureHover: ((Bool) -> Void)?
         func updateCaptureControlsHover(wasInside: Bool) {}
         func updateCaptureControlsClickThrough() {}
@@ -844,6 +845,91 @@ enum NotchHoverTests {
         musicStripContracts(fixture: fixture, leave: leave, expect: expect)
         musicStripClickContracts(fixture: fixture, leave: leave, expect: expect)
         musicStripCapsuleSizingContracts(fixture: fixture, leave: leave, expect: expect)
+        shelfDragContracts(fixture: fixture, expect: expect)
+    }
+
+    /// A shelf tile dragged out of the open island closes it once the tile
+    /// stays out for the close delay, so what the island covers, such as a
+    /// browser's tabs, can take the drop.
+    private static func shelfDragContracts(fixture: (Bool) -> Service, expect: (Bool, String) -> Void) {
+        func dragging(physical: Bool = false) -> (Service, inside: CGPoint, outside: CGPoint) {
+            let service = fixture(physical)
+            service.open(.files, takeFocus: true)
+            service.heldDrag = true
+            let island = service.geometry.frame(for: service.surfaceSize)
+            // Just below the open island, where a browser's tabs sit.
+            return (service, CGPoint(x: island.midX, y: island.midY), CGPoint(x: island.midX, y: island.minY - 20))
+        }
+        func move(_ service: Service, to point: CGPoint) {
+            NSEvent.mouseLocation = point
+            service.shelfDragMoved(to: point)
+        }
+        for physical in [false, true] {
+            let (service, inside, outside) = dragging(physical: physical)
+            move(service, to: inside)
+            DispatchQueue.main.advance(1)
+            expect(service.expanded && service.closures == 0 && service.shelfDragExitWork == nil,
+                   "a tile dragged within the island keeps it open")
+            move(service, to: outside)
+            let exit = service.shelfDragExitWork
+            DispatchQueue.main.advance(0.1)
+            move(service, to: outside)
+            expect(exit != nil && service.shelfDragExitWork === exit && service.expanded,
+                   "further moves outside keep the first deadline")
+            move(service, to: inside)
+            DispatchQueue.main.advance(1)
+            expect(service.expanded && service.closures == 0 && service.heldDrag,
+                   "a tile brought back before the close delay keeps the island open")
+            move(service, to: outside)
+            DispatchQueue.main.advance(0.1)
+            move(service, to: inside)
+            DispatchQueue.main.advance(0.05)
+            move(service, to: outside)
+            DispatchQueue.main.advance(0.1)
+            expect(service.expanded, "leaving again starts the close delay over")
+            move(service, to: inside)
+            DispatchQueue.main.advance(1)
+            move(service, to: outside)
+            DispatchQueue.main.advance(0.17)
+            expect(service.expanded, "the island waits for the close delay before stepping aside")
+            DispatchQueue.main.advance(0.02)
+            expect(!service.expanded && service.closures == 1 && !service.heldDrag
+                   && service.shelfDragExitWork == nil,
+                   "a tile that stays out closes the island on either display and lets the drag go on without it")
+            move(service, to: outside)
+            expect(service.shelfDragExitWork == nil, "a closed island has nothing left to close")
+        }
+
+        let slow = dragging()
+        UserDefaults.standard.closeDelay = 0.6
+        move(slow.0, to: slow.outside)
+        DispatchQueue.main.advance(0.5)
+        expect(slow.0.expanded, "a longer close delay keeps the island a little longer")
+        DispatchQueue.main.advance(0.11)
+        expect(!slow.0.expanded, "the island steps aside after the chosen close delay")
+
+        // Pinning, a menu or dialog, or a popover under the pointer keeps the
+        // island, as an ending drag does.
+        let protections: [(Service, CGPoint) -> Void] = [
+            { service, _ in service.pinned = true },
+            { service, _ in service.keepsWorkingSurface = true },
+            { service, outside in service.childWindowFrames = [CGRect(x: outside.x - 50, y: outside.y - 50,
+                                                                     width: 100, height: 100)] },
+            { service, _ in service.heldDrag = false },
+        ]
+        for protect in protections {
+            let held = dragging()
+            protect(held.0, held.outside)
+            move(held.0, to: held.outside)
+            DispatchQueue.main.advance(1)
+            expect(held.0.expanded && held.0.closures == 0,
+                   "pinning, a menu or dialog, a popover or a finished drag keeps the island open")
+        }
+        let ended = dragging()
+        move(ended.0, to: ended.outside)
+        ended.0.heldDrag = false
+        DispatchQueue.main.advance(1)
+        expect(ended.0.expanded && ended.0.closures == 0, "a drag that ends before the delay leaves the island alone")
     }
 
     /// The production capsule sizing branch must measure the same song the
