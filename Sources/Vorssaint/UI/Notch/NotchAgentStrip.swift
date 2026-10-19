@@ -33,8 +33,8 @@ struct NotchAgentStrip: View {
         let geometry = displayGeometry ?? service.compactActivityGeometry
         let working = working(live)
         let tint = working.first?.tint ?? .white
-        let budget = geometry.compactActivityContentHeight - NotchLayout.compactEdgeGap * 2
-        let iconSize = min(working.count > 1 ? 11.0 : 14.0, max(8, budget - 4))
+        let iconSize = NotchTimerSupport.stripAgentMarkSize(height: geometry.compactActivityContentHeight,
+                                                          working: working.count)
         let textSize = NotchAgentSupport.stripTextSize(height: geometry.compactActivityContentHeight)
         let iconInset = !geometry.compactActivityUsesFooter
             ? geometry.compactActivityEdgeInset(boxHeight: iconSize + 4, radius: (iconSize + 4) / 2) : 0

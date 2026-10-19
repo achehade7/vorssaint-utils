@@ -177,6 +177,8 @@ struct NotchView: View {
                 NotchIconButton(symbol: "chevron.down", title: text.open) { service.open() }
             }
             .padding(.horizontal, NotchLayout.horizontalInset).padding(.top, service.geometry.safeContentTop)
+        } else if service.showsAeroSpace {
+            NotchAeroSpaceStrip(service: service)
         } else if let activity = service.compactActivity {
             if service.showsCompactActivityPicker {
                 let layout = service.compactActivityPickerLayout
@@ -382,24 +384,56 @@ struct NotchView: View {
         return notice
     }
 
+    private var showsWorkspaceHeader: Bool {
+        service.showingSections && service.aeroSpaceOpensOnHover
+    }
+
+    private var workspaceButtons: some View {
+        HStack(spacing: 4) {
+            ForEach(NotchAeroSpaceState.workspaces, id: \.self) { workspace in
+                let active = workspace == NotchAeroSpaceService.shared.state.current
+                Button { NotchAeroSpaceService.shared.select(workspace) } label: {
+                    Text(workspace)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(active ? Color.orange : .white.opacity(0.65))
+                        .frame(width: 22, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("AeroSpace " + workspace)
+                .accessibilityAddTraits(active ? .isSelected : [])
+            }
+        }
+        .fixedSize()
+        .padding(.trailing, 2)
+        .accessibilityIdentifier("notch.aerospace.workspaces")
+    }
+
     private var header: some View {
         HStack(spacing: service.expandedGeometry.headerCameraGap > 0 ? 0 : 6) {
             let quickActions = NotchQuickAccessConfiguration.current().actions
             HStack(spacing: 6) {
                 if service.showingSections {
-                    NotchIconButton(symbol: "chevron.left", title: l10n.s.obBack, action: service.toggleSections)
-                    if service.expandedGeometry.headerCameraGap == 0 {
+                    if showsWorkspaceHeader {
+                        NotchIconButton(symbol: "chevron.left", title: l10n.s.obBack, action: service.toggleSections)
+                        workspaceButtons
+                    } else {
+                        NotchIconButton(symbol: "chevron.left", title: l10n.s.obBack, action: service.toggleSections)
+                    }
+                    if service.expandedGeometry.headerCameraGap == 0 && !showsWorkspaceHeader {
                         Text(text.sectionsTitle)
                             .font(.system(size: 16, weight: .semibold))
                             .lineLimit(1)
                             .layoutPriority(-1)
                     }
-                    // Beside the camera the field takes the rest of its side,
-                    // stopping a little short of the cutout.
-                    NotchSectionSearch(service: service,
-                                       maximumFieldWidth: service.expandedGeometry.headerCameraGap > 0 ? .infinity : 150)
-                        .padding(.trailing, service.expandedGeometry.headerCameraGap > 0 ? 6 : 0)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if !showsWorkspaceHeader {
+                        // Beside the camera the field takes the rest of its side,
+                        // stopping a little short of the cutout.
+                        NotchSectionSearch(service: service,
+                                           maximumFieldWidth: service.expandedGeometry.headerCameraGap > 0 ? .infinity : 150)
+                            .padding(.trailing, service.expandedGeometry.headerCameraGap > 0 ? 6 : 0)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 } else if showsDetail || service.modules.isEmpty {
                     if showsDetail {
                         NotchIconButton(symbol: "chevron.left", title: l10n.s.obBack, action: service.goBack)
@@ -410,7 +444,7 @@ struct NotchView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     if !quickActions.contains(.explore) {
-                        NotchIconButton(symbol: "square.grid.2x2", title: text.sectionsTitle, action: service.toggleSections)
+                        NotchIconButton(symbol: "house", title: text.sectionsTitle, action: service.toggleSections)
                     }
                     Text(service.selected.title(l10n.language))
                         .font(Font(NotchLayout.headerTitleFont as CTFont))
@@ -418,7 +452,8 @@ struct NotchView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .frame(width: service.expandedGeometry.headerCameraGap > 0 ? (service.contentSize.width - service.expandedGeometry.headerCameraGap) / 2 : nil)
+            .frame(width: service.expandedGeometry.headerCameraGap > 0 ? (service.contentSize.width - service.expandedGeometry.headerCameraGap) / 2 : nil,
+                   alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             // Keep search mounted so a media key never discards its focus.
             .opacity(headerFeedback == nil ? 1 : 0)
@@ -432,6 +467,11 @@ struct NotchView: View {
                 Color.clear.frame(width: service.expandedGeometry.headerCameraGap)
             }
             HStack(spacing: 6) {
+                if showsWorkspaceHeader {
+                    NotchSectionSearch(service: service, maximumFieldWidth: 150)
+                        .padding(.leading, service.expandedGeometry.headerCameraGap > 0 ? 6 : 0)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 if service.selected == .captures, !showsDetail, !service.showingSections,
                    let actions = service.captureActions {
                     actions.fixedSize()

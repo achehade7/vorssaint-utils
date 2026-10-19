@@ -825,6 +825,8 @@ enum DefaultsKey {
     static let notchKeyboardLight = "notchKeyboardLight"
     static let notchNotificationsEnabled = "notchNotificationsEnabled"
     static let notchDismissNativeNotifications = "notchDismissNativeNotifications"
+    static let notchNotificationWidth = "notchNotificationWidth"
+    static let notchAeroSpaceEnabled = "notchAeroSpaceEnabled"
     static let notchTimerEnabled = "notchTimerEnabled"
     static let notchTimerMode = "notchTimerMode"
     static let notchTimerMinutes = "notchTimerMinutes"
@@ -1417,6 +1419,8 @@ enum Defaults {
         DefaultsKey.notchKeyboardLight: true,
         DefaultsKey.notchNotificationsEnabled: true,
         DefaultsKey.notchDismissNativeNotifications: false,
+        DefaultsKey.notchNotificationWidth: NotchNotificationBannerLayout.defaultWidth,
+        DefaultsKey.notchAeroSpaceEnabled: false,
         DefaultsKey.notchTimerEnabled: true,
         DefaultsKey.notchTimerMode: NotchTimerMode.timer.rawValue,
         DefaultsKey.notchTimerMinutes: 15,

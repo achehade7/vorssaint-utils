@@ -406,7 +406,66 @@ enum NotchPresentationProbe {
         exit(failures.isEmpty ? 0 : 1)
     }
 
+    private static func runWorkspaceBadgeAndExit() -> Never {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        guard let screen = NSScreen.main else { print("WORKSPACE BADGE FAILED: no display"); exit(1) }
+        var geometry = NotchGeometry(screen: screen.frame, safeAreaTop: screen.safeAreaInsets.top,
+                                     cameraWidth: screen.safeAreaInsets.top > 0 ? 185 : 0)
+        let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed,
+                                  background: surface, quickAccess: quickAccess)
+        host.panel.alphaValue = 0
+        host.panel.ignoresMouseEvents = true
+        host.panel.orderFrontRegardless()
+        var failures: [String] = []
+        for size in [geometry.collapsed, CGSize(width: 650, height: geometry.stripHeight), geometry.expanded] {
+            geometry.surfaceShift = size.width == 650 ? 80 : 0
+            host.present(size: size, geometry: geometry, animated: false, workspaceBadge: true)
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.04))
+            guard let badge = host.workspaceBadgeProbeFrame else {
+                failures.append("workspace badge missing"); continue
+            }
+            if abs(host.contentCanvasSize.width - size.width) > 0.5 {
+                failures.append("workspace badge changes the live content width")
+            }
+            if badge.maxX > host.visibleFrame.minX || !host.panel.frame.contains(badge) {
+                failures.append("workspace badge overlaps content or escapes the window")
+            }
+            if let surface = host.workspaceSurfaceProbeFrame {
+                if abs(surface.minX - (host.visibleFrame.minX - 36)) > 0.5
+                    || abs(surface.maxX - host.visibleFrame.maxX) > 0.5
+                    || abs(surface.height - size.height) > 0.5 {
+                    failures.append("workspace surface is not joined to the island")
+                }
+                let point = CGPoint(x: badge.midX - surface.minX, y: surface.maxY - badge.midY)
+                if !NotchShape.island(height: surface.height, geometry: geometry)
+                    .path(in: CGRect(origin: .zero, size: surface.size)).contains(point) {
+                    failures.append("workspace text sits outside the joined island shape")
+                }
+            } else { failures.append("workspace surface missing") }
+            let center = CGPoint(x: badge.midX, y: badge.midY)
+            if !host.contains(center) || !host.containsHover(center) {
+                failures.append("workspace badge must accept clicks and keep the island's hover active")
+            }
+        }
+        geometry.surfaceShift = 0
+        host.present(size: geometry.expanded, geometry: geometry, animated: false, workspaceBadge: false)
+        if abs(host.panel.frame.midX - screen.frame.midX) > 0.5
+            || abs(host.panel.frame.width - geometry.expanded.width) > 0.5 {
+            failures.append("the open island keeps an asymmetric workspace extension")
+        }
+        host.present(size: geometry.collapsed, geometry: geometry, animated: false, workspaceBadge: false)
+        if host.workspaceBadgeProbeFrame != nil || host.workspaceSurfaceProbeFrame != nil {
+            failures.append("disabled workspace badge remains visible or interactive")
+        }
+        host.hide(animated: false)
+        if host.panel.isVisible { failures.append("workspace badge keeps the hidden island visible") }
+        if failures.isEmpty { print("WORKSPACE BADGE OK: resting, notification, expanded, hit testing and hiding"); exit(0) }
+        failures.forEach { print("WORKSPACE BADGE FAILED: " + $0) }
+        exit(1)
+    }
+
     static func runAndExit() -> Never {
+        if CommandLine.arguments.contains("--workspace-badge") { runWorkspaceBadgeAndExit() }
         if CommandLine.arguments.contains("--media-layout") { NotchMediaPresentationProbe.runAndExit() }
         if CommandLine.arguments.contains("--mission-control") { runMissionControlAndExit() }
         if let index = CommandLine.arguments.firstIndex(of: "--preview-notice"),

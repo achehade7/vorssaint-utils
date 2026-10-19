@@ -14,6 +14,8 @@ struct NotchSettings: View {
     @AppStorage(DefaultsKey.notchKeyboardLight) private var keyboardLight = true
     @AppStorage(DefaultsKey.notchNotificationsEnabled) private var notificationsEnabled = true
     @AppStorage(DefaultsKey.notchDismissNativeNotifications) private var dismissNativeNotifications = false
+    @AppStorage(DefaultsKey.notchNotificationWidth) private var notificationWidth = NotchNotificationBannerLayout.defaultWidth
+    @AppStorage(DefaultsKey.notchAeroSpaceEnabled) private var aeroSpaceEnabled = false
     @AppStorage(DefaultsKey.notchTimerEnabled) private var timerEnabled = true
     @AppStorage(DefaultsKey.notchTimerSoundEnabled) private var timerSoundEnabled = true
     @AppStorage(DefaultsKey.notchHideTimerCountdown) private var hideTimerCountdown = false
@@ -109,7 +111,7 @@ struct NotchSettings: View {
 
     private var configuration: [String] {
         [String(enabled), String(calendarEnabled), String(calendarCountdown), String(calendarTimeLeft),
-         String(notificationsEnabled), String(dismissNativeNotifications), String(gesturesEnabled),
+         String(notificationsEnabled), String(dismissNativeNotifications), String(notificationWidth), String(aeroSpaceEnabled), String(gesturesEnabled),
          String(lyricsEnabled), String(lyricsOnline), String(queueEnabled), String(liveEqualizer),
          String(showPlayingMusic), String(includeOtherPlayers), idle, hiddenControls, controlOrder, size,
          String(timerEnabled), String(timerSoundEnabled), String(hideTimerCountdown),
@@ -216,6 +218,7 @@ struct NotchSettings: View {
 
     private var layoutPage: some View {
         VStack(alignment: .leading, spacing: 20) {
+            switchRow("square.grid.2x2", "AeroSpace", isOn: $aeroSpaceEnabled)
             NotchLayoutEditor(configuration: access, size: $size, width: $customWidth, height: $customHeight) {
                 selectedModule = .controls; tab = .content
             }
@@ -437,6 +440,11 @@ struct NotchSettings: View {
                                      isOn: $liveEqualizer, feature: .notchLiveEqualizer, enabled: NotchAudioLevelSupport.isSupported)
         case .notifications:
             let notifications = FeatureStrings.notchNotifications(l10n.language)
+            Grid(horizontalSpacing: 12, verticalSpacing: 8) {
+                dimensionSlider(text.width, value: $notificationWidth,
+                                range: NotchNotificationBannerLayout.widthRange,
+                                fallback: NotchNotificationBannerLayout.defaultWidth)
+            }
             switchRow("bell.slash", notifications.hideSystemBanner, caption: notifications.hideSystemBannerHint,
                       isOn: $dismissNativeNotifications)
             if notificationsEnabled, !permissions.accessibility { PermissionRow(kind: .accessibility) }

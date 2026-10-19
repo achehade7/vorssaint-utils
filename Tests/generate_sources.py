@@ -830,6 +830,8 @@ def main():
                      + '        default: preconditionFailure("Only music is measured by this fixture")\n'
                      + "        }\n    }\n#sourceLocation()\n")
     write("NotchHover.swift", "import AppKit\nextension NotchHoverTests {\nfinal class Service: State {\n"
+          + declaration(notch, "    var aeroSpaceOpensOnHover:").replace("NotchAeroSpaceService.shared.state", "aeroSpaceState")
+          + declaration(notch, "    var showsAeroSpace:").replace("NotchAeroSpaceService.shared.state", "aeroSpaceState")
           + declaration(notch, "    func show(_ incoming:").replace("NotchSupport.routes(incoming.event)", "true")
             .replace("    func", "    @discardableResult\n    func", 1)
           + "".join(declaration(notch, prefix).replace("    private ", "    ", 1) for prefix in [
@@ -961,6 +963,7 @@ def main():
           + declaration(notch, "    private func compactMusicTransition(").replace("private func", "func", 1)
           + declaration(notch, "    private func rememberPresentedMusic(").replace("private func", "func", 1)
           + declaration(notch, "    private func switchCompactSelection(").replace("private func", "func", 1)
+          + declaration(notch, "    var showsAeroSpaceBadge:").replace("NotchAeroSpaceService.shared.state", "aeroSpaceState").replace("ProcessInfo.processInfo.systemUptime", "aeroSpaceNow")
           + declaration(notch, "    func refreshPresentation(")
               .replace("NotchSupport.coversMenus()", "UserDefaults.standard.coversMenus")
           + declaration(notch, "    private func applyMenuSpace(").replace("private func", "func", 1)

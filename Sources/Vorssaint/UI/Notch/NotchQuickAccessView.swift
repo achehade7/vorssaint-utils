@@ -11,6 +11,17 @@ final class NotchQuickAccessMotion: ObservableObject {
     @Published private(set) var interactive = false
     @Published private(set) var configuration = NotchQuickAccessConfiguration(side: .left, actions: [.explore])
     @Published private(set) var placements: [NotchQuickAccessPlacement] = []
+    @Published private(set) var workspaceBadgeFrame: CGRect?
+    @Published private(set) var workspaceSurfaceFrame: CGRect?
+
+    func setWorkspaceBadge(_ frame: CGRect?, surface: CGRect?, animated: Bool) {
+        guard workspaceBadgeFrame != frame || workspaceSurfaceFrame != surface else { return }
+        withAnimation(animated && workspaceBadgeFrame != nil ? .smooth(duration: 0.2) : nil) {
+            workspaceBadgeFrame = frame
+            workspaceSurfaceFrame = surface
+        }
+    }
+
     private var bodyFrame = CGRect.zero
     private var visible = false
     private var generation = 0
@@ -53,7 +64,8 @@ final class NotchQuickAccessMotion: ObservableObject {
     }
 
     func contains(_ point: CGPoint) -> Bool {
-        interactive && placements.contains { value in
+        if workspaceBadgeFrame?.contains(point) == true { return true }
+        return interactive && placements.contains { value in
             let center = value.center(progress: 1)
             return hypot(point.x - center.x, point.y - center.y) <= NotchQuickAccessLayout.diameter / 2
         }
@@ -105,6 +117,34 @@ struct NotchQuickAccessView: View {
         .tint(.white)
         .allowsHitTesting(motion.interactive)
         .accessibilityHidden(!motion.interactive)
+        .background(alignment: .topLeading) {
+            if let frame = motion.workspaceSurfaceFrame {
+                NotchShape.island(height: frame.height, geometry: service.geometry)
+                    .fill(.black)
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: frame.midY)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if let frame = motion.workspaceBadgeFrame,
+               let current = NotchAeroSpaceService.shared.state.current {
+                NotchMenuButton(title: "AeroSpace", items: NotchAeroSpaceState.workspaces.map { workspace in
+                    NotchMenuItem(title: workspace, checked: workspace == current) {
+                        NotchAeroSpaceService.shared.select(workspace)
+                    }
+                }, cornerRadius: 8) {
+                    Text(current)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .frame(width: frame.width, height: frame.height)
+                        .contentShape(Rectangle())
+                }
+                .position(x: frame.midX, y: frame.midY)
+                .accessibilityLabel("AeroSpace " + current)
+                .accessibilityIdentifier("notch.aerospace.current")
+            }
+        }
     }
 
     private func bubble(_ button: NotchQuickButton) -> some View {
@@ -125,6 +165,7 @@ struct NotchQuickAccessView: View {
         var symbol = action.symbol
         switch action {
         case .explore where isBack: symbol = "arrow.uturn.backward"
+        case .settings: actionTitle = "System Settings"
         case .pin:
             actionTitle = service.pinned ? FeatureStrings.notch(l10n.language).unpin : FeatureStrings.notch(l10n.language).pin
             if service.pinned { symbol = "pin.fill" }
@@ -137,10 +178,27 @@ struct NotchQuickAccessView: View {
         }
         let title = isBack ? l10n.s.obBack : button.label.isEmpty ? actionTitle : button.label
         return Button {
-            service.activateQuickAction(action)
+            if action == .settings {
+                service.perform {
+                    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.systempreferences") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            } else {
+                service.activateQuickAction(action)
+            }
         } label: {
-            Image(systemName: symbol)
-                .font(.system(size: 17, weight: .medium))
+            Group {
+                if action == .settings {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: "/System/Applications/System Settings.app"))
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 24, height: 24)
+                } else {
+                    Image(systemName: symbol)
+                        .font(.system(size: 17, weight: .medium))
+                }
+            }
                 .frame(width: NotchQuickAccessLayout.diameter, height: NotchQuickAccessLayout.diameter)
                 // In glass the drop beneath carries the island's shade, which
                 // the window server does not count as the window's own pixels:

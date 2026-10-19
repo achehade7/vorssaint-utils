@@ -131,6 +131,7 @@ enum NotchPresentationRefreshContract {
         var usesGlass = false
         var revealFromHidden = false
         var steady = false
+        var workspaceBadge = false
         var outlineEnabled = false
         var outlineColor = NSColor.white
         var transitions: [NotchContentTransition] = []
@@ -140,9 +141,10 @@ enum NotchPresentationRefreshContract {
         }
         func present(size: CGSize, geometry: NotchGeometry, animated: Bool,
                      transitionContent: NotchContentTransition, quickAccess: NotchQuickAccessConfiguration?,
-                     revealFromHidden: Bool, usesGlass: Bool, steady: Bool) {
+                     revealFromHidden: Bool, usesGlass: Bool, steady: Bool, workspaceBadge: Bool) {
             transitions.append(transitionContent)
             self.steady = steady
+            self.workspaceBadge = workspaceBadge
             departsContent = transitionContent == .depart
             self.usesGlass = usesGlass
             self.revealFromHidden = revealFromHidden
@@ -157,11 +159,15 @@ enum NotchPresentationRefreshContract {
         }
     }
     class State: ObservableObject {
+        var showsAeroSpace = false
         var noticeFitsInPlace = false
         var activitySelection = NotchActivitySelection()
         var compactActivities: [NotchCompactActivity] = []
         func compactCompanions(of primary: NotchCompactActivity) -> [NotchCompactActivity] { [] }
         var showsCompactActivityPicker = false
+        var aeroSpaceOpensOnHover = false
+        var aeroSpaceState = NotchAeroSpaceState()
+        var aeroSpaceNow: TimeInterval = 10
         var hiddenInFullscreen = false
         var fullscreenCompact: Bool { hiddenInFullscreen && !expanded && !peeking }
         let objectWillChange = ObservableObjectPublisher()
@@ -417,6 +423,32 @@ enum NotchPresentationRefreshContract {
             UserDefaults.standard.hides = false
             UserDefaults.standard.outline = false
         }
+        let workspaces = Service()
+        workspaces.aeroSpaceOpensOnHover = true
+        _ = workspaces.aeroSpaceState.receive(Data(#"{"_event":"focused-workspace-changed","workspace":"1"}"#.utf8), now: 10)
+        workspaces.expanded = false
+        workspaces.refreshPresentation(animated: false)
+        suite.expect(workspaces.windowHost?.workspaceBadge == false,
+                     "the resting island hides its current-workspace badge")
+        _ = workspaces.aeroSpaceState.receive(Data(#"{"_event":"focused-workspace-changed","workspace":"G"}"#.utf8), now: 10)
+        workspaces.refreshPresentation(animated: false)
+        suite.expect(workspaces.windowHost?.workspaceBadge == true,
+                     "switching workspaces reveals the current badge alongside live content")
+        workspaces.hiddenInFullscreen = true
+        workspaces.refreshPresentation(animated: false)
+        suite.expect(workspaces.windowHost?.workspaceBadge == false,
+                     "workspace flashes stay hidden in full screen")
+        workspaces.hiddenInFullscreen = false
+        workspaces.expanded = true
+        workspaces.refreshPresentation(animated: false)
+        suite.expect(workspaces.windowHost?.workspaceBadge == false,
+                     "opening moves workspaces into the header without a left-side extension")
+        workspaces.expanded = false
+        workspaces.aeroSpaceNow = 12
+        workspaces.refreshPresentation(animated: false)
+        suite.expect(workspaces.windowHost?.workspaceBadge == false,
+                     "the workspace badge disappears after its two-second flash")
+
         let outlined = Service()
         outlined.expanded = false
         UserDefaults.standard.outline = true

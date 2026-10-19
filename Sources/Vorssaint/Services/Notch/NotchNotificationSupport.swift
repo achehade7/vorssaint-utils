@@ -171,7 +171,14 @@ enum NotchNotificationSupport {
 enum NotchNotificationBannerLayout {
     static let iconSize: CGFloat = 22
     static let spacing: CGFloat = 8
-    static let wingRange: ClosedRange<CGFloat> = NotchNotice.minimumWing...190
+    static let defaultWidth = 190.0
+    static let widthRange = 190.0...480.0
+    static var wingRange: ClosedRange<CGFloat> { NotchNotice.minimumWing...CGFloat(maximumWidth()) }
+
+    static func maximumWidth(in defaults: UserDefaults = .standard) -> Double {
+        NotchSize.clamped(defaults.object(forKey: DefaultsKey.notchNotificationWidth) as? Double ?? defaultWidth,
+                          to: widthRange, fallback: defaultWidth)
+    }
     /// The inset from the island's curved end, and a little air so the
     /// fitted text never truncates where SwiftUI rounds its width.
     static let inset: CGFloat = 16
@@ -186,7 +193,9 @@ enum NotchNotificationBannerLayout {
     /// The sender and the message each take a side as wide as they need. A
     /// message that wraps takes the width its lines need once wrapped at the
     /// widest side, not the whole side.
-    static func wings(for content: NotchNotificationContent, wrapsMessage: Bool = false) -> NotchNoticeWings {
+    static func wings(for content: NotchNotificationContent, wrapsMessage: Bool = false,
+                      in defaults: UserDefaults = .standard) -> NotchNoticeWings {
+        let wingRange = NotchNotice.minimumWing...CGFloat(maximumWidth(in: defaults))
         func width(_ text: String, _ font: NSFont) -> CGFloat {
             // A line or two is all the banner shows, and the widest wing is
             // reached long before this much text.

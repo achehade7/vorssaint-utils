@@ -489,8 +489,39 @@ final class NotchService: ObservableObject {
                                       music: hasMusicActivity, keepAwake: hasKeepAwakeActivity)
     }
 
+    var aeroSpaceOpensOnHover: Bool {
+        NotchAeroSpaceService.shared.state.current != nil
+            && UserDefaults.standard.bool(forKey: DefaultsKey.notchOpenOnHover)
+            && UserDefaults.standard.bool(forKey: DefaultsKey.notchHoverExpands)
+    }
+
+    var showsAeroSpace: Bool {
+        NotchAeroSpaceService.shared.state.showsStrip(hovered: inside,
+            blocked: aeroSpaceOpensOnHover || !running || suspended || hiddenInFullscreen || expanded || peeking || dragPlaceholder
+                || notice != nil || departingNotice != nil || captureControls != nil || hiddenUntilHover,
+            now: ProcessInfo.processInfo.systemUptime)
+    }
+
+    var aeroSpaceIsHovered: Bool { inside }
+    var showsAeroSpaceBadge: Bool {
+        NotchAeroSpaceService.shared.state.showsStrip(hovered: false,
+            blocked: !aeroSpaceOpensOnHover || expanded || hiddenInFullscreen || captureControls != nil,
+            now: ProcessInfo.processInfo.systemUptime)
+    }
+
+    var aeroSpaceWorkspaces: [String] {
+        inside ? NotchAeroSpaceState.workspaces : NotchAeroSpaceService.shared.state.current.map { [$0] } ?? []
+    }
+    var aeroSpaceWings: NotchNoticeWings {
+        geometry.noticeWings(NotchNoticeWings(leading: inside ? 148 : 52, trailing: inside ? 40 : 12))
+    }
+    private var aeroSpaceSize: CGSize {
+        CGSize(width: aeroSpaceWings.leading + aeroSpaceWings.trailing + (geometry.floats ? 0 : geometry.noticeCameraGap),
+               height: geometry.stripHeight)
+    }
+
     var showsCompactActivityPicker: Bool {
-        (inside || activityPickerMenuOpen) && !hiddenInFullscreen && !hiddenUntilHover && !expanded && !peeking
+        !aeroSpaceOpensOnHover && !showsAeroSpace && (inside || activityPickerMenuOpen) && !hiddenInFullscreen && !hiddenUntilHover && !expanded && !peeking
             && !dragPlaceholder && notice == nil && captureControls == nil
             && compactActivities.count > 1
     }
@@ -568,7 +599,7 @@ final class NotchService: ObservableObject {
     }
 
     private var compactActivityIsVisible: Bool {
-        !fullscreenCompact && !expanded && !peeking && !dragPlaceholder && notice == nil && captureControls == nil
+        !showsAeroSpace && !fullscreenCompact && !expanded && !peeking && !dragPlaceholder && notice == nil && captureControls == nil
             && compactActivity != nil
     }
 
@@ -733,7 +764,8 @@ final class NotchService: ObservableObject {
         // The marks on the other side, drawn as the strip draws them: two
         // working agents share a smaller size, each in a frame wider than it.
         let working = Set(AgentUsageService.shared.snapshot.live.map(\.provider)).count
-        let mark = CGFloat(working > 1 ? 11 : 14)
+        let mark = NotchTimerSupport.stripAgentMarkSize(height: provisional.compactActivityContentHeight,
+                                                       working: working)
         let frame = mark * 1.45 + 1
         let marks = CGFloat(max(1, working)) * frame + CGFloat(max(0, working - 1))
             + provisional.compactActivityEdgeInset(boxHeight: mark + 4, radius: (mark + 4) / 2)
@@ -868,6 +900,7 @@ final class NotchService: ObservableObject {
     }
 
     var surfaceSize: CGSize {
+        if showsAeroSpace { return aeroSpaceSize }
         if let capsule = capsuleSurfaceSize { return capsule }
         if fullscreenCompact { return geometry.bareCutout }
         if captureControls != nil {
@@ -905,6 +938,7 @@ final class NotchService: ObservableObject {
     /// further toward its wider side. A capsule runs its strips end to end.
     var surfaceShift: CGFloat {
         guard !geometry.floats, !fullscreenCompact, captureControls == nil, !expanded, !dragPlaceholder else { return 0 }
+        if showsAeroSpace { return geometry.noticeShift(aeroSpaceWings) }
         if let notice { return noticeExpanded ? 0 : geometry.noticeShift(notice.wings(in: geometry)) }
         return namedMusicWings.map { ($0.trailing - $0.leading) / 2 } ?? 0
     }
@@ -1086,6 +1120,14 @@ final class NotchService: ObservableObject {
         // Checked before any service starts, so each preference change while
         // the lid is closed does not start and stop them all again.
         guard screenIndex(in: NSScreen.screens) != nil else { withdrawFromMissingScreen(); return }
+        let aeroSpace = NotchAeroSpaceService.shared
+        aeroSpace.onChange = { [weak self] in
+            guard let self, self.running, !self.suspended else { return }
+            self.objectWillChange.send()
+            self.refreshPresentation()
+        }
+        if UserDefaults.standard.bool(forKey: DefaultsKey.notchAeroSpaceEnabled) { aeroSpace.start() }
+        else { aeroSpace.stop() }
         refreshModules()
         NotchDownloadService.shared.syncWithPreferences()
         NotchCalendarService.shared.syncWithPreferences()
@@ -1181,6 +1223,8 @@ final class NotchService: ObservableObject {
     }
 
     private func tearDownPresentation() {
+        NotchAeroSpaceService.shared.onChange = nil
+        NotchAeroSpaceService.shared.stop()
         screenRefreshWork?.cancel(); screenRefreshWork = nil
         nextMascotVisitWork?.cancel(); nextMascotVisitWork = nil
         mascotVisitWork?.cancel(); mascotVisitWork = nil
@@ -1430,6 +1474,7 @@ final class NotchService: ObservableObject {
         let point = NSEvent.mouseLocation
         let wasInside = inside
         let showedPicker = showsCompactActivityPicker
+        let showedAeroSpace = showsAeroSpace
         inside = hiddenUntilHover ? geometry.contains(point, in: geometry.collapsed)
             && windowHost?.isConcealedForMissionControl == false
             : windowHost?.containsHover(point) == true || pointerOverChildWindow(point)
@@ -1444,7 +1489,8 @@ final class NotchService: ObservableObject {
         let emphasize = inside && !hiddenInFullscreen && !hiddenUntilHover && !expanded && !peeking && !dragPlaceholder
             && notice == nil && captureControls == nil && !opensOnHover
             && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        if hoverEmphasized != emphasize || showedPicker != showsCompactActivityPicker || unnamesMusic {
+        if hoverEmphasized != emphasize || showedPicker != showsCompactActivityPicker || unnamesMusic
+            || showedAeroSpace != showsAeroSpace || (inside != wasInside && showsAeroSpace) {
             hoverEmphasized = emphasize
             // A song held on the island goes as the pointer leaves.
             if unnamesMusic { syncMenuSpaceMonitoring() }
@@ -1541,7 +1587,7 @@ final class NotchService: ObservableObject {
         // The music strip's name, or a song paused from its button, lasts
         // until the pointer leaves, with or without an emphasis to follow.
         let keepsMusicStrip = musicStripNamed || musicStripHeldSong != nil
-        let watching = ((hoverEmphasized || followsClosedHover || keepsMusicStrip) && captureHover == nil
+        let watching = ((hoverEmphasized || showsAeroSpace || followsClosedHover || keepsMusicStrip) && captureHover == nil
                 || !entered && NotchSupport.closesOnPointerExit(expanded: expanded, peeking: peeking, openedByHover: openedByHover))
             && captureControls == nil && !pinned && !heldDrag && !hiddenUntilHover && !keepsWorkingSurface
             // Once watching, a pointer that leaves and slips back unreported is still seen.
@@ -2544,7 +2590,8 @@ final class NotchService: ObservableObject {
                                 && UserDefaults.standard.bool(forKey: DefaultsKey.notchHideUntilHover)
                                 && UserDefaults.standard.bool(forKey: DefaultsKey.notchOpenOnHover),
                             usesGlass: !fullscreenCompact && usesGlassSurface,
-                            steady: fitsInPlace)
+                            steady: fitsInPlace,
+                            workspaceBadge: showsAeroSpaceBadge)
         // The selector lives in a separate full-screen panel. A floating
         // capsule may sit below the display edge, so publish the island's
         // actual bottom inset as the controls collapse or reopen.
@@ -2557,7 +2604,7 @@ final class NotchService: ObservableObject {
         let activationRect: CGRect
         if captureControls != nil {
             activationRect = captureControlsCollapsed ? CGRect(origin: .zero, size: size) : .zero
-        } else if notice != nil || dragPlaceholder {
+        } else if notice != nil || dragPlaceholder || showsAeroSpace {
             activationRect = .zero
         } else if showsCompactActivityPicker {
             let strip = compactActivityGeometry.compactActivitySize
@@ -3019,7 +3066,7 @@ final class NotchService: ObservableObject {
     }
 
     private var screenEdgeClickArea: CGRect? {
-        guard running, !suspended, !expanded, captureControls == nil, notice == nil,
+        guard running, !suspended, !expanded, !showsAeroSpace, captureControls == nil, notice == nil,
               !dragPlaceholder, !heldDrag, let panel, panel.isVisible, !panel.ignoresMouseEvents else { return nil }
         let geometry = compactActivityIsVisible ? compactActivityGeometry : self.geometry
         let area = geometry.activationArea(in: surfaceSize, hasHeader: peeking, compactActivity: compactActivityIsVisible)
@@ -4347,7 +4394,7 @@ extension NotchService {
     /// whatever it shows. The companion coming back from the bar is not out in it.
     private func canHostMascotVisit(returning: Bool = false) -> Bool {
         showsSystemFeedback && (returning || !mascotInBar) && !expanded && !peeking && !dragPlaceholder && notice == nil
-            && captureControls == nil && !showsCompactActivityPicker && !fullscreenCompact
+            && captureControls == nil && !showsCompactActivityPicker && !fullscreenCompact && !showsAeroSpace
             && panel?.isVisible == true && mascotHasRoom
     }
 
@@ -4369,7 +4416,7 @@ extension NotchService {
     }
 
     /// It rests in the closed island now, rather than only visiting it.
-    private var mascotRestsInView: Bool { mascotAtRest && compactActivity == nil }
+    private var mascotRestsInView: Bool { mascotAtRest && compactActivity == nil && !showsAeroSpace }
 
     /// Open beside a camera, the island keeps the companion where it rests
     /// closed, in the top row beside the camera, so the island opens around

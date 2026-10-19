@@ -5,6 +5,51 @@ import AppKit
 import Foundation
 
 enum NotchNotificationTests {
+    private static func bannerWidthContracts(expect: (Bool, String) -> Void) {
+        let domain = "com.vorssaint.tests.notification-width"
+        let defaults = UserDefaults(suiteName: domain)!
+        defaults.removePersistentDomain(forName: domain)
+        defer { defaults.removePersistentDomain(forName: domain) }
+        typealias Layout = NotchNotificationBannerLayout
+        let key = DefaultsKey.notchNotificationWidth
+        expect(Layout.maximumWidth(in: defaults) == 190,
+               "an existing installation keeps the original notification width")
+        expect(SettingsBackupSupport.exportKeys().contains(key), "notification width travels with settings backups")
+        let content = NotchNotificationContent(app: "Ghostty", title: "", subtitle: "",
+                                              body: "Explore macOS Dynamic Island | workstation-config")
+        let original = Layout.wings(for: content, wrapsMessage: true, in: defaults)
+        let short = NotchNotificationContent(app: "Chat", title: "Alex", subtitle: "", body: "Done")
+        let shortBefore = Layout.wings(for: short, in: defaults)
+        defaults.set(400.0, forKey: key)
+        let wider = Layout.wings(for: content, wrapsMessage: true, in: defaults)
+        let textWidth = (content.compactDetail as NSString).size(withAttributes: [.font: Layout.messageFont]).width
+        expect(textWidth > original.trailing - Layout.inset && textWidth <= wider.trailing - Layout.inset,
+               "a message that wrapped at the old width fits on one line with the wider setting")
+        expect(wider.leading == original.leading && wider.trailing > original.trailing,
+               "widening the message does not add empty space beside the app name")
+        expect(Layout.wings(for: short, in: defaults) == shortBefore,
+               "short notifications keep their snug width")
+        for value in [-10.0, 10_000.0, Double.nan, Double.infinity] {
+            defaults.set(value, forKey: key)
+            let bounded = Layout.maximumWidth(in: defaults)
+            expect(bounded.isFinite && Layout.widthRange.contains(bounded),
+                   "imported widths are bounded and non-finite values use the default")
+        }
+        defaults.set(480.0, forKey: key)
+        let long = NotchNotificationContent(app: "Mail", title: "", subtitle: "", body: String(repeating: "Long message ", count: 100))
+        let wings = Layout.wings(for: long, in: defaults)
+        for screenWidth: CGFloat in [400, 1512] {
+            for cameraWidth: CGFloat in [0, 185] {
+                var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: screenWidth, height: 982),
+                                             safeAreaTop: cameraWidth > 0 ? 32 : 0, cameraWidth: cameraWidth)
+                let size = geometry.noticeSize(wings: wings)
+                geometry.surfaceShift = geometry.noticeShift(wings)
+                expect(geometry.screen.contains(geometry.frame(for: size)) && size.height == geometry.stripHeight,
+                       "wide banners remain inside the display without growing vertically")
+            }
+        }
+    }
+
     static func run(_ suite: TestSuite) {
         func expect(_ condition: Bool, _ message: String) {
             suite.expect(condition, message)
@@ -22,6 +67,7 @@ enum NotchNotificationTests {
                && NotchSupport.shouldReplace(.systemNotification, with: .battery),
                "a preview held open yields only to the next message or to what the user just did")
         previewLayoutContracts(expect: expect)
+        bannerWidthContracts(expect: expect)
         expect(NotchNotificationSupport.closeAction(in: ["Name:Close\nTarget:0x0\nSelector:(null)"], title: "Close") != nil
                && NotchNotificationSupport.closeAction(in: ["Name:Close All\nTarget:0x0"], title: "Close") == nil,
                "native closing uses the exact system action label and cannot match a group action")

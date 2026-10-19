@@ -35,6 +35,7 @@ enum NotchScreenEdgeClickTests {
         static func removeMonitor(_ token: Any) { global[token as! Int] = nil; local[token as! Int] = nil }
     }
     class State {
+        var showsAeroSpace = false
         var running = true, suspended = false, expanded = false, peeking = false
         var captureControls: Bool?, notice: Bool?
         var dragPlaceholder = false, heldDrag = false, compactActivityIsVisible = false, keepsWorkingSurface = false
@@ -58,6 +59,10 @@ enum NotchScreenEdgeClickTests {
     }
 
     static func run(_ suite: TestSuite) {
+        let workspaces = Service()
+        workspaces.showsAeroSpace = true
+        suite.expect(workspaces.screenEdgeClickArea == nil,
+                     "workspace controls are not covered by the island's screen-edge opening target")
         for screen in [CGRect(x: 0, y: 0, width: 1470, height: 956),
                        CGRect(x: -1920, y: 956, width: 1920, height: 1080)] {
             for localDelivery in [false, true] {

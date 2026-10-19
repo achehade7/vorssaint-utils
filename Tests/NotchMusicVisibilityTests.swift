@@ -51,6 +51,9 @@ enum NotchMusicVisibilityTests {
     enum NSEvent { static let mouseLocation = CGPoint.zero }
 
     class State {
+        var showsAeroSpace = false
+        var aeroSpaceSize = CGSize(width: 368, height: 32)
+        var aeroSpaceWings = NotchNoticeWings(leading: 148, trailing: 40)
         var activitySelection = NotchActivitySelection()
         var timerCompanions: [NotchCompactActivity] = []
         func compactCompanions(of primary: NotchCompactActivity) -> [NotchCompactActivity] {

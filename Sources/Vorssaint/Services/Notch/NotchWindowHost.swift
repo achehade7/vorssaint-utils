@@ -24,6 +24,7 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
     private let canvas: NotchCanvas
     private let quickAccessContainer: NotchQuickAccessContainer?
     private var quickAccessConfiguration: NotchQuickAccessConfiguration?
+    private var workspaceBadgeVisible = false
     private var quickAccessNotchSize = CGSize.zero
     private var quickAccessAnimate = false
     private var currentGeometry: NotchGeometry
@@ -162,7 +163,7 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
 
     func present(size: CGSize, geometry: NotchGeometry, animated: Bool, transitionContent: NotchContentTransition = .none,
                  quickAccess: NotchQuickAccessConfiguration? = nil, revealFromHidden: Bool = false,
-                 hideWhenSettled: Bool = false, usesGlass: Bool = false, steady: Bool = false) {
+                 hideWhenSettled: Bool = false, usesGlass: Bool = false, steady: Bool = false, workspaceBadge: Bool = false) {
         // Choosing the capsule or the notch redraws the island at once, even
         // at a size it already has.
         canvas.setFloatingGap(geometry.floatingGap)
@@ -188,16 +189,17 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
             probe.attach(level: panel.level, screen: geometry.screen)
         }
         let canAnimate = animated && (isPresented || revealing) && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let previousGutter = quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter
+        let previousGutter = max(workspaceBadgeVisible ? 38 : 0, quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter)
         let previousBottom = quickAccessBottomInset(for: targetSize, geometry: currentGeometry)
         let previousFrame = currentGeometry.frame(for: CGSize(width: targetSize.width + previousGutter * 2, height: targetSize.height + previousBottom))
         let withdrawing = !revealing && quickAccessConfiguration != nil && quickAccess == nil
         if revealing { quickAccessContainer?.motion.setVisible(false, animated: false) }
         quickAccessConfiguration = quickAccessContainer == nil ? nil : quickAccess
+        workspaceBadgeVisible = workspaceBadge && quickAccessContainer != nil && !hideWhenSettled
         quickAccessAnimate = canAnimate
         if quickAccessConfiguration != nil { quickAccessNotchSize = size }
         if withdrawing { quickAccessContainer?.motion.setVisible(false, animated: canAnimate) }
-        let gutter = quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter
+        let gutter = max(workspaceBadgeVisible ? 38 : 0, quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter)
         let bottom = quickAccessBottomInset(for: size, geometry: geometry)
         let frame = geometry.frame(for: CGSize(width: size.width + gutter * 2, height: size.height + bottom))
         let changesFrame = revealing || (hideWhenSettled && !canAnimate) || size != targetSize
@@ -338,7 +340,7 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
 
     private func settle() {
         let generation = animationGeneration
-        let gutter: CGFloat = quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter
+        let gutter: CGFloat = max(workspaceBadgeVisible ? 38 : 0, quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter)
         let bottom = quickAccessBottomInset(for: targetSize, geometry: currentGeometry)
         // A departing island is ordered out below; its released bounds are never shown.
         let concealed = !hidesWhenSettled
@@ -461,9 +463,19 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
 
     private func configureQuickAccess() {
         guard let container = quickAccessContainer else { return }
-        container.quickView.isHidden = quickAccessConfiguration == nil && container.gutter == 0 && container.bottomInset == 0
+        let badgeX = canvas.convert(CGPoint(x: islandMinX(targetSize), y: 0), to: container.quickView).x - 36
+        let badgeFrame = workspaceBadgeVisible
+            ? CGRect(x: badgeX + 10, y: max(0, (currentGeometry.stripHeight - 26) / 2), width: 26, height: 26) : nil
+        let badgeSurface = workspaceBadgeVisible
+            ? CGRect(x: badgeX, y: 0, width: targetSize.width + 36, height: targetSize.height) : nil
+        container.motion.setWorkspaceBadge(badgeFrame, surface: badgeSurface, animated: quickAccessAnimate)
+        let workspaceHover = workspaceBadgeVisible ? [container.convert(
+            CGRect(x: badgeX, y: 0, width: 36, height: currentGeometry.stripHeight),
+            from: container.quickView).intersection(container.bounds)] : []
+        container.quickView.isHidden = !workspaceBadgeVisible && quickAccessConfiguration == nil
+            && container.gutter == 0 && container.bottomInset == 0
         guard let configuration = quickAccessConfiguration else {
-            container.setHoverRects([])
+            container.setHoverRects(workspaceHover)
             return
         }
         // The silhouette's shoulders sit outside its vertical body.
@@ -475,7 +487,7 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
         container.motion.configure(configuration, body: body,
                                    headerTop: currentGeometry.quickAccessCenterY,
                                    animated: quickAccessAnimate)
-        container.setHoverRects(container.motion.hoverRects.map {
+        container.setHoverRects(workspaceHover + container.motion.hoverRects.map {
             container.convert($0, from: container.quickView).intersection(container.bounds)
         })
     }
@@ -680,6 +692,16 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
     var backdropProbeScheduled: Bool { canvas.backdropDisplayLink != nil }
     var backdropProbeTicks: Int { canvas.backdropTicks }
     func synchronizeBackdropProbe() { canvas.synchronizeBackdrop() }
+
+    var workspaceSurfaceProbeFrame: CGRect? {
+        guard let container = quickAccessContainer, let frame = container.motion.workspaceSurfaceFrame else { return nil }
+        return panel.convertToScreen(container.quickView.convert(frame, to: nil))
+    }
+
+    var workspaceBadgeProbeFrame: CGRect? {
+        guard let container = quickAccessContainer, let frame = container.motion.workspaceBadgeFrame else { return nil }
+        return panel.convertToScreen(container.quickView.convert(frame, to: nil))
+    }
 
     var quickAccessProbeTrackingAreas: Int { quickAccessContainer?.trackingAreas.count ?? 0 }
     var quickAccessProbeInteractive: Bool { quickAccessContainer?.motion.interactive == true }

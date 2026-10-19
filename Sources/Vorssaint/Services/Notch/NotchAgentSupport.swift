@@ -195,7 +195,7 @@ enum NotchAgentSupport {
     /// Air between the camera and what sits beside it.
     static let stripCameraGap: CGFloat = 6
 
-    static func stripTextSize(height: CGFloat) -> CGFloat { min(15, height - 7) }
+    static func stripTextSize(height: CGFloat) -> CGFloat { min(14, height - 8) }
 
     /// What the strip shows beside the camera while agents work: the reading
     /// the person chose, or the time elapsed while that one is unknown.

@@ -83,6 +83,7 @@ enum NotchHoverTests {
         }
     }
     class State {
+        var aeroSpaceState = NotchAeroSpaceState()
         var noticeFitsInPlace = false
         func schedulePointerFollow() {}
         var hiddenInFullscreen = false
@@ -198,6 +199,46 @@ enum NotchHoverTests {
         func leave(_ service: Service) {
             NSEvent.mouseLocation = CGPoint(x: service.geometry.screen.minX, y: service.geometry.screen.minY)
             service.hover(false)
+        }
+        for physical in [false, true] {
+            let workspaces = fixture(physical: physical)
+            UserDefaults.standard.delay = 0.1
+            _ = workspaces.aeroSpaceState.receive(
+                Data("{\"_event\":\"focused-workspace-changed\",\"workspace\":\"1\"}".utf8), now: 0)
+            workspaces.compactActivities = [.agents, .music]
+            workspaces.hover(true)
+            expect(!workspaces.showsAeroSpace && !workspaces.showsCompactActivityPicker && workspaces.hoverWork != nil,
+                   "a full hover opening waits at rest without an intermediate workspace expansion")
+            DispatchQueue.main.advance(UserDefaults.standard.delay - 0.01)
+            expect(workspaces.openings == 0, "workspace hover waits for the configured delay")
+            DispatchQueue.main.advance(0.02)
+            expect(workspaces.openings == 1 && workspaces.openedByHover && !workspaces.showsAeroSpace,
+                   "hover opens the home destination without a click even with workspaces and multiple activities")
+            workspaces.expanded = false
+            workspaces.notice = volume
+            expect(!workspaces.showsAeroSpace, "notifications take precedence over workspace controls")
+            workspaces.notice = nil
+            leave(workspaces)
+            expect(!workspaces.showsAeroSpace, "leaving the island hides workspace controls")
+            workspaces.hiddenInFullscreen = true
+            workspaces.hover(true)
+            expect(!workspaces.showsAeroSpace, "workspace controls stay hidden in full screen")
+
+            let interrupted = fixture(physical: physical)
+            _ = interrupted.aeroSpaceState.receive(
+                Data("{\"_event\":\"focused-workspace-changed\",\"workspace\":\"1\"}".utf8), now: 0)
+            interrupted.hover(true)
+            interrupted.notice = volume
+            DispatchQueue.main.advance(2)
+            expect(interrupted.openings == 0, "an incoming notification blocks a pending workspace hover opening")
+
+            let departed = fixture(physical: physical)
+            _ = departed.aeroSpaceState.receive(
+                Data("{\"_event\":\"focused-workspace-changed\",\"workspace\":\"1\"}".utf8), now: 0)
+            departed.hover(true)
+            leave(departed)
+            DispatchQueue.main.advance(2)
+            expect(departed.openings == 0, "leaving the workspace strip cancels its pending hover opening")
         }
         for physical in [false, true] {
             for reduced in [false, true] {
