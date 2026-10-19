@@ -642,6 +642,44 @@ enum NotchHoverTests {
                             && NSEvent.global.isEmpty && NSEvent.local.isEmpty,
                          "the closed island holding a capture keeps it paused and does not follow the pointer")
         }
+        // Hidden until hover, the island follows every move on screen to see
+        // the pointer arrive. A timed capture still attached to it would hear
+        // each one as an entry and never dismiss while the island stays hidden.
+        for local in [false, true] {
+            let hidden = fixture()
+            UserDefaults.standard.hides = true
+            hidden.windowHost?.visible = false
+            var heard: [Bool] = []
+            hidden.captureHover = { heard.append($0) }
+            hidden.syncHiddenHoverMonitoring()
+            let top = CGPoint(x: hidden.geometry.screen.midX, y: hidden.geometry.screen.maxY)
+            let away = CGPoint(x: hidden.geometry.screen.midX, y: hidden.geometry.screen.midY)
+            follow(to: away, local: local)
+            follow(to: CGPoint(x: away.x + 40, y: away.y - 40), local: local)
+            suite.expect(heard.isEmpty, "moves away from the hidden island never tell its timed capture the pointer entered")
+            follow(to: top, local: local)
+            follow(to: CGPoint(x: top.x + 4, y: top.y), local: local)
+            suite.expect(heard == [true], "the pointer reaching the hidden island's place pauses its timed capture once")
+            follow(to: away, local: local)
+            suite.expect(heard == [true, false],
+                         "the pointer leaving the hidden island's place lets its timed capture dismiss again")
+        }
+        // Closed under the pointer, the island hides with its capture paused,
+        // and the pointer moving on from its place lets the capture go.
+        do {
+            let closed = fixture()
+            UserDefaults.standard.hides = true
+            var heard: [Bool] = []
+            closed.captureHover = { heard.append($0) }
+            closed.open(takeFocus: true)
+            closed.hover(true)
+            closed.collapse()
+            closed.windowHost?.visible = false
+            closed.syncHiddenHoverMonitoring()
+            follow(to: CGPoint(x: closed.geometry.screen.midX, y: closed.geometry.screen.midY))
+            suite.expect(heard == [true, false],
+                         "a capture paused over the open island resumes once it hides and the pointer moves away")
+        }
         // Opening or peeking on hover ends the closed island's follow at once,
         // so the next move cannot tell a page or preview the pointer left.
         for expands in [true, false] {
