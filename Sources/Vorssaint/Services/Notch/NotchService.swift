@@ -851,9 +851,10 @@ final class NotchService: ObservableObject {
             && !showingSections && !showingAppPanel && selectedMetric == nil
         result.pageTop = expandedPageTop
         if result.pageTop == .wrapsCamera { result.pageTrailingControls = playerToggleCount }
-        // Each page takes the width it needs, up to the chosen one; the
-        // gallery, details and the empty island keep the chosen width, and
-        // lead their row with their own way back instead of the sections.
+        // Under a preset each page takes the width it needs, up to the
+        // preset's; the gallery, details and the empty island keep the chosen
+        // width, and lead their row with their own way back instead of the
+        // sections.
         if !showingSections, !showingAppPanel, selectedMetric == nil, !modules.isEmpty {
             result.pageContentWidth = NotchLayout.naturalContentWidth(selected, controls: homeControls,
                                                                       within: geometry.contentWidth)

@@ -15,6 +15,7 @@ Clipboard history that can expire old items and a hidden Dynamic Island that sti
 
 ### Fixed
 - Dynamic Island's Now Playing page shows the Explore button again when Explore is not a floating button, and can grow a little to fit it while a song plays. The System page shows it too where it had no top row, such as on displays without a notch.
+- A custom Dynamic Island width applies to Controls, Now Playing and Timer again, and the Layout preview shows the island at the size it opens. Settings → Dynamic Island → Layout → Size.
 - Smooth scrolling keeps its remaining motion in the original window or scroll area when the pointer moves. New wheel input elsewhere starts there immediately.
 - Dock Preview avoids waiting on a frozen neighboring app when hovering the uncovered Dock.
 - Mirrored displays remain listed with their own brightness controls, including the built-in screen.
@@ -31,7 +32,7 @@ Clipboard history that can expire old items and a hidden Dynamic Island that sti
 - App Updates stops showing false updates for Private Internet Access, and lists apps it can't compare, such as Unified Remote and Android Studio, under Versions not compared.
 
 ### Contributors
-Thanks to @andrewgribben, @bebricoOOOOOOf, @becastellani, @bharathvbcr, @cdbrandt729-code, @Chubi01, @Dusk-afk, @emreertunc, @iltonandrew, @jainnam-1993, @juanra, @Likheet, @marianhoenscheid, @mendozal, @mikeknight85, @mmoradi97, @mschoeffmann, @pedro-fontinele, @RKeyProg, @rohanod, @root-daemon, @StudioKeys and @webipsum.
+Thanks to @andrewgribben, @bebricoOOOOOOf, @becastellani, @bharathvbcr, @cdbrandt729-code, @Chubi01, @Dusk-afk, @emreertunc, @iltonandrew, @jainnam-1993, @juanra, @Likheet, @marianhoenscheid, @mendozal, @mikeknight85, @mmoradi97, @mschoeffmann, @pedro-fontinele, @RKeyProg, @rohanod, @root-daemon, @StudioKeys, @webipsum and @Yahddyyp.
 Feedback: Brain.
 
 ## [3.4.2-beta.1] - 2026-10-18
