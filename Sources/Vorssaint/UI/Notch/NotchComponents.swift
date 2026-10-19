@@ -290,7 +290,7 @@ struct NotchRail<Item: Identifiable, Content: View>: View {
     // are created, including a target well outside the current viewport.
     private var targetColumn: Int? {
         guard let scrollTarget, let index = items.firstIndex(where: { $0.id == scrollTarget }) else { return nil }
-        return index / max(1, rows) * max(1, rows)
+        return index / max(1, rows)
     }
 
     var body: some View {
@@ -305,19 +305,26 @@ struct NotchRail<Item: Identifiable, Content: View>: View {
                 // column cut at the edge is the cue that more follows.
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: spacing) {
-                        ForEach(starts, id: \.self) { start in column(start).frame(width: itemWidth).id(start) }
+                        ForEach(starts, id: \.self) { start in
+                            column(start).frame(width: itemWidth).id("column-\(start / max(1, rows))")
+                        }
                     }
                     .contentShape(Rectangle())
                 }
                 .scrollIndicators(.never)
                 .notchScrollEdgeFade(.horizontal)
                 .onAppear {
-                    if let targetColumn { proxy.scrollTo(targetColumn, anchor: .center) }
+                    if let targetColumn { proxy.scrollTo("column-\(targetColumn)", anchor: .center) }
                 }
-                .onChange(of: targetColumn) { _, target in
+                .onChange(of: targetColumn) { previous, target in
                     guard let target else { return }
-                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
-                        proxy.scrollTo(target, anchor: .center)
+                    // Animating across a long history creates the lazy columns
+                    // along the way. Only animate jumps within one viewport.
+                    let nearby = previous.map {
+                        CGFloat(abs(target - $0)) * (itemWidth + spacing) <= width
+                    } ?? false
+                    withAnimation(!reduceMotion && nearby ? .easeOut(duration: 0.16) : nil) {
+                        proxy.scrollTo("column-\(target)", anchor: .center)
                     }
                 }
             }

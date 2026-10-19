@@ -274,16 +274,20 @@ enum NotchCompactTests {
         } else {
             suite.expect(false, "the visible rail has enough columns to exercise its empty gap")
         }
-        for (target, rows) in [(12, 2), (900, 2), (901, 2), (901, 1), (0, 1)] {
+        for (target, rows) in [(12, 2), (900, 2), (904, 2), (901, 2), (901, 1), (0, 1)] {
+            let realizedBefore = state.realized.count
             state.rows = rows
             state.selected = target
             settle(host)
+            let added = state.realized.count - realizedBefore
+            suite.expect(added < 40,
+                         "jumping to \(target) in \(rows) rows creates only nearby items (created \(added))")
             let marker = descendants(host).first { $0.identifier?.rawValue == "rail-\(target)" }
             suite.expect(marker.map { host.bounds.intersects($0.convert($0.bounds, to: host)) } == true,
                          "selection \(target) remains visible after navigating or changing to \(rows) rail rows")
         }
         suite.expect(state.realized.count < 500,
-                     "jumping to distant selections does not realize the intervening history")
+                     "jumping to distant selections does not realize the intervening history (created \(state.realized.count))")
         // Five tiles over two rows fit three columns wide: they read across
         // the rows, and the two on the last row sit centered under the three.
         state.count = 5
