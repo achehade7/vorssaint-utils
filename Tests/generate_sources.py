@@ -816,6 +816,7 @@ def main():
     write("AppUpdateRules.swift", "import CoreServices\nimport Foundation\nextension AppUpdateRulesContract {\n"
           + "final class Service: State {\n"
           + "".join(declaration(updates, prefix).replace("private func", "func", 1)
+                    .replace("private static func scannedApp(", "static func scannedApp(", 1)
                     for prefix in ["    func skipVersion(", "    func excludeApp(", "    func addExclusion(",
                                    "    private func setRule(", "    private func storeRule(",
                                    "    func removeRule(",
