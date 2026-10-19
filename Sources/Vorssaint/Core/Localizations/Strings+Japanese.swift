@@ -679,6 +679,9 @@ extension Strings {
         secureInputUnattributed: "実行中のどのアプリも保持していません。ログアウトしてから再度ログインすると解除されます。",
         secureInputUnidentified: "保持しているアプリを特定できないため、Vorssaint が代わりに入力できません。",
         secureInputRevealFormat: "%@ を表示",
+        secureInputSwitcherHeldFormat: "%@ が保持しているため、macOS がスイッチャーからキー入力を隠し、⌘Tab では代わりに macOS のスイッチャーが開きます。パスワード欄からフォーカスを外すか、アプリを終了すると解除されます。",
+        secureInputSwitcherUnattributed: "実行中のどのアプリも保持していませんが、macOS がスイッチャーからキー入力を隠し、⌘Tab では代わりに macOS のスイッチャーが開きます。ログアウトしてから再度ログインすると解除されます。",
+        secureInputSwitcherUnidentified: "保持しているアプリを特定できません。セキュア入力がオンの間は、macOS がスイッチャーからキー入力を隠し、⌘Tab では代わりに macOS のスイッチャーが開きます。",
 
         aboutDescription: "あなたの Mac のためのユーティリティハブ。\n省エネルギー、システムモニタ、スクロール、ウインドウスイッチャーを、メニューバーから。",
         versionPrefix: "バージョン",

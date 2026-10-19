@@ -679,6 +679,9 @@ extension Strings {
         secureInputUnattributed: "Ninguna app en ejecución la reclama. Cierra la sesión y vuelve a iniciarla para borrarla.",
         secureInputUnidentified: "No se ha podido identificar la app que la está reteniendo, por lo que Vorssaint no puede escribir por ti.",
         secureInputRevealFormat: "Mostrar %@",
+        secureInputSwitcherHeldFormat: "%@ la está reteniendo, por lo que macOS oculta al selector las teclas que pulsas y ⌘Tab abre el selector de macOS en su lugar. Sal de su campo de contraseña, o ciérrala, para liberarla.",
+        secureInputSwitcherUnattributed: "Ninguna app en ejecución la reclama, pero macOS oculta al selector las teclas que pulsas y ⌘Tab abre el selector de macOS en su lugar. Cierra la sesión y vuelve a iniciarla para borrarla.",
+        secureInputSwitcherUnidentified: "No se ha podido identificar la app que la está reteniendo. Mientras la entrada segura siga activada, macOS oculta al selector las teclas que pulsas y ⌘Tab abre el selector de macOS en su lugar.",
 
         aboutDescription: "Un centro de utilidades para tu Mac.\nEnergía, monitor del sistema, desplazamiento y un selector de ventanas, directamente en la barra de menús.",
         versionPrefix: "Versión",

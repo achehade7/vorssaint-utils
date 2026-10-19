@@ -679,6 +679,9 @@ extension Strings {
         secureInputUnattributed: "没有正在运行的 App 占用它。请注销后重新登录以清除。",
         secureInputUnidentified: "无法识别占用它的 App，因此 Vorssaint 无法代你输入。",
         secureInputRevealFormat: "显示 %@",
+        secureInputSwitcherHeldFormat: "%@ 正在占用它，因此 macOS 会对切换器隐藏你的按键，⌘Tab 会改为打开 macOS 的切换器。退出其密码栏或退出该 App 即可释放。",
+        secureInputSwitcherUnattributed: "没有正在运行的 App 占用它，但 macOS 仍会对切换器隐藏你的按键，⌘Tab 会改为打开 macOS 的切换器。请注销后重新登录以清除。",
+        secureInputSwitcherUnidentified: "无法识别占用它的 App。在安全输入关闭前，macOS 会对切换器隐藏你的按键，⌘Tab 会改为打开 macOS 的切换器。",
 
         aboutDescription: "你的 Mac 实用工具中心。\n能源、系统监视器、滚动和窗口切换器，尽在菜单栏中。",
         versionPrefix: "版本",

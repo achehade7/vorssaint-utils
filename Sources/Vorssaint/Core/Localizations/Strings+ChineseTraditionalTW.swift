@@ -680,6 +680,9 @@ extension Strings {
         secureInputUnattributed: "沒有執行中的 App 佔用它。請登出後重新登入以清除。",
         secureInputUnidentified: "無法辨識佔用它的 App，因此 Vorssaint 無法代你輸入。",
         secureInputRevealFormat: "顯示 %@",
+        secureInputSwitcherHeldFormat: "%@ 正在佔用它，因此 macOS 會對切換器隱藏你的按鍵，⌘Tab 會改為開啟 macOS 的切換器。離開其密碼欄位或結束該 App 即可釋放。",
+        secureInputSwitcherUnattributed: "沒有執行中的 App 佔用它，但 macOS 仍會對切換器隱藏你的按鍵，⌘Tab 會改為開啟 macOS 的切換器。請登出後重新登入以清除。",
+        secureInputSwitcherUnidentified: "無法辨識佔用它的 App。在安全輸入關閉前，macOS 會對切換器隱藏你的按鍵，⌘Tab 會改為開啟 macOS 的切換器。",
 
         aboutDescription: "你的 Mac 實用工具中心。\n電源、系統監控、捲動與視窗切換器，全都在選單列中。",
         versionPrefix: "版本",

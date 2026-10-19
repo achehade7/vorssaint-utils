@@ -679,6 +679,9 @@ extension Strings {
         secureInputUnattributed: "Aucune app en cours d’exécution ne la revendique. Déconnectez-vous puis reconnectez-vous pour l’effacer.",
         secureInputUnidentified: "L’app qui la maintient n’a pas pu être identifiée, Vorssaint ne peut donc pas saisir de texte à votre place.",
         secureInputRevealFormat: "Afficher %@",
+        secureInputSwitcherHeldFormat: "%@ la maintient, macOS cache donc au sélecteur les touches que vous tapez et ⌘Tab ouvre le sélecteur de macOS à la place. Quittez son champ de mot de passe, ou fermez l’app, pour la libérer.",
+        secureInputSwitcherUnattributed: "Aucune app en cours d’exécution ne la revendique, mais macOS cache au sélecteur les touches que vous tapez et ⌘Tab ouvre le sélecteur de macOS à la place. Déconnectez-vous puis reconnectez-vous pour l’effacer.",
+        secureInputSwitcherUnidentified: "L’app qui la maintient n’a pas pu être identifiée. Tant que la saisie sécurisée reste activée, macOS cache au sélecteur les touches que vous tapez et ⌘Tab ouvre le sélecteur de macOS à la place.",
 
         aboutDescription: "Un centre d’utilitaires pour votre Mac.\nÉnergie, moniteur système, défilement et sélecteur de fenêtres, directement dans la barre des menus.",
         versionPrefix: "Version",

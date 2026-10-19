@@ -77,6 +77,13 @@ enum LocalizationFeatureContractTests {
                    && !strings.secureInputUnattributed.isEmpty
                    && !strings.secureInputUnidentified.isEmpty,
                    "\(prefix) secure input copy is translated")
+            // The switcher's captions explain a macOS switcher on ⌘Tab, not
+            // typing, so each names the shortcut it is about.
+            expectFormat(strings.secureInputSwitcherHeldFormat, ["@"],
+                         "\(prefix) switcher secure input holder format")
+            suite.expect([strings.secureInputSwitcherHeldFormat, strings.secureInputSwitcherUnattributed,
+                          strings.secureInputSwitcherUnidentified].allSatisfy { $0.contains("⌘Tab") },
+                   "\(prefix) switcher secure input copy names ⌘Tab")
             suite.expect(strings.quickToolsTab == strings.launcherName,
                    "\(prefix) Quick panel keeps the same name in Settings")
             expectFormat(strings.cutMovedPluralFormat, ["d"], "\(prefix) cut plural format")

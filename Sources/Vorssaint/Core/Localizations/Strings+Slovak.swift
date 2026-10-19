@@ -679,6 +679,9 @@ extension Strings {
         secureInputUnattributed: "Nehlási sa k nemu žiadna spustená aplikácia. Odhláste sa a znova prihláste, aby sa uvoľnil.",
         secureInputUnidentified: "Aplikáciu, ktorá ho drží, sa nepodarilo identifikovať, takže Vorssaint nemôže písať za vás.",
         secureInputRevealFormat: "Zobraziť %@",
+        secureInputSwitcherHeldFormat: "Drží ho %@, takže macOS skrýva stlačené klávesy pred prepínačom a ⌘Tab namiesto neho otvára prepínač macOS. Zavrite jeho pole s heslom alebo ho ukončite, aby ho uvoľnil.",
+        secureInputSwitcherUnattributed: "Nehlási sa k nemu žiadna spustená aplikácia, no macOS aj tak skrýva stlačené klávesy pred prepínačom a ⌘Tab namiesto neho otvára prepínač macOS. Odhláste sa a znova prihláste, aby sa uvoľnil.",
+        secureInputSwitcherUnidentified: "Aplikáciu, ktorá ho drží, sa nepodarilo identifikovať. Kým je zapnutý, macOS skrýva stlačené klávesy pred prepínačom a ⌘Tab namiesto neho otvára prepínač macOS.",
 
         aboutDescription: "Centrum nástrojov pre váš Mac.\nEnergia, monitor systému, rolovanie a prepínač okien priamo v lište s ponukami.",
         versionPrefix: "Verzia",

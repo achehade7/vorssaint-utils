@@ -679,6 +679,9 @@ extension Strings {
         secureInputUnattributed: "Keine laufende App beansprucht sie. Melde dich ab und wieder an, um sie zurückzusetzen.",
         secureInputUnidentified: "Die App, die sie hält, konnte nicht identifiziert werden, daher kann Vorssaint nicht für dich tippen.",
         secureInputRevealFormat: "%@ anzeigen",
+        secureInputSwitcherHeldFormat: "%@ hält sie, daher verbirgt macOS deine Tastenanschläge vor dem Umschalter und ⌘Tab öffnet stattdessen den macOS-Umschalter. Verlasse das Passwortfeld oder beende die App, um sie freizugeben.",
+        secureInputSwitcherUnattributed: "Keine laufende App beansprucht sie, trotzdem verbirgt macOS deine Tastenanschläge vor dem Umschalter und ⌘Tab öffnet stattdessen den macOS-Umschalter. Melde dich ab und wieder an, um sie zurückzusetzen.",
+        secureInputSwitcherUnidentified: "Die App, die sie hält, konnte nicht identifiziert werden. Solange die sichere Eingabe aktiv ist, verbirgt macOS deine Tastenanschläge vor dem Umschalter und ⌘Tab öffnet stattdessen den macOS-Umschalter.",
 
         aboutDescription: "Eine Werkzeugzentrale für deinen Mac.\nEnergie, Systemüberwachung, Scrollen und ein Fensterumschalter, direkt in der Menüleiste.",
         versionPrefix: "Version",
