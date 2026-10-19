@@ -6207,21 +6207,30 @@ enum SwitcherModelFeatureTests {
             LiveSystemShortcut(id: 220, shortcut: GlobalShortcut(keyCode: Int64(kVK_ANSI_Grave), modifiers: [.command, .shift]), enabled: true),
         ]
         suite.expect(SwitcherSupport.nativeHotkeyIDs(takeOverSystemShortcuts: true,
+                                               secureInputEnabled: false,
                                                appsShortcut: .switcherDefault,
                                                windowShortcut: .switcherWindowDefault,
                                                liveEntries: liveSwitcherEntries) == [1, 2, 27, 220],
                "the switcher asks the shared take-over for exactly its four ids, never the screenshot key")
         suite.expect(SwitcherSupport.nativeHotkeyIDs(takeOverSystemShortcuts: false,
+                                               secureInputEnabled: false,
                                                appsShortcut: .switcherDefault,
                                                windowShortcut: .switcherWindowDefault,
                                                liveEntries: liveSwitcherEntries).isEmpty,
                "without opt-in the switcher asks for nothing")
         suite.expect(SwitcherSupport.nativeHotkeyIDs(takeOverSystemShortcuts: true,
+                                               secureInputEnabled: false,
                                                appsShortcut: .switcherDefault,
                                                windowShortcut: .switcherWindowDefault,
                                                liveEntries: liveSwitcherEntries.filter { $0.id != 220 })
                == [1, 2, 27],
                "an id missing from the live table is never asked for")
+        suite.expect(SwitcherSupport.nativeHotkeyIDs(takeOverSystemShortcuts: true,
+                                               secureInputEnabled: true,
+                                               appsShortcut: .switcherDefault,
+                                               windowShortcut: .switcherWindowDefault,
+                                               liveEntries: liveSwitcherEntries).isEmpty,
+               "while Secure Event Input hides every key from the tap, ⌘Tab and ⌘` stay with macOS")
 
         // The shared take-over works on raw WindowServer ids. Same transition
         // rule as the switcher had: suppress only what is enabled now, restore
