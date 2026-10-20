@@ -107,6 +107,7 @@ enum NotchScreenRefreshContract {
         var idleContent = NotchIdleContent.music
         var compactActivity: Bool?
         var mascotWantsRoom = false
+        var hasUnreadNotifications = false
         var accessibilityGranted = true
         var coversMenus = false
         var menuSpaceTimer: Timer?
@@ -247,6 +248,17 @@ enum NotchScreenRefreshContract {
                      "the companion measures the menus, so it rests beside the camera only where its wings fit")
         companion.hiddenInFullscreen = true
         companion.syncMenuSpaceMonitoring()
+
+        let unread = Service()
+        unread.idleContent = .none
+        unread.hasUnreadNotifications = true
+        unread.syncMenuSpaceMonitoring()
+        suite.expect(unread.menuSpaceTimer == nil,
+                     "unread history alone does not start background menu measurements")
+        unread.hasUnreadNotifications = false
+        unread.syncMenuSpaceMonitoring()
+        suite.expect(unread.menuSpaceTimer == nil,
+                     "reading unread history does not restart background menu measurements")
 
         let virtual = Service()
         virtual.geometry.compactSideRoom = nil

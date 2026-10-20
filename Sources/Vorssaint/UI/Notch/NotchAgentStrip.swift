@@ -12,7 +12,6 @@ struct NotchAgentStrip: View {
     /// another display's when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var usage = AgentUsageService.shared
-    @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var l10n = L10n.shared
     @AppStorage(DefaultsKey.notchAgentsReadout) private var readout = NotchAgentReadout.elapsed.rawValue
     @AppStorage(DefaultsKey.notchAgentsLimitDisplay) private var display = NotchAgentLimitDisplay.remaining.rawValue
@@ -47,17 +46,10 @@ struct NotchAgentStrip: View {
         let textInset = !geometry.compactActivityUsesFooter
             ? geometry.compactActivityEdgeInset(boxHeight: textHeight, radius: 0) : 0
         HStack(spacing: 0) {
-            Button { service.openActivity(service.compactCompanion == .music ? .music : .agents) } label: {
+            Button { service.openActivity(.agents) } label: {
                 HStack(spacing: 1) {
                     if geometry.compactActivityWingWidth >= 28 {
-                        if service.compactCompanion == .music {
-                            NotchLiveEqualizerBars(isPlaying: music.playback?.isPlaying == true,
-                                                  bars: 4, barWidth: 2.5, height: 18,
-                                                  tint: music.artworkTint?.color ?? Color(red: 0.49, green: 0.60, blue: 1))
-                                .frame(width: 28, height: 22)
-                        } else {
-                            ForEach(working) { NotchAgentGlyph(provider: $0, size: iconSize) }
-                        }
+                        ForEach(working) { NotchAgentGlyph(provider: $0, size: iconSize) }
                     }
                 }
                 .padding(.leading, iconInset)

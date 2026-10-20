@@ -85,6 +85,8 @@ enum NotchNotificationSupport {
 class NotchNotificationService {
  static let shared = NotchNotificationService()
  var items: [NotchSystemNotification] = []
+ var readIDs: [UUID] = []
+ func markRead(_ id: UUID) { readIDs.append(id) }
 }
 struct NotchNotice {
  enum Event { case systemNotification }
@@ -106,7 +108,9 @@ class Service {
  var notice: NotchNotice?
  var shown = 0, dismissed = 0, collapsed = 0
  var shownWhileExpanded = false
+ var canShow = true
  func show(_ incoming: NotchNotice) -> Bool {
+  guard canShow else { return false }
   notice = incoming; shown += 1; shownWhileExpanded = expanded; return true
  }
  func dismissNotice() { notice = nil; dismissed += 1 }
@@ -216,9 +220,16 @@ expect(headerMomentum.handleRewindScroll(momentumOnly) && headerMomentum.expande
        "momentum over the header must not collapse the home or browse notifications")
 
 let browse = fresh(), pendingHover = DispatchWorkItem {}
+NotchNotificationService.shared.readIDs = []
 browse.hoverWork = pendingHover
 expect(browse.handleRewindScroll(down) && browse.notice?.notificationID == newest.id,
        "the first wheel step must show the latest message")
+expect(NotchNotificationService.shared.readIDs == [newest.id],
+       "explicitly browsing a notification must clear only that message's unread mark")
+let rejectedPresentation = fresh()
+rejectedPresentation.canShow = false
+expect(rejectedPresentation.handleRewindScroll(down) && NotchNotificationService.shared.readIDs == [newest.id],
+       "a notification that could not be presented must remain unread")
 expect(browse.notice?.replayed == true && browse.notice?.title == newest.content.title
        && browse.notice?.detail == newest.content.body, "rewind must preserve actual message content")
 expect(pendingHover.isCancelled && browse.hoverWork == nil && browse.hoverState.suppressed,

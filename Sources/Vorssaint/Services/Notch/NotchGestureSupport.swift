@@ -6,12 +6,13 @@ import AppKit
 /// One decision per physical scroll sequence. No timer is needed for wheel
 /// devices without phases: the next event itself expires an old sequence.
 struct NotchGestureSupport {
-    enum Action: Equatable { case open, close, nextTrack, previousTrack }
+    enum Action: Equatable { case open, close, back, nextTrack, previousTrack }
     private enum Axis { case horizontal, vertical }
     private struct Origin {
         let vertical: Bool
         let horizontal: Bool
         let expanded: Bool
+        let backOnRight: Bool
     }
     private var origin: Origin?
     private var axis: Axis?
@@ -20,6 +21,7 @@ struct NotchGestureSupport {
     private var distance = 0.0
     private var fired = false
     private var coasting = false
+    private(set) var consumesBackSwipe = false
     private var lastTimestamp: TimeInterval?
     private static let verticalThreshold = 16.0
 
@@ -55,7 +57,8 @@ struct NotchGestureSupport {
 
     mutating func handle(x: Double, y: Double, timestamp: TimeInterval,
                          began: Bool, ended: Bool, momentum: Bool, precise: Bool, hasPhase: Bool,
-                         allowVertical: Bool, allowHorizontal: Bool, expanded: Bool) -> Action? {
+                         allowVertical: Bool, allowHorizontal: Bool, expanded: Bool,
+                         backOnRight: Bool = false) -> Action? {
         guard timestamp.isFinite, x.isFinite, y.isFinite else { self = Self(); return nil }
         // A quick flick lifts the fingers before the swipe has travelled far
         // enough. Its momentum can finish the opening or closing it began,
@@ -65,6 +68,9 @@ struct NotchGestureSupport {
         let transition = coasting && !momentum && !hasPhase && precise
             && lastTimestamp.map({ timestamp >= $0 && timestamp - $0 <= 0.35 }) == true
         if momentum || transition {
+            // Back owns the rest of the same finger movement and its
+            // momentum, so the newly revealed page cannot scroll.
+            if consumesBackSwipe { lastTimestamp = timestamp; return nil }
             guard coasting, !fired, let origin, let last = lastTimestamp,
                   timestamp >= last, timestamp - last <= 0.35, abs(y) >= abs(x) * 1.5 else {
                 self = Self(); return nil
@@ -74,6 +80,7 @@ struct NotchGestureSupport {
             return verticalAction(expanded: origin.expanded)
         }
         if ended {
+            if consumesBackSwipe { coasting = true; lastTimestamp = timestamp; return nil }
             coasting = origin != nil && axis == .vertical && !fired
             if coasting { lastTimestamp = timestamp } else { self = Self() }
             return nil
@@ -82,7 +89,8 @@ struct NotchGestureSupport {
         if hasPhase {
             if began {
                 self = Self()
-                origin = Origin(vertical: allowVertical, horizontal: allowHorizontal, expanded: expanded)
+                origin = Origin(vertical: allowVertical, horizontal: allowHorizontal, expanded: expanded,
+                                backOnRight: backOnRight && precise)
             }
             // AppKit keeps a phased scroll attached to its original view.
             // A blocked beginning stays blocked, and an interrupted sequence
@@ -98,16 +106,18 @@ struct NotchGestureSupport {
         let allowVertical = origin?.vertical ?? allowVertical
         let allowHorizontal = origin?.horizontal ?? allowHorizontal
         let expanded = origin?.expanded ?? expanded
+        // Back is a phased trackpad gesture, never a mouse-wheel tilt.
+        let backOnRight = origin?.backOnRight ?? false
         if axis == nil {
             // Establish intent from a little accumulated travel, not the first
             // fraction of a point as the fingers touch the trackpad.
             pendingX += x
             pendingY += y
-            if precise, allowHorizontal, abs(pendingX) >= 4, abs(pendingX) >= abs(pendingY) * 1.5 {
+            if precise, allowHorizontal || backOnRight, abs(pendingX) >= 4, abs(pendingX) >= abs(pendingY) * 1.5 {
                 axis = .horizontal
                 distance = pendingX
             }
-            else if allowVertical, abs(pendingY) >= 4, abs(pendingY) >= abs(pendingX) * 1.5 {
+            else if allowVertical || backOnRight, abs(pendingY) >= 4, abs(pendingY) >= abs(pendingX) * 1.5 {
                 axis = .vertical
                 distance = pendingY
             }
@@ -116,6 +126,11 @@ struct NotchGestureSupport {
             distance += axis == .horizontal ? x : y
         }
         switch axis {
+        case .horizontal where backOnRight && distance > 0:
+            consumesBackSwipe = true
+            guard distance >= 40 else { return nil }
+            fired = true
+            return .back
         case .horizontal where allowHorizontal:
             guard abs(distance) >= 40 else { return nil }
             fired = true

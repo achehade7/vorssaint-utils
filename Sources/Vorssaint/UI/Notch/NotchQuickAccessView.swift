@@ -7,13 +7,13 @@ import SwiftUI
 /// Only the transition owns animation state. No timer or display link survives
 /// the reveal, and a reversed transition cannot enable a departing button.
 final class NotchQuickAccessMotion: ObservableObject {
-    static let workspaceWithdrawalDuration: TimeInterval = 0.26
     @Published private(set) var progress: CGFloat = 0
     @Published private(set) var interactive = false
     @Published private(set) var configuration = NotchQuickAccessConfiguration(side: .left, actions: [.explore])
     @Published private(set) var placements: [NotchQuickAccessPlacement] = []
     @Published private(set) var workspaceBadgeFrame: CGRect?
     @Published private(set) var workspaceSurfaceFrame: CGRect?
+    @Published private(set) var workspaceDeparting = false
     @Published private(set) var neonCanvasOffset = CGPoint.zero
     @Published private(set) var neonPointer: CGPoint?
 
@@ -25,12 +25,18 @@ final class NotchQuickAccessMotion: ObservableObject {
         if neonCanvasOffset != offset { neonCanvasOffset = offset }
     }
 
-    func setWorkspaceBadge(_ frame: CGRect?, surface: CGRect?, animated: Bool) {
+    func setWorkspaceBadge(_ frame: CGRect?, surface: CGRect?) {
         guard workspaceBadgeFrame != frame || workspaceSurfaceFrame != surface else { return }
-        withAnimation(animated && workspaceSurfaceFrame != nil
-                      ? .easeInOut(duration: Self.workspaceWithdrawalDuration) : nil) {
-            workspaceBadgeFrame = frame
-            workspaceSurfaceFrame = surface
+        if workspaceBadgeFrame == nil || frame == nil { workspaceDeparting = false }
+        workspaceBadgeFrame = frame
+        workspaceSurfaceFrame = surface
+    }
+
+    /// The label, its black extension and the neon return together.
+    func setWorkspaceDeparting(_ departing: Bool, animated: Bool) {
+        guard workspaceDeparting != departing else { return }
+        withAnimation(animated ? .easeInOut(duration: NotchAeroSpaceState.labelFadeDuration) : nil) {
+            workspaceDeparting = departing
         }
     }
 
@@ -93,6 +99,7 @@ struct NotchQuickAccessView: View {
     @ObservedObject private var awake = KeepAwakeManager.shared
     @ObservedObject private var microphone = MicMuteService.shared
     @ObservedObject private var recorder = ScreenRecorderService.shared
+    @ObservedObject private var music = NotchMusicService.shared
     @AppStorage(DefaultsKey.notchLiquidGlassEnabled) private var glass = false
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
@@ -135,6 +142,7 @@ struct NotchQuickAccessView: View {
                     .fill(.black)
                     .frame(width: frame.width, height: frame.height)
                     .position(x: frame.midX, y: frame.midY)
+                    .opacity(motion.workspaceDeparting ? 0 : 1)
                     .allowsHitTesting(false)
             }
         }
@@ -146,7 +154,7 @@ struct NotchQuickAccessView: View {
                         NotchAeroSpaceService.shared.select(workspace)
                     }
                 }, cornerRadius: 8) {
-                    NotchWorkspaceSignal(workspace: current)
+                    NotchWorkspaceSignal(workspace: current, motion: motion)
                         .id(current)
                         .frame(width: frame.width, height: frame.height)
                         .contentShape(Rectangle())
@@ -161,12 +169,14 @@ struct NotchQuickAccessView: View {
     private func bubble(_ button: NotchQuickButton) -> some View {
         let action = button.action ?? .explore
         let isBack = action == .explore && service.showingSections
+        let isMusic = action == .module(.music) || action == .control(.music)
         let selected: Bool = {
             if action == .explore { return service.showingSections }
             if action == .pin { return service.pinned }
             if action == .control(.keepAwake) { return awake.isActive }
             if action == .control(.microphone) { return microphone.isMuted }
             if action == .control(.recording) { return recorder.isRecording }
+            if isMusic && music.playback?.isPlaying == true { return true }
             if case .module(let module) = action {
                 return !service.showingSections && !service.showingAppPanel && service.selected == module
             }
@@ -200,8 +210,15 @@ struct NotchQuickAccessView: View {
             }
         } label: {
             Group {
-                if action == .settings {
+                if isMusic, let artwork = music.artwork, music.playback != nil {
+                    NotchMusicCover(artwork: artwork, side: 27, radius: 7)
+                } else if action == .settings {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: "/System/Applications/System Settings.app"))
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 24, height: 24)
+                } else if action == .appleMusic {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: "/System/Applications/Music.app"))
                         .resizable()
                         .scaledToFit()
                         .frame(width: 24, height: 24)
@@ -210,6 +227,7 @@ struct NotchQuickAccessView: View {
                         .font(.system(size: 17, weight: .medium))
                 }
             }
+                .foregroundStyle(selected ? NotchNeonPalette.amber : Color.white)
                 .frame(width: NotchQuickAccessLayout.diameter, height: NotchQuickAccessLayout.diameter)
                 // In glass the drop beneath carries the island's shade, which
                 // the window server does not count as the window's own pixels:
@@ -217,7 +235,8 @@ struct NotchQuickAccessView: View {
                 // the app behind, not just the glyph.
                 .background(followsGlass ? Color.black.opacity(0.02) : Color.black, in: Circle())
                 .overlay {
-                    Circle().strokeBorder(.white.opacity(selected || contrast == .increased ? 0.6 : 0.16), lineWidth: 0.75)
+                    Circle().strokeBorder((selected ? NotchNeonPalette.amber : Color.white)
+                        .opacity(selected || contrast == .increased ? 0.6 : 0.16), lineWidth: 0.75)
                         .allowsHitTesting(false)
                 }
                 .contentShape(Circle())
@@ -333,6 +352,7 @@ extension NotchQuickAction {
         switch self {
         case .explore: return "square.grid.2x2"
         case .settings: return "gearshape"
+        case .appleMusic: return "music.note"
         case .pin: return "pin"
         case .module(let module): return module.symbol
         case .control(let item): return item.symbol
@@ -343,6 +363,7 @@ extension NotchQuickAction {
         switch self {
         case .explore: return FeatureStrings.notch(l10n.language).sectionsTitle
         case .settings: return l10n.s.menuSettings
+        case .appleMusic: return "Apple Music"
         case .pin: return FeatureStrings.notch(l10n.language).pin
         case .module(let module): return module.title(l10n.language)
         case .control(let item): return item.title(l10n)

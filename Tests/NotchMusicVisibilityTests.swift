@@ -10,7 +10,7 @@ enum NotchMusicVisibilityTests {
     enum ReviewDefaults { static var current: UserDefaults! }
     final class NotchMusicService {
         static var shared = NotchMusicService()
-        struct Track { var appPID: Int32? = nil }
+        struct Track { var appPID: Int32? = nil; var title: String? = nil; var artist: String? = nil }
         struct Playback { var isPlaying: Bool; var commandContext: NotchPlaybackContext? = nil; var track = Track() }
         var playback: Playback?
         var running = false
@@ -18,6 +18,7 @@ enum NotchMusicVisibilityTests {
         func stop() { running = false }
     }
     enum PowerSampler { static var hasInternalBattery = true }
+    struct MusicSnapshot { let playback: NotchMusicService.Playback }
     struct MonitorNeeds {
         var disk = false
         var fanSpeed = false
@@ -95,6 +96,7 @@ enum NotchMusicVisibilityTests {
         var hasTimerActivity = false
         var hasWatchActivity = false
         var hasDownloadActivity = false
+        var hasUnreadNotifications = false
         var downloadName: String?
         var hasAgentActivity = false
         var hasKeepAwakeActivity = false
@@ -129,6 +131,7 @@ enum NotchMusicVisibilityTests {
         var capsuleSurfaceSize: CGSize? { nil }
         var namedMusicWings: NotchNoticeWings?
         var musicStripHeldSong: NotchPlaybackContext?
+        var heldMusic: MusicSnapshot?
         var showsCopies = false
         var captureControlsLayout: NotchCaptureControlsLayout {
             NotchCaptureControlsLayout(geometry: geometry, titleWidth: 90, capturesAudio: false)
@@ -218,6 +221,18 @@ enum NotchMusicVisibilityTests {
             service.syncVisibleConsumers()
             suite.expect(reader.running && service.compactActivity == .music && service.surfaceSize.width > closed.width,
                    "enabled playback first appears beside both physical and simulated cameras")
+
+            let originalGeometry = service.geometry
+            service.geometry = NotchGeometry(screen: originalGeometry.screen,
+                                            safeAreaTop: physical ? 32 : 0, cameraWidth: physical ? 180 : 0,
+                                            menuBarHeight: 32, compactSideRoom: 360)
+            let compact = service.surfaceSize
+            reader.playback?.track.title = "Jeanne (Axel Boman Remix - Extended)"
+            reader.playback?.track.artist = "A Very Long Artist Name and Their Orchestra"
+            suite.expect(service.surfaceSize == compact
+                         && service.surfaceSize == service.geometry.compactMusicGeometry.compactActivitySize,
+                         "track metadata cannot widen the resting music strip after its announcement")
+            service.geometry = originalGeometry
 
             service.hiddenInFullscreen = true
             service.syncVisibleConsumers()
@@ -485,6 +500,12 @@ enum NotchMusicVisibilityTests {
         defaults.set(NotchIdleContent.none.rawValue, forKey: DefaultsKey.notchIdleContent)
         let bare = resting.geometry.restingSize(showsContent: false)
         suite.expect(resting.surfaceSize == bare, "without the companion the bare island keeps to the camera")
+        resting.hasUnreadNotifications = true
+        suite.expect(resting.surfaceSize == bare && resting.idleContent == .none,
+                     "unread history alone does not widen an otherwise empty island")
+        resting.hasUnreadNotifications = false
+        suite.expect(resting.surfaceSize == bare,
+                     "reading unread history leaves the chosen bare idle surface unchanged")
         resting.mascotVisible = true
         suite.expect(resting.surfaceSize == resting.geometry.collapsed && resting.surfaceSize.width > bare.width,
                      "the resting companion opens both wings, so it sits beside the camera and never under it")

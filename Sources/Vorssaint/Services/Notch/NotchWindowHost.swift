@@ -25,7 +25,6 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
     private let quickAccessContainer: NotchQuickAccessContainer?
     private var quickAccessConfiguration: NotchQuickAccessConfiguration?
     private var workspaceBadgeVisible = false
-    private var workspaceBadgeWithdrawing = false
     private var quickAccessNotchSize = CGSize.zero
     private var quickAccessAnimate = false
     private var currentGeometry: NotchGeometry
@@ -198,11 +197,6 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
         let previousBottom = quickAccessBottomInset(for: targetSize, geometry: currentGeometry)
         let previousFrame = currentGeometry.frame(for: CGSize(width: targetSize.width + previousGutter * 2, height: targetSize.height + previousBottom))
         let withdrawing = !revealing && quickAccessConfiguration != nil && quickAccess == nil
-        // Removing only the workspace extension does not resize the native
-        // island. Keep its gutter until the separate SwiftUI surface contracts.
-        workspaceBadgeWithdrawing = canAnimate && !workspaceBadge && !hideWhenSettled
-            && quickAccess == nil && size == targetSize && geometry.screen == currentGeometry.screen
-            && (workspaceBadgeVisible || workspaceBadgeWithdrawing)
         if revealing { quickAccessContainer?.motion.setVisible(false, animated: false) }
         quickAccessConfiguration = quickAccessContainer == nil ? nil : quickAccess
         workspaceBadgeVisible = workspaceBadge && quickAccessContainer != nil && !hideWhenSettled
@@ -324,8 +318,7 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
         animation.values = paths
         animation.keyTimes = motion.keyTimes.map { NSNumber(value: $0) }
         animation.calculationMode = .linear
-        animation.duration = workspaceBadgeWithdrawing
-            ? max(motion.duration, NotchQuickAccessMotion.workspaceWithdrawalDuration) : motion.duration
+        animation.duration = motion.duration
         if withdrawing {
             animation.beginTime = CACurrentMediaTime() + NotchQuickAccessLayout.withdrawalDuration
             animation.fillMode = .backwards
@@ -351,7 +344,6 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
 
     private func settle() {
         let generation = animationGeneration
-        workspaceBadgeWithdrawing = false
         let gutter: CGFloat = max(workspaceBadgeVisible ? 98 : 0, quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter)
         let bottom = quickAccessBottomInset(for: targetSize, geometry: currentGeometry)
         // A departing island is ordered out below; its released bounds are never shown.
@@ -480,10 +472,8 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
         let badgeFrame = workspaceBadgeVisible
             ? CGRect(x: badgeX + 10, y: max(0, (currentGeometry.stripHeight - 26) / 2), width: 86, height: 26) : nil
         let badgeSurface = workspaceBadgeVisible
-            ? CGRect(x: badgeX, y: 0, width: targetSize.width + 96, height: targetSize.height)
-            : workspaceBadgeWithdrawing
-                ? CGRect(x: badgeX + 96, y: 0, width: targetSize.width, height: targetSize.height) : nil
-        container.motion.setWorkspaceBadge(badgeFrame, surface: badgeSurface, animated: quickAccessAnimate)
+            ? CGRect(x: badgeX, y: 0, width: targetSize.width + 96, height: targetSize.height) : nil
+        container.motion.setWorkspaceBadge(badgeFrame, surface: badgeSurface)
         container.motion.setNeonCanvasOffset(canvas.convert(canvas.backdropOrigin, to: container.quickView))
         container.neonView?.isHidden = false
         let workspaceHover = workspaceBadgeVisible ? [container.convert(
@@ -720,8 +710,8 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
               let view = container.subviews.first(where: { $0.identifier?.rawValue == "notch.neon" }),
               !view.isHidden else { return nil }
         let offset = container.motion.neonCanvasOffset
-        let surface = container.motion.workspaceSurfaceFrame
-            ?? canvas.backdropPresentation.contour.boundingRect.offsetBy(dx: offset.x, dy: offset.y)
+        let resting = canvas.backdropPresentation.contour.boundingRect.offsetBy(dx: offset.x, dy: offset.y)
+        let surface = container.motion.workspaceDeparting ? resting : container.motion.workspaceSurfaceFrame ?? resting
         return panel.convertToScreen(view.convert(surface.offsetBy(dx: 0, dy: NotchNeonEdge.drop), to: nil))
     }
 

@@ -160,7 +160,7 @@ struct NotchCompanionMark: View {
     }
 
     private static func agentMarkSize(_ working: Int, _ geometry: NotchGeometry) -> CGFloat {
-        NotchTimerSupport.stripAgentMarkSize(height: geometry.compactActivityContentHeight, working: working)
+        NotchTimerSupport.stripAgentMarkSize(height: geometry.compactActivityContentHeight, working: working, companion: true)
     }
 
     /// The mark's distance from the strip's end, as far from the curve as

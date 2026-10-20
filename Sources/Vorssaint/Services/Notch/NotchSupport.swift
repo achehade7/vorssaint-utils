@@ -969,8 +969,8 @@ enum NotchCapsuleLayout {
     }
 
     /// Working agents' marks and the reading the person chose.
-    static func agentSurface(reading: String, working: Int, geometry: NotchGeometry, music: Bool = false) -> CGSize {
-        let content = (music ? symbolWidth : agentMarksWidth(working: working)) + spacing
+    static func agentSurface(reading: String, working: Int, geometry: NotchGeometry) -> CGSize {
+        let content = agentMarksWidth(working: working) + spacing
             + width(NotchAgentSupport.readingShape(reading), font: readingFont)
         return surface(content: content, maximum: Maximum.activity, geometry: geometry)
     }
@@ -1166,12 +1166,13 @@ enum NotchQuickAccessSide: String, CaseIterable, Codable {
 }
 
 enum NotchQuickAction: Hashable, Identifiable {
-    case explore, settings, pin, module(NotchModule), control(NotchControlItem)
+    case explore, settings, appleMusic, pin, module(NotchModule), control(NotchControlItem)
 
     var id: String {
         switch self {
         case .explore: return "explore"
         case .settings: return "settings"
+        case .appleMusic: return "appleMusic"
         case .pin: return "pin"
         case .module(let module): return module.rawValue
         case .control(let item): return "control." + item.rawValue
@@ -1182,6 +1183,7 @@ enum NotchQuickAction: Hashable, Identifiable {
         switch id {
         case "explore": self = .explore
         case "settings": self = .settings
+        case "appleMusic": self = .appleMusic
         case "pin": self = .pin
         default:
             if id.hasPrefix("control."), let item = NotchControlItem(rawValue: String(id.dropFirst(8))) {
@@ -1192,7 +1194,7 @@ enum NotchQuickAction: Hashable, Identifiable {
     }
 
     static var optionalActions: [Self] {
-        [.explore, .settings, .pin] + NotchModule.allCases.map(Self.module)
+        [.explore, .settings, .appleMusic, .pin] + NotchModule.allCases.map(Self.module)
             + NotchControlItem.allCases.filter { !$0.isLevel }.map(Self.control)
     }
 
@@ -1562,8 +1564,6 @@ enum NotchSupport {
                      (running && music, .music)]
         case .calendar where calendar:
             pairs = [(downloads, .downloads), (agents, .agents), (music, .music)]
-        case .agents where agents:
-            pairs = [(music, .music)]
         default:
             pairs = []
         }

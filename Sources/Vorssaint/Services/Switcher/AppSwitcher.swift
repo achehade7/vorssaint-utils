@@ -240,11 +240,10 @@ final class AppSwitcher: ObservableObject {
             // the first ⌘Tab.
             let panel = ensurePanel()
             panel.contentViewController?.view.layoutSubtreeIfNeeded()
-            if !capturesPreviews {
-                WindowPreviewProvider.shared.stopWarming()
-            } else {
-                WindowPreviewProvider.shared.startWarming()
-            }
+            // Capture thumbnails when the switcher opens. Warming on every
+            // app activation also lights macOS's screen-recording indicator
+            // during ordinary app use, while the switcher is closed.
+            WindowPreviewProvider.shared.stopWarming()
         } else {
             restoreNativeHotkeys()
             stopObservingKeyboardLayout()

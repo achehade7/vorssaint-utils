@@ -5,7 +5,7 @@ import Foundation
 
 struct NotchAeroSpaceState {
     static let workspaces = ["1", "2", "G", "P"]
-    static let flashDuration: TimeInterval = 1.34
+    static let flashDuration: TimeInterval = 1.32
     static let trailDuration: TimeInterval = 0.8
     static let trailFadeDuration: TimeInterval = 0.27
     static let labelFadeDuration: TimeInterval = 0.24
@@ -13,7 +13,7 @@ struct NotchAeroSpaceState {
     private(set) var previous: String?
     private(set) var flashUntil: TimeInterval = 0
     var trailUntil: TimeInterval { flashUntil - (Self.flashDuration - Self.trailDuration) }
-    var labelFadeAt: TimeInterval { flashUntil - Self.labelFadeDuration - 0.02 }
+    var labelFadeAt: TimeInterval { flashUntil - Self.labelFadeDuration }
 
     mutating func receive(_ data: Data, now: TimeInterval) -> Bool {
         guard let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

@@ -16,8 +16,8 @@ struct NotchCompactMusicSnapshot {
 }
 
 /// Compact playback stays beside the camera and never grows a second row.
-/// Resting on the cover names the song beside it, and resting on the bars
-/// turns them into the song's play or pause button.
+/// Track-change notices name the song; the resting strip keeps its cover
+/// and playback bars without a persistent artist or title.
 struct NotchMusicStrip: View {
     @ObservedObject var service: NotchService
     var snapshot: NotchCompactMusicSnapshot? = nil
@@ -61,8 +61,6 @@ struct NotchMusicStrip: View {
         guard let artist = playback?.track.artist?.trimmingCharacters(in: .whitespaces), !artist.isEmpty else { return nil }
         return artist
     }
-    /// A simulated camera has room for the track even when its wings disappear.
-    private var fillsCameraGap: Bool { Layout.fillsCameraGap(geometry) }
     private var showsArtist: Bool { Layout.showsArtist(geometry) }
     /// The left side while the pointer has the song named, nil otherwise. A
     /// strip on its way out keeps the name it had, which leaves with it.
@@ -91,17 +89,14 @@ struct NotchMusicStrip: View {
                 .clipped()
                 .contentShape(Rectangle())
                 .onHover { if live { service.hoverMusicStrip(.cover, entered: $0) } }
-                Group {
-                    if fillsCameraGap { trackLabel } else { Color.clear }
-                }
-                .frame(width: geometry.compactActivityCameraGap, height: geometry.compactActivityContentHeight)
-                .clipped()
-                HStack {
-                    if wing > 0 { bars }
-                }
+                Color.clear
+                    .frame(width: geometry.compactActivityCameraGap, height: geometry.compactActivityContentHeight)
+                    .clipped()
+                Group { if wing > 0 { bars } else { Color.clear } }
                 .padding(.leading, innerInset)
                 .padding(.trailing, barsInset)
                 .frame(width: wing, height: geometry.compactActivityContentHeight, alignment: .trailing)
+                .clipped()
                 .contentShape(Rectangle())
                 .onHover { if live { service.hoverMusicStrip(.bars, entered: $0) } }
             }
@@ -158,25 +153,6 @@ struct NotchMusicStrip: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .accessibilityHidden(true)
-    }
-
-    private var trackLabel: some View {
-        VStack(spacing: 1) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .lineLimit(1)
-                .truncationMode(.tail)
-            if showsArtist, let artist {
-                Text(artist)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.62))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-        }
-        .padding(.horizontal, geometry.compactMusicLabelInset)
-        .frame(maxWidth: .infinity)
         .accessibilityHidden(true)
     }
 }

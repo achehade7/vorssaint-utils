@@ -923,7 +923,8 @@ def main():
           + "}\n}\n")
     write("NotchSectionScrollRoute.swift", "import AppKit\nextension NotchSectionPagingTests {\nfinal class Service: State {\n"
           + "".join(declaration(notch, prefix).replace("    private ", "    ", 1) for prefix in [
-              "    private func handleScroll(", "    private func handleSectionScroll("])
+              "    private func handleScroll(", "    private func handleBackScroll(", "    private func handleSectionScroll("])
+          .replace("NotchGestureSupport.isEnabled()", "gesturesEnabled")
           + "}\n}\n")
     write("NotchMascotHiding.swift", "import CoreGraphics\nimport Foundation\n"
           + "extension NotchMascotHidingContract {\nfinal class Service: State {\n"
@@ -1044,6 +1045,7 @@ def main():
           + declaration(notch, "    func toggleSections()")
           + declaration(notch, "    func goBack()")
           + declaration(notch, "    private func stepBack()").replace("private func", "func", 1)
+          + declaration(notch, "    private func swipeBack()").replace("private func", "func", 1)
           + declaration(notch, "    func setPageLayer(")
           + declaration(notch, "    func openAppPanel(")
           + declaration(notch, "    func showMetric(")
@@ -1214,6 +1216,7 @@ def main():
           + 'func hide() { events.append("hide") }\n'
           + availability_declaration(service, "    func run(_ item: QuickLauncherItem)")
           + declaration(service, "    func prepareForPresentation()")
+          + declaration(service, "    func closeUtility()")
           + availability_declaration(service, "    func refreshAvailability()")
           + declaration(service, "    private func clampSelection()")
           + declaration(service, "    func activateSelection()")

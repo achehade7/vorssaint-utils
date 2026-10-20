@@ -1339,8 +1339,9 @@ enum NotchHoverTests {
         expect(skipped.heldMusic?.title == "Old" && skipped.notice == nil,
                "skipping again restarts the wait and keeps the song still on screen")
         DispatchQueue.main.advance(0.02)
-        expect(skipped.notice?.event == .track && skipped.notice?.title == "Newer" && skipped.heldMusic == nil,
-               "the notice shows where playback settled and releases the strip behind it")
+        expect(skipped.notice?.event == .track && skipped.notice?.title == "Artist"
+               && skipped.notice?.detail == "Newer" && skipped.heldMusic == nil,
+               "the notice shows the settled artist on the left and track on the right, releasing the strip")
         for block: (Service) -> Void in [{ $0.expanded = true },
                                          { _ in NotchMusicService.shared.playback = song("New", playing: false) }] {
             let blocked = fixture(false)
@@ -1364,7 +1365,8 @@ enum NotchHoverTests {
         expect(arriving.awaitsTrackNotice && arriving.heldMusic == nil,
                "a new song with no strip song to keep waits for its notice too")
         DispatchQueue.main.advance(0.5)
-        expect(arriving.notice?.title == "New" && !arriving.awaitsTrackNotice && arriving.menuSpaceSyncs == 1,
+        expect(arriving.notice?.title == "Artist" && arriving.notice?.detail == "New"
+               && !arriving.awaitsTrackNotice && arriving.menuSpaceSyncs == 1,
                "the notice shows the song first, and the closed island may show it after, with its menu room read again")
         let unnoticed = fixture(false)
         NotchMusicService.shared.playback = song("New")

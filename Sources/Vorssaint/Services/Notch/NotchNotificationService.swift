@@ -11,6 +11,7 @@ final class NotchNotificationService: ObservableObject {
     static let shared = NotchNotificationService()
     @Published private var inbox = NotchNotificationInbox()
     var items: [NotchSystemNotification] { inbox.items }
+    var unreadCount: Int { inbox.unreadCount }
     @Published private(set) var monitoring = false
     @Published private(set) var openingID: UUID?
     let received = PassthroughSubject<NotchSystemNotification, Never>()
@@ -140,7 +141,9 @@ final class NotchNotificationService: ObservableObject {
         let liveIDs = Set(live.map(\.id))
         shownIDs.formIntersection(liveIDs)
         closingIDs.formIntersection(liveIDs)
-        let arrivals = inbox.update(live)
+        let arrivals = inbox.update(live.filter {
+            NotchNotificationSupport.shouldMirror($0.content, sourceBundleIdentifier: sources[$0.content.app] ?? nil)
+        })
         trimIcons()
         for item in arrivals { received.send(item) }
     }
@@ -155,6 +158,16 @@ final class NotchNotificationService: ObservableObject {
     func dismiss(_ id: UUID) {
         inbox.dismiss(id)
         trimIcons()
+    }
+
+    func markRead(_ id: UUID) {
+        guard inbox.unreadIDs.contains(id) else { return }
+        inbox.markRead(id)
+    }
+
+    func markAllRead() {
+        guard inbox.unreadCount > 0 else { return }
+        inbox.markAllRead()
     }
 
     /// Empties the island's inbox only; Notification Center keeps its own.
@@ -225,6 +238,7 @@ final class NotchNotificationService: ObservableObject {
     func open(_ id: UUID, completion: @escaping (NotchNotificationReader.ActionResult) -> Void) {
         guard openingID == nil, monitoring, NotchNotificationSupport.isEnabled(),
               items.contains(where: { $0.id == id }), let reader else { completion(.unavailable); return }
+        markRead(id)
         openingID = id
         unavailableID = nil
         let requested = generation

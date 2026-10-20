@@ -643,6 +643,12 @@ enum NotchActivityTests {
     }
 
     private static func compactTimerContracts(_ suite: TestSuite) {
+        for height: CGFloat in [24, 32] {
+            let single = NotchTimerSupport.stripAgentMarkSize(height: height, working: 1)
+            let pair = NotchTimerSupport.stripAgentMarkSize(height: height, working: 2)
+            suite.expect(pair == single && pair > 11,
+                         "a second agent keeps both marks at their single-agent size while timers stack")
+        }
         func companions(of primary: NotchCompactActivity, timer: Bool = true, running: Bool = true,
                         calendar: Bool = true) -> [NotchCompactActivity] {
             NotchSupport.compactCompanions(of: primary, timer: timer, running: running, downloads: true, agents: true,
@@ -658,7 +664,7 @@ enum NotchActivityTests {
                      "an event's clock keeps its side beside a download, agents or music, whatever the timer does")
         suite.expect([NotchCompactActivity.downloads, .music].allSatisfy { companions(of: $0).isEmpty },
                      "downloads and music use both wings and cannot lead a pair")
-        suite.expect(companions(of: .agents) == [.music], "working agents offer music beside their elapsed time")
+        suite.expect(companions(of: .agents).isEmpty, "working agents retain only their marks and elapsed time while music plays")
         suite.expect(NotchSupport.compactCompanions(of: .agents, timer: false, running: false,
                      downloads: false, agents: false, calendar: false, music: true).isEmpty,
                      "inactive agents cannot lead a music pair")
@@ -713,6 +719,12 @@ enum NotchActivityTests {
         }
         let roomy = NotchGeometry(screen: screen, safeAreaTop: 32, cameraWidth: 185, layout: .spacious,
                                   compactSideRoom: 300)
+        let pairedTimer = roomy.compactTimerGeometry(showsDownloads: false)
+        let companionSize = NotchTimerSupport.stripAgentMarkSize(height: 32, working: 2, companion: true)
+        let companionWidth = 2 * (companionSize * 1.45 + 1) + 1
+            + pairedTimer.compactActivityEdgeInset(boxHeight: companionSize + 4, radius: (companionSize + 4) / 2)
+        suite.expect(companionWidth + NotchTimerSupport.stripCameraGap <= pairedTimer.compactActivityWingWidth,
+                     "two agent marks paired with a timer still fit its narrower wing without covering the camera")
         suite.expect(roomy.compactTimerGeometry(showsDownloads: false, wing: 30).compactActivityWingWidth == 44
                         && roomy.compactTimerGeometry(showsDownloads: false, wing: 30).compactActivitySize.width == 185 + 88,
                      "a short reading beside the cover narrows the timer's wings, leaving no empty band at the ends")

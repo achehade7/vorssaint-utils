@@ -95,8 +95,10 @@ enum NotchSectionPagingTests {
     struct NSEvent {
         var locationInWindow: CGPoint
         var scrollingDeltaY: CGFloat = -24
+        var scrollingDeltaX: CGFloat = 0
         var timestamp: TimeInterval = 10
         var hasPreciseScrollingDeltas = true
+        var isDirectionInvertedFromDevice = true
         var phase: AppKit.NSEvent.Phase = .began
         var momentumPhase: AppKit.NSEvent.Phase = []
         var modifierFlags: AppKit.NSEvent.ModifierFlags = []
@@ -113,13 +115,19 @@ enum NotchSectionPagingTests {
     }
     class State {
         var running = true, suspended = false, expanded = true, showingSections = true, trackingMenu = false
+        var gesturesEnabled = true, heldDrag = false
+        var captureControls: Bool?
         var panel: Panel? = Panel()
         var windowHost: Host? = Host()
         var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1470, height: 956),
                                      safeAreaTop: 32, cameraWidth: 180)
         var expandedGeometry: NotchGeometry { geometry }
         var sectionScroll = NotchSectionScroll()
+        var backGesture = NotchGestureSupport()
         var movedRows = 0, gestureCalls = 0
+        var homeOpenings = 0
+        func toggleSections() { showingSections.toggle(); homeOpenings += 1 }
+        func swipeBack() { if !showingSections { toggleSections() } }
         func scrollSections(by rows: Int) { movedRows += rows }
         func handleGesture(_ event: NSEvent) -> Bool { gestureCalls += 1; return false }
         func handleRewindScroll(_ event: NSEvent) -> Bool { false }
@@ -152,6 +160,66 @@ enum NotchSectionPagingTests {
             service.windowHost?.acceptsPoint = false
             suite.expect(!service.handleScroll(event(fromTop: headerBottom + 20)) && service.movedRows == before,
                          "transparent corners and floating controls are not captured by the gallery")
+        }
+        homeRouting(suite)
+    }
+
+    private static func homeRouting(_ suite: TestSuite) {
+        func swipe(_ service: Service, x: CGFloat = 45, y: CGFloat = 0,
+                   phase: AppKit.NSEvent.Phase = .began, momentum: AppKit.NSEvent.Phase = []) -> NSEvent {
+            var event = NSEvent(locationInWindow: CGPoint(x: 100, y: 80))
+            event.scrollingDeltaX = x
+            event.scrollingDeltaY = y
+            event.phase = phase
+            event.momentumPhase = momentum
+            return event
+        }
+        let service = Service()
+        service.showingSections = false
+        suite.expect(service.handleScroll(swipe(service)) && service.showingSections
+                     && service.homeOpenings == 1 && service.gestureCalls == 0,
+                     "the production route returns Home before Music or page handlers can consume the swipe")
+        suite.expect(service.handleScroll(swipe(service, phase: .changed))
+                     && service.handleScroll(swipe(service, x: 0, phase: .ended))
+                     && service.handleScroll(swipe(service, y: -100, phase: [], momentum: .began))
+                     && service.homeOpenings == 1 && service.movedRows == 0,
+                     "the swipe tail and its momentum never toggle Home back or scroll the new gallery")
+        suite.expect(service.handleScroll(swipe(service, x: 0, y: -24)) && service.movedRows == 1,
+                     "a new vertical gesture scrolls Home normally after navigation")
+        // Replay the short sequence recorded from the user's trackpad, including
+        // its small vertical drift. Previously this direction never navigated.
+        let sampled = Service()
+        sampled.showingSections = false
+        let travel: [(CGFloat, CGFloat)] = [(1, 0), (4, 2), (8, 1), (4, 1), (9, 1), (11, 0), (21, -1)]
+        for (index, delta) in travel.enumerated() {
+            var event = swipe(sampled, x: delta.0, y: delta.1, phase: index == 0 ? .began : .changed)
+            event.timestamp += Double(index) * 0.01
+            _ = sampled.handleScroll(event)
+        }
+        suite.expect(sampled.showingSections && sampled.homeOpenings == 1,
+                     "the captured trackpad swipe now goes back exactly once")
+        for blocked in ["disabled", "suspended", "closed", "capture", "drag", "menu", "outside", "modified"] {
+            let service = Service()
+            service.showingSections = false
+            service.gesturesEnabled = blocked != "disabled"
+            service.suspended = blocked == "suspended"
+            service.expanded = blocked != "closed"
+            service.captureControls = blocked == "capture" ? true : nil
+            service.heldDrag = blocked == "drag"
+            service.trackingMenu = blocked == "menu"
+            service.windowHost?.acceptsPoint = blocked != "outside"
+            var event = swipe(service)
+            if blocked == "modified" { event.modifierFlags = .command }
+            suite.expect(!service.handleBackScroll(event) && service.homeOpenings == 0,
+                         "\(blocked) input cannot navigate the island")
+        }
+        for natural in [true, false] {
+            let service = Service()
+            service.showingSections = false
+            var event = swipe(service, x: natural ? 45 : -45)
+            event.isDirectionInvertedFromDevice = natural
+            suite.expect(service.handleBackScroll(event) && service.showingSections,
+                         "physical rightward movement returns Home with natural scrolling \(natural)")
         }
     }
 }

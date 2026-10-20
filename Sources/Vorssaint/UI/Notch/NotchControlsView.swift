@@ -558,7 +558,7 @@ enum NotchTileAccent {
         switch self {
         case .selection: return .white
         case .alert: return .red
-        case .awake: return .yellow
+        case .awake: return NotchNeonPalette.amber
         case .timer: return .orange
         }
     }

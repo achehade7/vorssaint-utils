@@ -136,6 +136,7 @@ enum NotchDestinationContract {
         reopeningContracts(defaults: defaults, suite: suite)
         countdownContracts(defaults: defaults, suite: suite)
         stepBackContracts(suite)
+        swipeBackContracts(suite)
         // A page opened while the Command Bar is in the island takes its place.
         let barHost = Service()
         barHost.expanded = true
@@ -227,6 +228,65 @@ enum NotchDestinationContract {
     }
 
     /// Escape steps back through what the island shows, then closes it.
+    private static func swipeBackContracts(_ suite: TestSuite) {
+        let tools = Service()
+        tools.open(.tools)
+        let launcher = QuickLauncherService.shared
+        launcher.activeUtility = .urlCleaner
+        tools.swipeBack()
+        suite.expect(tools.expanded && tools.selected == .tools && !tools.showingSections
+                     && launcher.activeUtility == nil,
+                     "swiping inside a utility returns to Tools before Home")
+        tools.swipeBack()
+        suite.expect(tools.expanded && tools.showingSections, "a second swipe from Tools returns Home")
+        tools.swipeBack()
+        suite.expect(tools.expanded && tools.showingSections, "swiping on Home does not toggle the prior tool back open")
+
+        let editing = Service()
+        editing.open(.tools)
+        launcher.isEditing = true
+        launcher.editingOptionsItem = .clipboard
+        editing.swipeBack()
+        suite.expect(launcher.isEditing && launcher.editingOptionsItem == nil && !editing.showingSections,
+                     "a tool options card closes before edit mode")
+        editing.swipeBack()
+        suite.expect(!launcher.isEditing && !editing.showingSections,
+                     "the next swipe leaves tool editing while retaining Tools")
+
+        let detail = Service()
+        detail.open(.system, metric: .cpu)
+        detail.swipeBack()
+        suite.expect(detail.expanded && detail.selectedMetric == nil && !detail.showingSections,
+                     "a direct metric detail swipes back to System without closing the island")
+        detail.swipeBack()
+        suite.expect(detail.showingSections, "System swipes back to Home")
+
+        let music = Service()
+        music.open(.music)
+        var closedLayer = false
+        music.setPageLayer(.music) { closedLayer = true; music.setPageLayer(.music, close: nil) }
+        music.swipeBack()
+        suite.expect(closedLayer && music.expanded && !music.showingSections,
+                     "a Music detail closes before leaving the Music page")
+        music.swipeBack()
+        suite.expect(music.showingSections, "Music itself swipes back to Home")
+
+        let command = Service()
+        command.open(.calendar)
+        command.showingCommandBar = true
+        command.swipeBack()
+        suite.expect(!command.showingCommandBar && command.selected == .calendar && !command.showingSections,
+                     "the Command Bar swipes back to the page underneath")
+        for blocker in ["drag", "capture"] {
+            let held = Service()
+            held.open(.system, metric: .cpu)
+            if blocker == "drag" { held.heldDrag = true } else { held.captureControls = NSObject() }
+            held.swipeBack()
+            suite.expect(held.selectedMetric == .cpu && !held.showingSections,
+                         "a \(blocker) keeps its active interaction when a back request arrives")
+        }
+    }
+
     private static func stepBackContracts(_ suite: TestSuite) {
         let metric = Service()
         metric.open(.system)

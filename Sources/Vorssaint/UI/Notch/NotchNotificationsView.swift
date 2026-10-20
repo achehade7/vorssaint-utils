@@ -44,6 +44,8 @@ struct NotchNotificationsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .environment(\.locale, l10n.language.formattingLocale())
+        .onAppear { service.markAllRead() }
+        .onChange(of: service.items.map(\.id)) { service.markAllRead() }
     }
 }
 

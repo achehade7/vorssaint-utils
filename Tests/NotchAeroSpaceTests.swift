@@ -16,16 +16,16 @@ enum NotchAeroSpaceTests {
                      "the first workspace snapshot sets selection without a startup flash")
         suite.expect(state.previous == nil, "the initial snapshot cannot invent a previous workspace")
         suite.expect(state.showsStrip(hovered: true, blocked: false, now: 10), "hover reveals connected workspaces")
-        suite.expect(state.receive(event("G"), now: 20) && state.showsStrip(hovered: false, blocked: false, now: 21.32)
-                     && !state.showsStrip(hovered: false, blocked: false, now: 21.34),
+        suite.expect(state.receive(event("G"), now: 20) && state.showsStrip(hovered: false, blocked: false, now: 21.31)
+                     && !state.showsStrip(hovered: false, blocked: false, now: 21.32),
                      "the workspace shell stays through the app and label departures")
         suite.expect(state.previous == "1" && state.trailUntil == 20.8 && state.trailUntil < state.flashUntil,
                      "confirmed switches keep app trails shorter than the workspace label")
         let appsGone = state.trailUntil + NotchAeroSpaceState.trailFadeDuration
         suite.expect(state.labelFadeAt > appsGone && state.labelFadeAt - appsGone < 0.03
-                     && state.labelFadeAt + NotchAeroSpaceState.labelFadeDuration < state.flashUntil,
-                     "the label follows the app fade closely and finishes before its shell withdraws")
-        suite.expect(!state.receive(event("G"), now: 20.9) && state.flashUntil == 21.34,
+                     && abs(state.labelFadeAt + NotchAeroSpaceState.labelFadeDuration - state.flashUntil) < 0.001,
+                     "the label follows the app fade closely and hands directly into shell withdrawal")
+        suite.expect(!state.receive(event("G"), now: 20.9) && state.flashUntil == 21.32,
                      "duplicate events do not extend the flash")
         suite.expect(state.previous == "1", "duplicate events preserve the previous destination")
         suite.expect(!state.showsStrip(hovered: true, blocked: true, now: 21),

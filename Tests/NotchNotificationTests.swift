@@ -173,27 +173,49 @@ enum NotchNotificationTests {
         }
         var inbox = NotchNotificationInbox()
         let existing = item(), first = item(), second = item()
-        suite.expect(inbox.update([existing]).isEmpty && inbox.items.isEmpty,
-               "enabling mirroring does not replay banners already on screen")
+        suite.expect(inbox.update([existing]).isEmpty && inbox.items.isEmpty && inbox.unreadCount == 0,
+               "enabling mirroring does not replay or count banners already on screen")
         suite.expect(inbox.update([existing, first, first]).map(\.id) == [first.id] && inbox.items.count == 1,
                "repeated layout callbacks deliver each new notification once")
+        suite.expect(inbox.unreadIDs == [first.id],
+               "a new notification waits unread even after its automatic banner is delivered")
         suite.expect(inbox.update([first, second]).map(\.id) == [second.id] && inbox.items.count == 2,
                "identical text from different notifications remains distinct")
+        suite.expect(inbox.unreadCount == 2, "separate arrivals each contribute one unread mark")
+        inbox.markRead(first.id)
+        inbox.markRead(UUID())
+        _ = inbox.update([first, second])
+        suite.expect(inbox.unreadIDs == [second.id] && inbox.items.count == 2,
+               "reading a notification keeps its history and rescanning cannot mark it unread again")
         inbox.dismiss(second.id)
-        suite.expect(inbox.update([first, second]).isEmpty && !inbox.items.contains(where: { $0.id == second.id }),
-               "a dismissed mirror does not return when the native banner changes layout")
+        suite.expect(inbox.update([first, second]).isEmpty && !inbox.items.contains(where: { $0.id == second.id })
+               && inbox.unreadCount == 0,
+               "a dismissed mirror loses its unread mark and cannot return on native layout changes")
         _ = inbox.update([])
         suite.expect(inbox.items.first?.canOpen == false,
                "expired native banners lose their actions while their mirrored text remains")
+        let evicted = item()
+        _ = inbox.update([evicted])
+        _ = inbox.update([])
+        suite.expect(inbox.unreadIDs == [evicted.id],
+               "native banner expiry does not mark unseen notification history as read")
         for _ in 0..<300 { _ = inbox.update([item()]) }
         suite.expect(inbox.items.count == NotchNotificationSupport.maximumItems, "the session inbox stays bounded during bursts")
+        suite.expect(inbox.unreadIDs == Set(inbox.items.map(\.id)) && !inbox.unreadIDs.contains(evicted.id),
+               "unread marks stay bounded by retained history and disappear with evicted messages")
         inbox = NotchNotificationInbox()
-        suite.expect(inbox.items.isEmpty, "locking or disabling discards mirrored messages")
+        suite.expect(inbox.items.isEmpty && inbox.unreadCount == 0,
+               "locking or disabling discards mirrored messages and their unread state")
 
         let kept = item(), onScreen = item(), expired = item()
         _ = inbox.update([])
         _ = inbox.update([kept, onScreen, expired])
         _ = inbox.update([kept, onScreen])
+        inbox.markAllRead()
+        inbox.markAllRead()
+        _ = inbox.update([kept, onScreen])
+        suite.expect(inbox.unreadCount == 0 && inbox.items.count == 3,
+               "opening the inbox marks retained messages read without deleting or re-marking them on a rescan")
         inbox.dismiss(kept.id)
         suite.expect(inbox.items.map(\.id) == [expired.id, onScreen.id],
                "dismissing one mirror leaves the others in place")
@@ -202,14 +224,15 @@ enum NotchNotificationTests {
         let next = item()
         suite.expect(inbox.update([kept, onScreen, next]).map(\.id) == [next.id] && inbox.items.map(\.id) == [next.id],
                "the first pass after clearing mirrors a new notification without restoring the cleared ones")
+        suite.expect(inbox.unreadIDs == [next.id], "new arrivals become unread after clearing the inbox")
         let later = item()
         suite.expect(inbox.update([onScreen, next, later]).map(\.id) == [later.id]
                && inbox.items.map(\.id) == [later.id, next.id],
                "banners still on screen stay cleared while later notifications keep arriving")
         inbox.clear()
         inbox.clear()
-        suite.expect(inbox.items.isEmpty && inbox.update([]).isEmpty,
-               "clearing an empty inbox is harmless")
+        suite.expect(inbox.items.isEmpty && inbox.update([]).isEmpty && inbox.unreadCount == 0,
+               "clearing the inbox removes every unread mark and remains harmless when already empty")
 
         let domain = "com.vorssaint.tests.notch-notifications"
         let defaults = UserDefaults(suiteName: domain)!

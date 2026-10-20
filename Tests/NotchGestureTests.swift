@@ -38,11 +38,12 @@ enum NotchGestureTests {
         var time = 1.0
         func feed(_ x: Double = 0, _ y: Double = 0, began: Bool = false,
                   ended: Bool = false, momentum: Bool = false, precise: Bool = true, phased: Bool = true,
-                  vertical: Bool = true, horizontal: Bool = true, expanded: Bool = false) -> NotchGestureSupport.Action? {
+                  vertical: Bool = true, horizontal: Bool = true, expanded: Bool = false,
+                  home: Bool = false) -> NotchGestureSupport.Action? {
             time += 0.01
             return gesture.handle(x: x, y: y, timestamp: time, began: began, ended: ended,
                                   momentum: momentum, precise: precise, hasPhase: phased, allowVertical: vertical,
-                                  allowHorizontal: horizontal, expanded: expanded)
+                                  allowHorizontal: horizontal, expanded: expanded, backOnRight: home)
         }
         suite.expect(feed(0, 5, began: true) == nil && feed(0, 10) == nil && feed(0, 10) == .open,
                "small vertical movement accumulates into one intentional opening")
@@ -193,6 +194,32 @@ enum NotchGestureTests {
                && NotchGestureSupport.movement(-3, precise: true, inverted: false) == 3
                && NotchGestureSupport.movement(-1, precise: false, inverted: false) == 24,
                "gesture direction is consistent across natural scrolling and wheel devices")
+
+        suite.expect(feed(10, 1, began: true, vertical: false, horizontal: false, expanded: true, home: true) == nil
+                     && gesture.consumesBackSwipe
+                     && feed(30, 0, vertical: false, horizontal: false, expanded: true, home: true) == .back,
+                     "a deliberate rightward trackpad swipe steps back from an open page")
+        suite.expect(feed(90, 0, vertical: false, horizontal: false, expanded: true, home: true) == nil
+                     && feed(0, 0, ended: true, home: true) == nil
+                     && feed(90, 20, momentum: true, phased: false, home: true) == nil
+                     && gesture.consumesBackSwipe,
+                     "one swipe steps back once and consumes its tail instead of moving the parent page")
+        suite.expect(feed(0, 24, began: true, vertical: false, horizontal: false, home: true) == nil
+                     && !gesture.consumesBackSwipe
+                     && feed(100, 0, vertical: false, horizontal: false, home: true) == nil,
+                     "a fresh vertical list scroll passes through and cannot turn into Home navigation")
+        suite.expect(feed(-80, 0, began: true, vertical: false, horizontal: false, home: true) == nil
+                     && !gesture.consumesBackSwipe,
+                     "a leftward swipe does not navigate Home")
+        suite.expect(feed(10, 0, began: true, vertical: false, horizontal: false, home: true) == nil
+                     && feed(0, 0, ended: true, home: true) == nil
+                     && feed(80, 0, momentum: true, phased: false, home: true) == nil,
+                     "momentum cannot turn an unfinished Home gesture into navigation")
+        suite.expect(feed(80, 0, began: true, precise: false, phased: false,
+                          vertical: false, horizontal: false, home: true) == nil
+                     && !gesture.consumesBackSwipe
+                     && feed(80, 0, precise: true, phased: false, vertical: false, horizontal: false, home: true) == nil,
+                     "ordinary and smoothed mouse-wheel tilts never return Home")
 
         let domain = "com.vorssaint.tests.notch-gestures"
         let defaults = UserDefaults(suiteName: domain)!

@@ -133,6 +133,7 @@ final class NotchService: ObservableObject {
     @Published private(set) var quietMode = false
     @Published private(set) var neonWakeAt: Date?
     @Published private(set) var neonChargeAt: Date?
+    @Published private(set) var neonCopyAt: Date?
     @Published private(set) var nightPalette: Double = 0
     @Published private(set) var routingFileDrag = false
     @Published private(set) var dragTargetWorkspace: String?
@@ -256,6 +257,7 @@ final class NotchService: ObservableObject {
     }
     private var settingsSignature = ""
     private var gesture = NotchGestureSupport()
+    private var backGesture = NotchGestureSupport()
     private var sectionScroll = NotchSectionScroll()
     private var rewindScroll = NotchSectionScroll()
     private let audioOutputMenu = NotchMenuAnchor()
@@ -751,7 +753,7 @@ final class NotchService: ObservableObject {
             return provisional.compactMusicArtworkSide + provisional.compactMusicArtworkInset
         case .agents:
             let working = Set(AgentUsageService.shared.snapshot.live.map(\.provider)).count
-            let side = NotchTimerSupport.stripAgentMarkSize(height: height, working: working)
+            let side = NotchTimerSupport.stripAgentMarkSize(height: height, working: working, companion: true)
             return CGFloat(max(1, working)) * (side * 1.45 + 1) + CGFloat(max(0, working - 1))
                 + provisional.compactActivityEdgeInset(boxHeight: side + 4, radius: (side + 4) / 2)
         case .calendar:
@@ -792,8 +794,8 @@ final class NotchService: ObservableObject {
             : widths.reduce(0, +) + CGFloat(max(0, readings.count - 1)) * NotchAgentSupport.stripReadingSpacing
         let textHeight = stacked ? ceil(size * 1.2) * 2 : size * 0.72
         let reading = width.rounded(.up) + provisional.compactActivityEdgeInset(boxHeight: textHeight, radius: 0)
-        // The marks on the other side, drawn as the strip draws them: two
-        // working agents share a smaller size, each in a frame wider than it.
+        // Two working agents keep their usual mark size even when their
+        // readings stack; measure the same frames the strip draws.
         let working = Set(AgentUsageService.shared.snapshot.live.map(\.provider)).count
         let mark = NotchTimerSupport.stripAgentMarkSize(height: provisional.compactActivityContentHeight,
                                                        working: working)
@@ -1062,7 +1064,7 @@ final class NotchService: ObservableObject {
             let reading = NotchAgentSupport.stripReading(AgentUsageService.shared.snapshot, readout: NotchAgentSupport.readout(),
                                                          display: NotchAgentSupport.limitDisplay(),
                                                          focus: NotchAgentSupport.limitFocus(), now: Date())
-            return layout.agentSurface(reading: reading, working: working, geometry: geometry, music: companion == .music)
+            return layout.agentSurface(reading: reading, working: working, geometry: geometry)
         case .calendar:
             guard let countdown = NotchCalendarService.shared.countdown else { return geometry.restingSize(showsContent: false) }
             if let companion {
@@ -1278,6 +1280,7 @@ final class NotchService: ObservableObject {
         panel?.handleScroll = nil
         panel?.handleMiddleClick = nil
         gesture = NotchGestureSupport()
+        backGesture = NotchGestureSupport()
         sectionScroll = NotchSectionScroll()
         rewindScroll = NotchSectionScroll()
         stopMenuSpaceMonitoring()
@@ -1838,6 +1841,12 @@ final class NotchService: ObservableObject {
         switch action {
         case .explore: toggleSections()
         case .settings: openSettings()
+        case .appleMusic:
+            perform {
+                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Music") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
         case .pin: pinned.toggle()
         case .module(let module): select(module)
         case .control(let item):
@@ -1939,6 +1948,27 @@ final class NotchService: ObservableObject {
             close()
         } else {
             collapse()
+        }
+    }
+
+    /// Swiping follows the visible hierarchy, keeping the island open.
+    /// A top-level page returns to Home; Home itself stays put.
+    private func swipeBack() {
+        guard expanded, captureControls == nil, !heldDrag, !showingSections else { return }
+        if showingCommandBar {
+            open(selected)
+        } else if showingAppPanel || selectedMetric != nil {
+            goBack()
+        } else if let close = pageLayers[selected] {
+            close()
+        } else if selected == .tools {
+            let launcher = QuickLauncherService.shared
+            if launcher.activeUtility != nil { launcher.closeUtility() }
+            else if launcher.editingOptionsItem != nil { launcher.editingOptionsItem = nil }
+            else if launcher.isEditing { launcher.isEditing = false }
+            else { toggleSections() }
+        } else {
+            toggleSections()
         }
     }
 
@@ -2353,7 +2383,8 @@ final class NotchService: ObservableObject {
             guard !self.expanded, !self.peeking, !self.dragPlaceholder, self.captureControls == nil,
                   let playback = NotchMusicService.shared.playback, playback.isPlaying,
                   let title = playback.track.title, !title.isEmpty else { return }
-            self.show(NotchNotice(event: .track, title: title, detail: playback.track.artist ?? "",
+            self.show(NotchNotice(event: .track, title: playback.track.artist ?? FeatureStrings.radialMenu(L10n.shared.language).mediaNowPlaying,
+                                  detail: title,
                                   symbol: "music.note"))
         }
         trackWork = work
@@ -2917,7 +2948,7 @@ final class NotchService: ObservableObject {
 
     /// A strip beside a camera naming its song fits the name it shows now in place.
     private func fitNamedMusicStrip() {
-        guard musicStripNamesSong, !geometry.floats else { return }
+        guard !geometry.floats, musicStripNamesSong else { return }
         musicStripFitsInPlace = true
         refreshPresentation()
     }
@@ -3792,7 +3823,10 @@ final class NotchService: ObservableObject {
     }
 
     private func syncGestures() {
-        if !NotchGestureSupport.isEnabled() { gesture = NotchGestureSupport() }
+        if !NotchGestureSupport.isEnabled() {
+            gesture = NotchGestureSupport()
+            backGesture = NotchGestureSupport()
+        }
         panel?.handleScroll = { [weak self] event in self?.handleScroll(event) ?? false }
         panel?.handleMiddleClick = { [weak self] event in
             guard let self, self.acceptsUserInteraction, !self.trackingMenu,
@@ -3808,7 +3842,31 @@ final class NotchService: ObservableObject {
     /// The gallery steps its rows from the wheel; every other scroll over the
     /// island is a gesture candidate.
     private func handleScroll(_ event: NSEvent) -> Bool {
-        handleRewindScroll(event) || handleSectionScroll(event) || handleGesture(event)
+        handleBackScroll(event) || handleRewindScroll(event) || handleSectionScroll(event) || handleGesture(event)
+    }
+
+    /// A rightward two-finger swipe steps back one level. This runs
+    /// before page scrolling and music gestures, including over native lists.
+    private func handleBackScroll(_ event: NSEvent) -> Bool {
+        guard running, !suspended, expanded, NotchGestureSupport.isEnabled(), let panel,
+              !trackingMenu, captureControls == nil, !heldDrag,
+              event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+              windowHost?.containsSurface(panel.convertPoint(toScreen: event.locationInWindow)) == true else {
+            backGesture = NotchGestureSupport()
+            return false
+        }
+        let x = NotchGestureSupport.movement(Double(event.scrollingDeltaX), precise: event.hasPreciseScrollingDeltas,
+                                             inverted: event.isDirectionInvertedFromDevice)
+        let y = NotchGestureSupport.movement(Double(event.scrollingDeltaY), precise: event.hasPreciseScrollingDeltas,
+                                             inverted: event.isDirectionInvertedFromDevice)
+        let action = backGesture.handle(x: x, y: y, timestamp: event.timestamp,
+                                        began: event.phase.contains(.began),
+                                        ended: !event.phase.intersection([.ended, .cancelled]).isEmpty,
+                                        momentum: !event.momentumPhase.isEmpty,
+                                        precise: event.hasPreciseScrollingDeltas, hasPhase: !event.phase.isEmpty,
+                                        allowVertical: false, allowHorizontal: false, expanded: true, backOnRight: true)
+        if action == .back { swipeBack() }
+        return backGesture.consumesBackSwipe
     }
 
     private func handleRewindScroll(_ event: NSEvent) -> Bool {
@@ -3845,8 +3903,10 @@ final class NotchService: ObservableObject {
             return true
         }
         settleNotificationHover()
-        _ = show(NotchNotice(event: .systemNotification, title: item.content.title, detail: item.content.body,
-                            symbol: "bell.fill", notification: item.content, notificationID: item.id, replayed: true))
+        if show(NotchNotice(event: .systemNotification, title: item.content.title, detail: item.content.body,
+                            symbol: "bell.fill", notification: item.content, notificationID: item.id, replayed: true)) {
+            NotchNotificationService.shared.markRead(item.id)
+        }
         return true
     }
 
@@ -3892,7 +3952,6 @@ final class NotchService: ObservableObject {
         let vertical = NotchGestureSupport.allowsVertical(expanded: expanded, inHeader: inHeader,
                                                           musicSurface: musicSurface,
                                                           control: interaction.control, scroll: interaction.scroll)
-        let horizontal = !interaction.control && !interaction.scroll && !inHeader && musicSurface
         let x = NotchGestureSupport.movement(Double(event.scrollingDeltaX), precise: event.hasPreciseScrollingDeltas,
                                              inverted: event.isDirectionInvertedFromDevice)
         let y = NotchGestureSupport.movement(Double(event.scrollingDeltaY), precise: event.hasPreciseScrollingDeltas,
@@ -3903,13 +3962,12 @@ final class NotchService: ObservableObject {
                                           momentum: !event.momentumPhase.isEmpty,
                                           precise: event.hasPreciseScrollingDeltas,
                                           hasPhase: !event.phase.isEmpty,
-                                          allowVertical: vertical, allowHorizontal: horizontal, expanded: expanded) else { return false }
+                                          allowVertical: vertical, allowHorizontal: false, expanded: expanded) else { return false }
         switch action {
         case .open: open()
         case .close: collapse()
-        case .nextTrack, .previousTrack:
-            guard musicSurface else { gesture = NotchGestureSupport(); return false }
-            NotchMusicService.shared.skipFromGesture(forward: action == .nextTrack)
+        case .back: swipeBack()
+        case .nextTrack, .previousTrack: return false
         }
         return true
     }
@@ -4108,10 +4166,8 @@ final class NotchService: ObservableObject {
         if NotchSupport.routes(.clipboard) {
             let history = ClipboardHistoryService.shared
             history.capturedEntry.receive(on: DispatchQueue.main).sink { [weak self] _ in
-                guard let self else { return }
-                let text = FeatureStrings.clipboard(L10n.shared.language)
-                self.show(NotchNotice(event: .clipboard, title: text.copied,
-                                      detail: text.title, symbol: "doc.on.clipboard"))
+                guard let self, self.showsSystemFeedback else { return }
+                self.neonCopyAt = Date()
             }.store(in: &subscriptions)
         }
         // The companion loves being plugged in, so it listens for the charger too.

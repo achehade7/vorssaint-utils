@@ -411,8 +411,12 @@ enum NotchPresentationProbe {
         guard let screen = NSScreen.main else { print("WORKSPACE BADGE FAILED: no display"); exit(1) }
         var geometry = NotchGeometry(screen: screen.frame, safeAreaTop: screen.safeAreaInsets.top,
                                      cameraWidth: screen.safeAreaInsets.top > 0 ? 185 : 0)
+        var workspaceMotion: NotchQuickAccessMotion?
         let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed,
-                                  background: surface, quickAccess: quickAccess,
+                                  background: surface, quickAccess: { motion, backdrop in
+                                      workspaceMotion = motion
+                                      return quickAccess(motion, backdrop)
+                                  },
                                   neon: { AnyView(NotchNeonView(service: .shared, motion: $0, backdrop: $1)) })
         host.panel.alphaValue = 0
         host.panel.ignoresMouseEvents = true
@@ -477,12 +481,22 @@ enum NotchPresentationProbe {
         } else { failures.append("resting neon is missing") }
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             host.present(size: geometry.collapsed, geometry: geometry, animated: false, workspaceBadge: true)
-            let reservedWidth = host.panel.frame.width
             let oldBadge = host.workspaceBadgeProbeFrame
+            workspaceMotion?.setWorkspaceDeparting(true, animated: true)
+            if workspaceMotion?.workspaceDeparting != true || host.workspaceBadgeProbeFrame == nil
+                || host.workspaceSurfaceProbeFrame == nil {
+                failures.append("workspace label and shell do not share a visible departure phase")
+            }
+            if let neon = host.workspaceNeonProbeFrame {
+                let target = host.visibleFrame.offsetBy(dx: 0, dy: -NotchNeonEdge.drop)
+                if abs(neon.minX - target.minX) > 0.5 || abs(neon.width - target.width) > 0.5 {
+                    failures.append("the neon waits until after the shared fade to return to the island")
+                }
+            } else { failures.append("the shared workspace fade removes the active island's neon") }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: NotchAeroSpaceState.labelFadeDuration))
             host.present(size: geometry.collapsed, geometry: geometry, animated: true, workspaceBadge: false)
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.06))
-            if host.workspaceSurfaceProbeFrame == nil || abs(host.panel.frame.width - reservedWidth) > 0.5 {
-                failures.append("workspace withdrawal releases its gutter before the surface finishes contracting")
+            if host.workspaceSurfaceProbeFrame != nil {
+                failures.append("the workspace shell outlives its number with a separate withdrawal")
             }
             if host.workspaceBadgeProbeFrame != nil {
                 failures.append("the departing workspace number remains interactive")
@@ -493,18 +507,23 @@ enum NotchPresentationProbe {
                     failures.append("the departing workspace gutter still takes clicks or hover")
                 }
             }
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.04))
             if host.workspaceSurfaceProbeFrame != nil
                 || abs(host.panel.frame.width - geometry.collapsed.width) > 0.5 {
-                failures.append("workspace withdrawal fails to release its surface and gutter after contracting")
+                failures.append("workspace dismissal keeps a reserved gutter after the shared fade ends")
             }
 
             host.present(size: geometry.collapsed, geometry: geometry, animated: false, workspaceBadge: true)
+            if workspaceMotion?.workspaceDeparting != false {
+                failures.append("a new workspace reveal inherits the previous workspace's fade")
+            }
+            workspaceMotion?.setWorkspaceDeparting(true, animated: true)
             host.present(size: geometry.collapsed, geometry: geometry, animated: true, workspaceBadge: false)
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.06))
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02))
             host.present(size: geometry.collapsed, geometry: geometry, animated: true, workspaceBadge: true)
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
-            if host.workspaceBadgeProbeFrame == nil || host.workspaceSurfaceProbeFrame == nil {
+            if host.workspaceBadgeProbeFrame == nil || host.workspaceSurfaceProbeFrame == nil
+                || workspaceMotion?.workspaceDeparting != false {
                 failures.append("an old workspace withdrawal removes a newer workspace flash")
             }
             host.present(size: geometry.expanded, geometry: geometry, animated: true, workspaceBadge: false)
@@ -525,6 +544,7 @@ enum NotchPresentationProbe {
     }
 
     static func runAndExit() -> Never {
+        if CommandLine.arguments.contains("--music-strip") { runMusicStripAndExit() }
         if CommandLine.arguments.contains("--workspace-badge") { runWorkspaceBadgeAndExit() }
         if CommandLine.arguments.contains("--media-layout") { NotchMediaPresentationProbe.runAndExit() }
         if CommandLine.arguments.contains("--mission-control") { runMissionControlAndExit() }
@@ -1200,6 +1220,80 @@ enum NotchPresentationProbe {
         print("NOTCH PROBE \(failures.isEmpty ? "OK" : "FAILED") samples=\(samples) openingNativeResizes=\(openingResizes) repeatedUpdates=1000 fileDrops=\(accepted) topError=\(maxAnchorError) contentError=\(maxContentError) timerTransitions=\(timerTransitions) displayMoves=\(displayMoves)")
         failures.forEach { print($0) }
         exit(failures.isEmpty ? 0 : 1)
+    }
+
+    /// Render the actual compact music view without asking for screen capture
+    /// or changing the live player's state.
+    private static func runMusicStripAndExit() -> Never {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        var failures = 0
+        for (name, artist, title, room, physical): (String, String, String, CGFloat, Bool) in [
+            ("long-title", "Acid Pauli", "Jeanne (Axel Boman Remix - Extended)", 360, true),
+            ("long-artist", "A Very Long Artist Name and Their Orchestra", "Jeanne", 360, true),
+            ("narrow", "Acid Pauli", "Jeanne", 100, true),
+            ("simulated", "Acid Pauli", "Jeanne (Axel Boman Remix - Extended)", 360, false)
+        ] {
+            let base = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1440, height: 900),
+                                     safeAreaTop: physical ? 32 : 0, cameraWidth: physical ? 180 : 0, layout: .custom,
+                                     menuBarHeight: 32,
+                                     compactSideRoom: room, customWidth: 600, customHeight: 260)
+            let geometry = base.compactMusicGeometry
+            let size = geometry.compactActivitySize
+            let playback = NotchPlayback(track: RadialNowPlayingSnapshot(title: title, artist: artist,
+                album: nil, artworkData: nil, appBundleIdentifier: "com.apple.Music", appPID: nil),
+                isPlaying: false, elapsed: 60, duration: 240, rate: 0, sampledAt: Date(), canSeek: false)
+            let snapshot = NotchCompactMusicSnapshot(playback: playback,
+                artwork: NSWorkspace.shared.icon(forFile: "/System/Applications/Music.app"), tint: nil, geometry: geometry)
+            let content = NotchMusicStrip(service: .shared, snapshot: snapshot)
+                .frame(width: size.width, height: size.height)
+                .background(.black)
+                .environment(\.colorScheme, .dark)
+            let hosting = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: CGRect(origin: .zero, size: size),
+                                  styleMask: .borderless, backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.alphaValue = 0
+            window.ignoresMouseEvents = true
+            window.contentView = hosting
+            window.orderFrontRegardless()
+            let path = "/tmp/vorssaint-music-strip-\(name).png"
+            var rendered: NSBitmapImageRep?
+            let deadline = Date().addingTimeInterval(1)
+            var coverDrawn = false
+            var centerClear = false
+            repeat {
+                hosting.layoutSubtreeIfNeeded()
+                if let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
+                    hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+                    rendered = bitmap
+                    let scale = CGFloat(bitmap.pixelsWide) / size.width
+                    let left = Int(geometry.compactActivityWingWidth * scale)
+                    let right = Int((geometry.compactActivityWingWidth + geometry.compactActivityCameraGap) * scale)
+                    func painted(_ x: Int) -> Bool {
+                        (0..<bitmap.pixelsHigh).contains { y in
+                            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return false }
+                            return max(color.redComponent, color.greenComponent, color.blueComponent) > 0.1
+                        }
+                    }
+                    coverDrawn = (0..<left).contains(where: painted)
+                    centerClear = !(left..<right).contains(where: painted)
+                }
+                if coverDrawn { break }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            } while Date() < deadline
+            if !coverDrawn || !centerClear { failures += 1 }
+            if let bitmap = rendered {
+                if let data = bitmap.representation(using: .png, properties: [:]) {
+                    do { try data.write(to: URL(fileURLWithPath: path)) }
+                    catch { failures += 1 }
+                } else { failures += 1 }
+            } else { failures += 1 }
+            if size.width > base.cameraWidth + 112 || size.height != base.stripHeight { failures += 1 }
+            print("MUSIC STRIP \(name): \(size.width)x\(size.height), cover=\(coverDrawn), centerClear=\(centerClear), image=\(path)")
+            window.close()
+        }
+        print("MUSIC STRIP \(failures == 0 ? "OK" : "FAILED") (\(failures) failures)")
+        exit(failures == 0 ? 0 : 1)
     }
 
     /// Checks native layout and animation only, without input or screen capture.

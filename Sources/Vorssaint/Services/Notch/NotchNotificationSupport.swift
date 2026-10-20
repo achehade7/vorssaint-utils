@@ -41,6 +41,8 @@ enum NotchNotificationRewind {
 
 struct NotchNotificationInbox {
     private(set) var items: [NotchSystemNotification] = []
+    private(set) var unreadIDs = Set<UUID>()
+    var unreadCount: Int { unreadIDs.count }
     private var seen = Set<UUID>()
     private var primed = false
 
@@ -55,7 +57,10 @@ struct NotchNotificationInbox {
         for item in live where seen.insert(item.id).inserted {
             guard primed else { continue }
             items.insert(item, at: 0)
-            if items.count > NotchNotificationSupport.maximumItems { items.removeLast() }
+            unreadIDs.insert(item.id)
+            if items.count > NotchNotificationSupport.maximumItems {
+                unreadIDs.remove(items.removeLast().id)
+            }
             arrivals.append(item)
         }
         primed = true
@@ -63,11 +68,20 @@ struct NotchNotificationInbox {
         return arrivals
     }
 
-    mutating func dismiss(_ id: UUID) { items.removeAll { $0.id == id } }
+    mutating func markRead(_ id: UUID) { unreadIDs.remove(id) }
+    mutating func markAllRead() { unreadIDs.removeAll() }
+
+    mutating func dismiss(_ id: UUID) {
+        items.removeAll { $0.id == id }
+        unreadIDs.remove(id)
+    }
 
     /// Banners still on screen stay seen, so the next layout pass cannot
     /// bring back what was just cleared; later arrivals are mirrored as usual.
-    mutating func clear() { items.removeAll() }
+    mutating func clear() {
+        items.removeAll()
+        unreadIDs.removeAll()
+    }
 }
 
 /// Only labelled notification text belongs in the mirror. Controls, widgets
@@ -81,6 +95,19 @@ enum NotchNotificationSupport {
     static let bannerRoles: Set<String> = ["AXNotificationCenterAlert", "AXNotificationCenterBanner"]
     static let stackRoles: Set<String> = ["AXNotificationCenterAlertStack", "AXNotificationCenterBannerStack"]
     static let maximumItems = 50
+    /// The Codex terminal emits a separate native banner for every child task.
+    /// Mirror main-session finishes, but keep those exact child-completion
+    /// messages out of the island. Other senders and non-completion text stay.
+    static func shouldMirror(_ content: NotchNotificationContent, sourceBundleIdentifier: String?) -> Bool {
+        guard let sourceBundleIdentifier,
+              ["com.mitchellh.ghostty", "com.openai.codex"].contains(sourceBundleIdentifier) else { return true }
+        let childCompletion = #"^Completed (?:`/root(?:/[a-z0-9_]+)+`|/root(?:/[a-z0-9_]+)+)$"#
+        return ![content.title, content.subtitle, content.body].contains {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                .range(of: childCompletion, options: .regularExpression) != nil
+        }
+    }
+
     /// A brief grace avoids cutting off short alert tones when closing the
     /// original banner. This does not observe playback; longer sounds may stop.
     static let nativeCloseGrace: TimeInterval = 1.2

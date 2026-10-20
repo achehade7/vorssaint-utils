@@ -315,7 +315,9 @@ enum NotchTimerSupport {
     static func stripTextSize(height: CGFloat) -> CGFloat { min(16, height - 6) }
     /// The mark takes the strip's height less an even gap above and below.
     static func stripIconSize(height: CGFloat) -> CGFloat { min(20, height - NotchLayout.compactEdgeGap * 2) }
-    static func stripAgentMarkSize(height: CGFloat, working: Int) -> CGFloat {
-        min(working > 1 ? 11 : NotchNotificationBannerLayout.iconSize, max(8, height - NotchLayout.compactEdgeGap * 2))
+    /// A timer/calendar companion has a narrower wing than the agents' own strip.
+    static func stripAgentMarkSize(height: CGFloat, working: Int, companion: Bool = false) -> CGFloat {
+        min(working > (companion ? 1 : 2) ? 11 : NotchNotificationBannerLayout.iconSize,
+            max(8, height - NotchLayout.compactEdgeGap * 2))
     }
 }

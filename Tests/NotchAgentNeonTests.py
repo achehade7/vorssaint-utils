@@ -8,22 +8,27 @@ repo = Path(__file__).resolve().parents[1]
 source = (repo / "Sources/Vorssaint/UI/Notch/NotchNeonEdge.swift").read_text()
 
 
-def declaration(marker):
-    start = source.index(marker)
-    opening = source.index("{", start)
+def declaration(marker, text=source):
+    start = text.index(marker)
+    opening = text.index("{", start)
     depth, end = 1, opening + 1
     while depth:
-        if source[end] == "{":
+        if text[end] == "{":
             depth += 1
-        elif source[end] == "}":
+        elif text[end] == "}":
             depth -= 1
         end += 1
-    return source[start:end]
+    return text[start:end]
 
 
 signature = declaration("    private enum Signature").replace("private ", "", 1)
 signal = declaration("    private func signal(").replace("private ", "", 1)
 duration = declaration("    private var signalDuration:").replace("private ", "", 1)
+music_gate = declaration("    private var showsMusicProgress:").replace("private ", "", 1)
+progress_advancing = declaration("    private var progressAdvancing:").replace("private ", "", 1)
+music_remaining = next(line for line in source.splitlines() if "let remaining = min(1, max(0, 1 - playback.position" in line)
+playback_source = (repo / "Sources/Vorssaint/Services/Notch/NotchMusicSupport.swift").read_text()
+playback_position = declaration("    func position(at date:", playback_source)
 receive = declaration(".onReceive(agents.completions) { provider in")
 receive = receive[receive.index("{ provider in") + len("{ provider in"):-1]
 appearance = source[source.index("        let completion ="):source.index("        let phase =")]
@@ -40,8 +45,23 @@ final class Model {
 SIGNATURE
     var signature: Signature = .agent
     var signalAt: Date?
+    var workspaceAt: Date?
+    var working = false
+    var music = Music()
+    var service = Service()
+    var timer = TimerFixture()
+    var showsTimerFuse = false
+    var playing: Bool { music.playback?.isPlaying == true }
+    var animated: Bool { signalAt != nil || workspaceAt != nil }
 DURATION
 SIGNAL
+MUSIC_GATE
+PROGRESS_ADVANCING
+    func remaining(at date: Date) -> Double {
+        guard let playback = music.playback else { return 0 }
+MUSIC_REMAINING
+        return remaining
+    }
     func receive(_ provider: AgentProvider) {
 RECEIVE
     }
@@ -67,6 +87,28 @@ RENDERING
 struct Music {
     struct Artwork { var color = Color.purple }
     var artworkTint: Artwork? = nil
+    struct Playback {
+        var isPlaying = true
+        var duration: TimeInterval = 200
+        var elapsed: TimeInterval = 0
+        var rate = 1.0
+        var sampledAt = Date(timeIntervalSince1970: 0)
+        var hasPosition = true
+PLAYBACK_POSITION
+    }
+    var playback: Playback?
+}
+enum Activity { case music, agents, timer, calendar, downloads, watch, keepAwake }
+final class Service {
+    var modules: Set<Activity> = [.music]
+    var compactActivity: Activity? = .music
+    var expanded = false, peeking = false, dragPlaceholder = false, fullscreenCompact = false
+    var showsAeroSpace = false, showsAeroSpaceBadge = false, showsCompactActivityPicker = false
+    var notice: Int?, departingNotice: Int?, captureControls: Int?
+}
+struct TimerFixture {
+    struct Session { var isRunning = false }
+    var session = Session()
 }
 enum NotchNeonPalette {
     static func workspace(_ name: String?) -> Color { .purple }
@@ -109,7 +151,7 @@ for provider in [AgentProvider.claude, .codex] {
     model.signal(.agent, at: began.addingTimeInterval(0.01))
     expect(String(describing: model.signature) == completion && model.signalAt == began,
            "the paired agent notice must not replace a provider's completion pulse")
-    for other in [Model.Signature.message, .charge, .handoff, .terminalSuccess] {
+    for other in [Model.Signature.message, .charge, .handoff, .terminalSuccess, .clipboard] {
         model.signal(other, at: began.addingTimeInterval(0.1))
         expect(String(describing: model.signature) == completion && model.signalAt == began,
                "incidental activity must not interrupt an agent's completion")
@@ -129,11 +171,97 @@ expect(model.appearance(working: true).0 == .blue,
        "after completion expires the continuing agent must regain its steady working color")
 model.signal(.agent)
 expect(model.signature == .agent, "the completion state must not block activity after cleanup")
+let copied = Model()
+let copiedAt = Date()
+copied.signal(.clipboard, at: copiedAt)
+expect(copied.signalDuration > 0 && copied.signalDuration <= 1,
+       "copy feedback must be a brief pulse rather than a persistent notice")
+let copyColors = copied.appearance(working: true)
+expect(copyColors.0 == .white && copyColors.1 == .blue,
+       "copy feedback must briefly turn white while preserving the agent's steady blue")
+expect(copied.profile(at: 0).opacity == 0
+       && copied.profile(at: copied.signalDuration / 2).opacity > 0.9,
+       "copy feedback must rise smoothly from the existing edge to a visible white peak")
+let copyFade = copied.profile(at: copied.signalDuration - 0.1).opacity
+expect(copyFade > 0 && copyFade < 0.5
+       && abs(copied.profile(at: copied.signalDuration).opacity) < 0.000001,
+       "copy feedback must fade completely at the end of its short pulse")
+let copiedAgainAt = copiedAt.addingTimeInterval(0.3)
+copied.signal(.clipboard, at: copiedAgainAt)
+expect(copied.signature == .clipboard && copied.signalAt == copiedAgainAt,
+       "another copy must restart its pulse from the new copy time")
+copied.signalAt = nil
+expect(copied.appearance(working: true).0 == .blue,
+       "after copy feedback ends, the continuing agent must regain its steady blue")
+let track = Model()
+track.music.playback = Music.Playback()
+expect(track.showsMusicProgress && track.progressAdvancing,
+       "music alone shows its remaining-time line without hovering and advances with playback")
+let sample = Date(timeIntervalSince1970: 0)
+expect(track.remaining(at: sample) == 1
+       && track.remaining(at: sample.addingTimeInterval(100)) == 0.5
+       && track.remaining(at: sample.addingTimeInterval(300)) == 0,
+       "the music line shrinks with time and stops at zero when the track ends")
+track.music.playback?.elapsed = 150
+expect(track.remaining(at: sample) == 0.25, "seeking updates the remaining line from the player's new position")
+track.working = true
+expect(!track.showsMusicProgress && !track.progressAdvancing,
+       "any live agent keeps coding neon even if music remains the selected activity")
+track.working = false
+expect(track.showsMusicProgress, "music remaining time returns when the last agent finishes")
+for activity in [Activity.agents, .timer, .calendar, .downloads, .watch, .keepAwake] {
+    track.service.compactActivity = activity
+    expect(!track.showsMusicProgress, "a different primary activity takes priority over music progress")
+}
+track.service.compactActivity = .music
+let openStates: [ReferenceWritableKeyPath<Service, Bool>] = [
+    \.expanded, \.peeking, \.dragPlaceholder, \.fullscreenCompact,
+    \.showsAeroSpace, \.showsAeroSpaceBadge, \.showsCompactActivityPicker,
+]
+for state in openStates {
+    track.service[keyPath: state] = true
+    expect(!track.showsMusicProgress, "open, fullscreen and workspace surfaces keep their existing neon")
+    track.service[keyPath: state] = false
+}
+let overrides: [ReferenceWritableKeyPath<Service, Int?>] = [\.notice, \.departingNotice, \.captureControls]
+for override in overrides {
+    track.service[keyPath: override] = 1
+    expect(!track.showsMusicProgress, "notifications and capture surfaces preempt music remaining time")
+    track.service[keyPath: override] = nil
+}
+for pulse in [Model.Signature.message, .clipboard, .agentFinished(.claude)] {
+    track.signal(pulse)
+    expect(!track.showsMusicProgress, "notification, copy and completion signals retain the full neon edge")
+    track.signalAt = nil
+    expect(track.showsMusicProgress, "music remaining time resumes after a transient signal ends")
+}
+track.workspaceAt = Date()
+expect(!track.showsMusicProgress, "workspace neon takes priority until its signal finishes")
+track.workspaceAt = nil
+track.music.playback?.isPlaying = false
+expect(!track.showsMusicProgress && !track.progressAdvancing,
+       "a paused player neither shows a moving remaining line nor starts a progress timeline")
+track.music.playback?.isPlaying = true
+for duration in [0.0, -1, Double.nan, Double.infinity] {
+    track.music.playback?.duration = duration
+    expect(!track.showsMusicProgress, "unknown or invalid durations never invent remaining progress")
+}
+track.music.playback?.duration = 200
+track.music.playback?.hasPosition = false
+expect(!track.showsMusicProgress, "a player without a position cannot display remaining progress")
+track.music.playback?.hasPosition = true
+track.service.modules = []
+expect(!track.showsMusicProgress, "disabling music removes its progress line")
+track.service.modules = [.music]
+track.music.playback = nil
+expect(!track.showsMusicProgress, "a departed player removes its progress line")
 print("PASS: \(checks) agent neon checks")
 '''
 for token, value in [("SIGNATURE", signature), ("DURATION", duration), ("SIGNAL", signal),
                      ("RECEIVE", receive), ("APPEARANCE", appearance), ("RENDERING", rendering),
-                     ("PROVIDER_COLORS", provider_colors)]:
+                     ("PROVIDER_COLORS", provider_colors), ("MUSIC_GATE", music_gate),
+                     ("PROGRESS_ADVANCING", progress_advancing), ("MUSIC_REMAINING", music_remaining),
+                     ("PLAYBACK_POSITION", playback_position)]:
     swift = swift.replace(token, value)
 
 with tempfile.TemporaryDirectory(prefix="notch-agent-neon-") as directory:
