@@ -23,6 +23,8 @@ def declaration(marker, text=source):
 
 signature = declaration("    private enum Signature").replace("private ", "", 1)
 signal = declaration("    private func signal(").replace("private ", "", 1)
+charge = declaration("    private func charge(").replace("private ", "", 1)
+charging_signal = declaration("enum NotchChargingSignal")
 duration = declaration("    private var signalDuration:").replace("private ", "", 1)
 music_gate = declaration("    private var showsMusicProgress:").replace("private ", "", 1)
 progress_advancing = declaration("    private var progressAdvancing:").replace("private ", "", 1)
@@ -41,10 +43,12 @@ import SwiftUI
 import AppKit
 enum AgentProvider { case claude, codex, opencode, copilot }
 PROVIDER_COLORS
+ELECTRIC_PROFILE
 final class Model {
 SIGNATURE
     var signature: Signature = .agent
     var signalAt: Date?
+    var chargeAt: Date?
     var workspaceAt: Date?
     var working = false
     var music = Music()
@@ -55,6 +59,7 @@ SIGNATURE
     var animated: Bool { signalAt != nil || workspaceAt != nil }
 DURATION
 SIGNAL
+CHARGE
 MUSIC_GATE
 PROGRESS_ADVANCING
     func remaining(at date: Date) -> Double {
@@ -151,7 +156,7 @@ for provider in [AgentProvider.claude, .codex] {
     model.signal(.agent, at: began.addingTimeInterval(0.01))
     expect(String(describing: model.signature) == completion && model.signalAt == began,
            "the paired agent notice must not replace a provider's completion pulse")
-    for other in [Model.Signature.message, .charge, .handoff, .terminalSuccess, .clipboard] {
+    for other in [Model.Signature.message, .handoff, .terminalSuccess, .clipboard] {
         model.signal(other, at: began.addingTimeInterval(0.1))
         expect(String(describing: model.signature) == completion && model.signalAt == began,
                "incidental activity must not interrupt an agent's completion")
@@ -193,10 +198,59 @@ expect(copied.signature == .clipboard && copied.signalAt == copiedAgainAt,
 copied.signalAt = nil
 expect(copied.appearance(working: true).0 == .blue,
        "after copy feedback ends, the continuing agent must regain its steady blue")
+let charging = Model()
+let pluggedInAt = Date()
+charging.receive(.claude)
+let completionAt = charging.signalAt
+charging.charge(at: pluggedInAt)
+expect(charging.chargeAt == pluggedInAt && charging.signalAt == completionAt
+       && charging.signature == .agentFinished(.claude),
+       "plugging in must preserve the independent provider completion beneath the green overlay")
+charging.receive(.codex)
+expect(charging.chargeAt == pluggedInAt && charging.signature == .agentFinished(.codex),
+       "an agent completing during the charging signal must not erase its green overlay")
+charging.signalAt = nil
+charging.signal(.clipboard)
+expect(charging.chargeAt == pluggedInAt && charging.signature == .clipboard,
+       "clipboard feedback must not replace the independent charging signal")
+charging.charge(at: nil)
+expect(charging.chargeAt == nil && charging.signature == .clipboard,
+       "unplugging must clear only the charging overlay")
+charging.charge(at: Date().addingTimeInterval(-NotchChargingSignal.duration - 0.1))
+expect(charging.chargeAt == nil, "a recreated view must not replay an expired plug-in signal")
+charging.charge(at: Date().addingTimeInterval(10))
+expect(charging.chargeAt == nil, "a timestamp in the future must not keep the animation clock alive")
+expect(NotchChargingSignal.duration >= 3 && NotchChargingSignal.duration <= 3.5,
+       "the charging edge must have a bounded roughly three-second lifetime")
+expect(NotchChargingSignal.cometPosition(at: 0) == 0
+       && NotchChargingSignal.cometPosition(at: NotchChargingSignal.cometDuration / 2) == 0.5
+       && NotchChargingSignal.cometPosition(at: NotchChargingSignal.cometDuration) == 1,
+       "the green comet must traverse the complete lower edge from left to right")
+expect(NotchChargingSignal.opacity(at: 0) == 0
+       && NotchChargingSignal.opacity(at: NotchChargingSignal.duration) == 0,
+       "the overlay must start and finish transparent so the underlying neon is revealed")
+let pulseMiddle = (NotchChargingSignal.cometDuration
+    + NotchChargingSignal.duration - NotchChargingSignal.fadeDuration) / 2
+expect(NotchChargingSignal.opacity(at: pulseMiddle) > 0.99
+       && NotchChargingSignal.opacity(at: NotchChargingSignal.cometDuration) > 0.8
+       && NotchChargingSignal.opacity(at: NotchChargingSignal.duration - NotchChargingSignal.fadeDuration) > 0.8,
+       "the whole edge must hold clearly green and rise once to a soft bright pulse")
+expect(abs(NotchChargingSignal.opacity(at: pulseMiddle, reduceMotion: true)
+       - NotchChargingSignal.opacity(at: NotchChargingSignal.cometDuration, reduceMotion: true)) < 0.000001,
+       "Reduce Motion must suppress the brightness pulse while retaining a static green hold")
+let halfFade = NotchChargingSignal.duration - NotchChargingSignal.fadeDuration / 2
+expect(NotchChargingSignal.opacity(at: halfFade) > 0.3
+       && NotchChargingSignal.opacity(at: halfFade) < 0.5
+       && NotchChargingSignal.opacity(at: halfFade, reduceMotion: true) > 0.3,
+       "normal and Reduce Motion modes must fade the green overlay smoothly into the existing edge")
 let track = Model()
 track.music.playback = Music.Playback()
 expect(track.showsMusicProgress && track.progressAdvancing,
        "music alone shows its remaining-time line without hovering and advances with playback")
+track.charge(at: Date())
+expect(track.chargeAt != nil && track.showsMusicProgress && track.progressAdvancing,
+       "charging must preserve the music remaining-time line underneath until the green fades")
+track.charge(at: nil)
 let sample = Date(timeIntervalSince1970: 0)
 expect(track.remaining(at: sample) == 1
        && track.remaining(at: sample.addingTimeInterval(100)) == 0.5
@@ -258,6 +312,7 @@ expect(!track.showsMusicProgress, "a departed player removes its progress line")
 print("PASS: \(checks) agent neon checks")
 '''
 for token, value in [("SIGNATURE", signature), ("DURATION", duration), ("SIGNAL", signal),
+                     ("ELECTRIC_PROFILE", charging_signal), ("CHARGE", charge),
                      ("RECEIVE", receive), ("APPEARANCE", appearance), ("RENDERING", rendering),
                      ("PROVIDER_COLORS", provider_colors), ("MUSIC_GATE", music_gate),
                      ("PROGRESS_ADVANCING", progress_advancing), ("MUSIC_REMAINING", music_remaining),

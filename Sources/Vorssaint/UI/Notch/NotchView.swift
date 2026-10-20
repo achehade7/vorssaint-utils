@@ -36,6 +36,7 @@ struct NotchView: View {
                 transaction.animation = .easeInOut(duration: NotchMascotMotion.restCrossfade)
             }
             .frame(width: service.surfaceSize.width, height: service.surfaceSize.height, alignment: .top)
+            .overlay { NotchChargingBolt(service: service) }
             .coordinateSpace(name: "islandDropSurface")
             .onPreferenceChange(WorkspaceDropFrames.self) { service.workspaceDropFrames = $0 }
             .foregroundStyle(.white)
@@ -682,6 +683,88 @@ struct NotchView: View {
             case .agents: NotchAgentsView(size: pageSize)
             case .watch: NotchWatchView(size: pageSize)
             }
+        }
+    }
+}
+
+/// Charging is a transient accent in spare space, never another activity
+/// that moves the marks, readings or the island's hit area.
+private struct NotchChargingBolt: View {
+    @ObservedObject var service: NotchService
+    @ObservedObject private var agents = AgentUsageService.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var opacity: Double = 0
+
+    private var position: CGPoint? {
+        guard service.acceptsSystemFeedback, !service.expanded, !service.peeking,
+              !service.fullscreenCompact, !service.dragPlaceholder, !service.showsAeroSpace,
+              !service.showsAeroSpaceBadge, !service.showsCompactActivityPicker,
+              service.notice == nil, service.departingNotice == nil, service.captureControls == nil,
+              service.departingMusic == nil, service.lingeringMusic == nil,
+              service.namedMusicWings == nil else { return nil }
+        let activity = service.compactActivity
+        guard activity == nil || activity == .agents || activity == .music else { return nil }
+        let geometry = activity == nil ? service.geometry : service.compactActivityGeometry
+        guard !service.mascotShows(on: geometry) else { return nil }
+        let center = service.surfaceSize.width / 2
+        let y = geometry.stripHeight / 2
+        if geometry.floats {
+            return activity == nil && service.idleContent == .none ? CGPoint(x: center, y: y) : nil
+        }
+        let gap = activity == nil ? geometry.cameraWidth : geometry.compactActivityCameraGap
+        // A simulated camera is empty black; a real camera cannot show a bolt.
+        if !geometry.isNotched, gap >= 32 {
+            return CGPoint(x: center - min(32, gap / 2 - 12), y: y)
+        }
+        guard activity != nil, !geometry.compactActivityUsesFooter else { return nil }
+        let occupied: CGFloat
+        if activity == .agents {
+            let count = AgentProvider.allCases.filter { provider in
+                agents.snapshot.live.contains { $0.provider == provider }
+            }.count
+            let size = NotchTimerSupport.stripAgentMarkSize(height: geometry.compactActivityContentHeight,
+                                                           working: count)
+            let inset = geometry.compactActivityEdgeInset(boxHeight: size + 4, radius: (size + 4) / 2)
+            occupied = inset + CGFloat(count) * (size * 1.45 + 1) + CGFloat(max(0, count - 1))
+        } else {
+            occupied = NotchMusicStripLayout.coverInset(geometry) + NotchMusicStripLayout.coverSide(geometry)
+        }
+        // Leave 8 points between the bolt and existing artwork/agent marks,
+        // and 8 before the camera. Narrow wings keep only the green edge.
+        guard geometry.compactActivityWingWidth - occupied >= 28 else { return nil }
+        return CGPoint(x: center - gap / 2 - 14, y: y)
+    }
+
+    var body: some View {
+        GeometryReader { _ in
+            if let position {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(NotchNeonPalette.charging)
+                    .shadow(color: NotchNeonPalette.charging.opacity(0.6), radius: 5)
+                    .opacity(opacity)
+                    .position(position)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .task(id: service.neonChargeAt) {
+            opacity = 0
+            guard let date = service.neonChargeAt else { return }
+            let age = Date().timeIntervalSince(date)
+            guard age >= 0, age < NotchChargingSignal.duration else { return }
+            withAnimation(.easeOut(duration: reduceMotion ? 0.2 : NotchChargingSignal.riseDuration)) {
+                opacity = 1
+            }
+            let hold = max(0, NotchChargingSignal.duration - NotchChargingSignal.fadeDuration - age)
+            do {
+                try await Task.sleep(for: .seconds(hold))
+                try Task.checkCancellation()
+                let remaining = max(0, NotchChargingSignal.duration - Date().timeIntervalSince(date))
+                withAnimation(.easeOut(duration: min(NotchChargingSignal.fadeDuration, remaining))) {
+                    opacity = 0
+                }
+            } catch { }
         }
     }
 }

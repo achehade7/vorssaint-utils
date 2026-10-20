@@ -4512,6 +4512,7 @@ final class NotchService: ObservableObject {
     }
 
     private func stopPower() {
+        neonChargeAt = nil
         if let source = powerSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
             CFRunLoopSourceInvalidate(source)
@@ -4526,8 +4527,14 @@ final class NotchService: ObservableObject {
         let next = sampler.sample()
         power = next
         let pluggedIn = !before.externalConnected && next.externalConnected
-        if pluggedIn, acceptsSystemFeedback { neonChargeAt = Date() }
+        if !next.externalConnected { neonChargeAt = nil }
+        if pluggedIn, acceptsSystemFeedback, NotchSupport.routes(.battery) {
+            neonChargeAt = Date()
+        }
         let low = (next.chargePercent ?? 100) <= 20 && (before.chargePercent ?? 0) > 20
+        // The green edge and bolt acknowledge the cable without replacing
+        // the agent clocks or the music strip with a white charging banner.
+        if pluggedIn, !low { return }
         guard before.externalConnected != next.externalConnected || low
                 || (before.isCharging && !next.isCharging && next.chargePercent == 100) else { return }
         let text = FeatureStrings.notch(L10n.shared.language)

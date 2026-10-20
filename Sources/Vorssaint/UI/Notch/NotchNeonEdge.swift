@@ -15,6 +15,7 @@ enum NotchNeonPalette {
         return Color(red: 0.72 + 0.123 * night, green: 0.53 - 0.075 * night, blue: 1)
     }
     static let amber = Color(red: 1, green: 0.573, blue: 0.188)
+    static let charging = Color(red: 76.0 / 255, green: 1, blue: 136.0 / 255)
     static func workspace(_ name: String?) -> Color {
         switch name {
         case "1": blue
@@ -22,6 +23,28 @@ enum NotchNeonPalette {
         case "P": Color(red: 0.95, green: 0.42, blue: 0.73)
         default: purple
         }
+    }
+}
+
+/// A bounded plug-in signal, independent of notifications and agent completions.
+enum NotchChargingSignal {
+    static let duration: TimeInterval = 3.2
+    static let cometDuration: TimeInterval = 1.15
+    static let riseDuration: TimeInterval = 0.12
+    static let fadeDuration: TimeInterval = 0.7
+
+    static func opacity(at age: TimeInterval, reduceMotion: Bool = false) -> Double {
+        guard age >= 0, age < duration else { return 0 }
+        let rise = min(1, age / riseDuration)
+        let fade = min(1, (duration - age) / fadeDuration)
+        let pulse = reduceMotion ? 0 : sin(min(1, max(0,
+            (age - cometDuration) / (duration - fadeDuration - cometDuration))) * .pi)
+        return rise * rise * (3 - 2 * rise) * fade * fade * (3 - 2 * fade)
+            * (0.82 + 0.18 * pulse)
+    }
+
+    static func cometPosition(at age: TimeInterval) -> Double {
+        min(1, max(0, age / cometDuration))
     }
 }
 
@@ -37,7 +60,7 @@ struct NotchNeonEdge: View, Animatable {
     @ObservedObject private var downloads = NotchDownloadService.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private enum Signature: Equatable {
-        case agent, agentFinished(AgentProvider), message, wake, charge, clipboard, handoff, terminalSuccess, terminalFailure
+        case agent, agentFinished(AgentProvider), message, wake, clipboard, handoff, terminalSuccess, terminalFailure
 
         var completionProvider: AgentProvider? {
             if case .agentFinished(let provider) = self { return provider }
@@ -46,6 +69,7 @@ struct NotchNeonEdge: View, Animatable {
     }
     @State private var signature: Signature = .agent
     @State private var signalAt: Date?
+    @State private var chargeAt: Date?
     @State private var workspaceAt: Date?
     @State private var lastPointerX: CGFloat = 0.5
     private var blue: Color { NotchNeonPalette.blue }
@@ -83,7 +107,7 @@ struct NotchNeonEdge: View, Animatable {
 
     var body: some View {
         Group {
-            if animated && !reduceMotion {
+            if (animated && !reduceMotion) || chargeAt != nil {
                 TimelineView(.animation(minimumInterval: 1.0 / 24)) { context in
                     edge(at: context.date)
                 }
@@ -114,8 +138,8 @@ struct NotchNeonEdge: View, Animatable {
                 signal(.agent)
             } else if notice.event == .systemNotification { signal(.message) }
         }
-        .onChange(of: service.neonChargeAt) { _, date in
-            if let date { signal(.charge, at: date) }
+        .onChange(of: service.neonChargeAt, initial: true) { _, date in
+            charge(at: date)
         }
         .onChange(of: service.neonCopyAt) { _, date in
             if let date { signal(.clipboard, at: date) }
@@ -140,6 +164,22 @@ struct NotchNeonEdge: View, Animatable {
             do { try await Task.sleep(for: .seconds(max(0, signalDuration - Date().timeIntervalSince(began)))) } catch { return }
             signalAt = nil
         }
+        .task(id: chargeAt) {
+            guard let began = chargeAt else { return }
+            do {
+                try await Task.sleep(for: .seconds(max(0,
+                    NotchChargingSignal.duration - Date().timeIntervalSince(began))))
+            } catch { return }
+            chargeAt = nil
+        }
+    }
+
+    private func charge(at date: Date?) {
+        guard let date, (0..<NotchChargingSignal.duration).contains(Date().timeIntervalSince(date)) else {
+            chargeAt = nil
+            return
+        }
+        chargeAt = date
     }
 
     private func signal(_ kind: Signature, at date: Date = Date()) {
@@ -171,7 +211,7 @@ struct NotchNeonEdge: View, Animatable {
         let ripple = completion != nil || (workspace != nil && workspaceName == "P")
             || (age != nil && signature == .handoff)
         let sweeps = (workspace != nil && workspaceName != "2")
-            || (age != nil && [.agent, .charge, .terminalSuccess, .terminalFailure].contains(signature))
+            || (age != nil && [.agent, .terminalSuccess, .terminalFailure].contains(signature))
         let rippleRadius = max(0.02, phase * 0.48)
         let rippleWidth = min(0.08, rippleRadius * 0.6)
         let rippleBaseOpacity = completion != nil ? 0.65 : 0.1
@@ -284,6 +324,32 @@ struct NotchNeonEdge: View, Animatable {
                 .blur(radius: 2)
                 .opacity(pointerX == nil || showsMusicProgress ? 0 : 0.8)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: pointerX == nil)
+            if let chargeAt {
+                // The existing agent/music edge stays underneath throughout,
+                // including during the fade and any simultaneous completion.
+                let elapsed = date.timeIntervalSince(chargeAt)
+                let green = NotchNeonPalette.charging
+                let position = NotchChargingSignal.cometPosition(at: elapsed)
+                ZStack {
+                    ZStack {
+                        shape.stroke(green, lineWidth: 6).blur(radius: 3).opacity(0.65)
+                        shape.stroke(green, lineWidth: 1.8)
+                    }
+                    .opacity(reduceMotion ? 1 : 0.45 + 0.55 * position)
+                    if !reduceMotion, elapsed < NotchChargingSignal.cometDuration {
+                        let comet = LinearGradient(stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: green.opacity(0.1), location: max(0, position - 0.22)),
+                            .init(color: green, location: position),
+                            .init(color: .clear, location: min(1, position + 0.04)),
+                            .init(color: .clear, location: 1)
+                        ], startPoint: .leading, endPoint: .trailing)
+                        shape.stroke(comet, lineWidth: 4)
+                            .shadow(color: green, radius: 4)
+                    }
+                }
+                .opacity(NotchChargingSignal.opacity(at: elapsed, reduceMotion: reduceMotion))
+            }
         }
         .mask(alignment: .bottom) { Rectangle().frame(height: 10) }
         .clipShape(shape)

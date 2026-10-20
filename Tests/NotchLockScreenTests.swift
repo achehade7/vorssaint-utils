@@ -13,6 +13,7 @@ enum NotchLockScreenTests {
         preferenceContracts(suite)
         layoutContracts(suite)
         contentContracts(suite)
+        chargingContracts(suite)
         soundContracts(suite)
     }
 
@@ -119,10 +120,9 @@ enum NotchLockScreenTests {
         suite.expect(Layout.rowFrame(in: CGRect(x: 0, y: 0, width: 400, height: 956)) == nil
                      && Layout.playerFrame(in: CGRect(x: 0, y: 0, width: CGFloat.nan, height: 956)) == nil,
                      "a narrow or unreadable display keeps the lock screen as it is")
-        // The fit a person sets moves the island's camera. The locked island
-        // is drawn at exactly the fitted camera's height and the music strip's
-        // size, even when the fit leaves half a point or the width is odd; only
-        // its window grows out to whole points, with the extra room clear.
+        // Camera fits retain the strip's width and top alignment. The neon
+        // needs a visible edge below the camera plus transparent drawing
+        // room, even when the fit leaves half a point or an odd width.
         let fits = [NotchCameraFit(width: 6, height: 3), NotchCameraFit(width: 0, height: 0.5),
                     NotchCameraFit(width: 0, height: -0.5), NotchCameraFit(width: 1, height: 1.5)]
         for fit in fits {
@@ -135,13 +135,14 @@ enum NotchLockScreenTests {
                 continue
             }
             let window = Layout.islandFrame(around: surface)
-            suite.expect(surface.height == 32 + fit.height && surface.height == camera.height
-                         && surface.size == music.compactActivitySize
+            suite.expect(surface.height >= camera.height + 3 && surface.height <= camera.height + 6
+                         && surface.width == music.compactActivitySize.width
                          && surface.maxY == measured.maxY && surface.midX == measured.midX,
-                         "with a fit of \(fit) the padlock's island is the fitted camera's height and the strip's size, centred on the camera")
+                         "with a fit of \(fit) the neon sits just below the fitted camera while its width and top alignment stay fixed")
             suite.expect(window == window.integral && window.contains(surface) && window.maxY == surface.maxY
-                         && window.width - surface.width < 2 && window.height - surface.height < 1,
-                         "with a fit of \(fit) the island's window lands on whole points around it, the island at its top")
+                         && surface.minY - window.minY >= 6 && surface.minY - window.minY < 7
+                         && surface.minX - window.minX >= 6 && window.maxX - surface.maxX >= 6,
+                         "with a fit of \(fit) the panel includes the full glow below and beside the island without moving its top")
         }
         var crowded = NotchGeometry(screen: measured, safeAreaTop: 32, cameraWidth: 179)
         let wing = crowded.lockScreenMusicGeometry.compactActivityWingWidth
@@ -185,6 +186,38 @@ enum NotchLockScreenTests {
             suite.expect(NotchLockScreenSupport.timestamp(interval) == expected,
                          "a song position of \(interval) s reads \(expected)")
         }
+    }
+
+    static func chargingContracts(_ suite: TestSuite) {
+        var arrival = NotchLockScreenChargeArrival()
+        suite.expect(arrival.update(onBattery: false, onExternalPower: true, percent: 80) == nil,
+                     "an already plugged-in Mac has a silent baseline when the lock scene appears")
+        suite.expect(arrival.update(onBattery: false, onExternalPower: true, percent: 81) == nil,
+                     "percentage updates or charging resuming on the same adapter do not replay its arrival")
+        suite.expect(arrival.update(onBattery: true, onExternalPower: false, percent: 80) == nil
+                     && arrival.update(onBattery: false, onExternalPower: true, percent: 79) == 79,
+                     "connecting an adapter after a known battery reading shows its current percentage")
+        suite.expect(arrival.update(onBattery: false, onExternalPower: true, percent: 79) == nil,
+                     "a duplicate connection callback does not replay the comet")
+        suite.expect(arrival.update(onBattery: false, onExternalPower: false, percent: nil) == nil
+                     && arrival.update(onBattery: false, onExternalPower: true, percent: 79) == nil,
+                     "a missing power-source reading cannot manufacture a disconnect and reconnection")
+        _ = arrival.update(onBattery: true, onExternalPower: false, percent: 79)
+        suite.expect(arrival.update(onBattery: true, onExternalPower: true, percent: 79) == nil
+                     && arrival.update(onBattery: false, onExternalPower: true, percent: 79) == nil,
+                     "contradictory source data is unknown, not a plug-in event")
+        _ = arrival.update(onBattery: true, onExternalPower: false, percent: 79)
+        suite.expect(arrival.update(onBattery: false, onExternalPower: true, percent: nil) == nil,
+                     "an unavailable charge level is not displayed as zero")
+        arrival = NotchLockScreenChargeArrival()
+        suite.expect(arrival.update(onBattery: false, onExternalPower: true, percent: 82) == nil,
+                     "waking or rebuilding the scene takes a new baseline without replaying a hidden connection")
+        _ = arrival.update(onBattery: true, onExternalPower: false, percent: 100)
+        suite.expect(arrival.update(onBattery: false, onExternalPower: true, percent: 101) == 100,
+                     "a hardware percentage above its range stays within the display's maximum")
+        _ = arrival.update(onBattery: true, onExternalPower: false, percent: 0)
+        suite.expect(arrival.update(onBattery: false, onExternalPower: true, percent: -1) == 0,
+                     "a hardware percentage below its range stays within the display's minimum")
     }
 
     static func soundContracts(_ suite: TestSuite) {

@@ -12,6 +12,21 @@ enum NotchLockScreenActivity: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Only a known battery-to-adapter transition is an arrival. A fresh scene
+/// starts with a silent baseline; missing source data clears that baseline
+/// rather than inventing a disconnect and replaying the next reading.
+struct NotchLockScreenChargeArrival {
+    private var wasOnBattery: Bool?
+
+    mutating func update(onBattery: Bool, onExternalPower: Bool, percent: Int?) -> Int? {
+        guard onBattery != onExternalPower else { wasOnBattery = nil; return nil }
+        let connected = wasOnBattery == true && onExternalPower
+        wasOnBattery = onBattery
+        guard connected, let percent else { return nil }
+        return min(100, max(0, percent))
+    }
+}
+
 enum NotchLockScreenSupport {
     /// The Space level macOS gives the notifications it shows over the lock
     /// screen, one step above the lock screen's own 300. A window in a Space
@@ -95,6 +110,10 @@ enum NotchLockScreenLayout {
     static let paneWidth: CGFloat = 404
     /// A title, the timeline and the buttons, the least the player shows.
     static let minimumPlayerHeight: CGFloat = 190
+    /// Keep the lower light below the physical camera, with clear room for
+    /// its shadow in the panel. Neither changes the camera's content row.
+    static let islandBottomExtension: CGFloat = 4
+    static let islandGlowClearance: CGFloat = 6
 
     private static func readable(_ screen: CGRect) -> Bool {
         [screen.minX, screen.minY, screen.width, screen.height].allSatisfy(\.isFinite)
@@ -121,19 +140,22 @@ enum NotchLockScreenLayout {
 
     /// The locked island hung from the top of `screen`, around its camera,
     /// with a `wing` on each side: the padlock in the first, as wide as the
-    /// music strip's wings so the island keeps its size as the Mac locks. It
-    /// is the camera's exact fitted height, as the closed strips keep it: a
-    /// half point more would show as a dark line under the housing.
+    /// music strip's wings. The lower edge extends just below the fitted
+    /// camera so the housing cannot hide the neon running underneath it.
     static func islandSurface(in screen: CGRect, cameraWidth: CGFloat, cameraHeight: CGFloat, wing: CGFloat) -> CGRect? {
         guard [screen.width, screen.height, cameraWidth, cameraHeight, wing].allSatisfy({ $0.isFinite && $0 > 0 }) else { return nil }
         let width = min(screen.width - 24, cameraWidth + wing * 2)
         guard width > cameraWidth else { return nil }
         // Centred on the camera to the half point: a notch only comes on Retina displays.
-        return CGRect(x: screen.midX - width / 2, y: screen.maxY - cameraHeight, width: width, height: cameraHeight)
+        let height = cameraHeight + islandBottomExtension
+        return CGRect(x: screen.midX - width / 2, y: screen.maxY - height, width: width, height: height)
     }
 
-    /// The island's window. The lock screen's windows land on whole points,
-    /// so it grows out to them around the island, which keeps its own size
-    /// at the top of the window and leaves the extra room clear.
-    static func islandFrame(around surface: CGRect) -> CGRect { surface.integral }
+    /// The window stays attached to the display's top, while transparent
+    /// space below and beside the surface keeps its glow from being clipped.
+    static func islandFrame(around surface: CGRect) -> CGRect {
+        CGRect(x: surface.minX - islandGlowClearance, y: surface.minY - islandGlowClearance,
+               width: surface.width + 2 * islandGlowClearance,
+               height: surface.height + islandGlowClearance).integral
+    }
 }

@@ -4,6 +4,7 @@
 import AppKit
 import AudioToolbox
 import Combine
+import IOKit.ps
 import SwiftUI
 
 /// The island over the lock screen: music on a pane of Liquid Glass between
@@ -30,6 +31,9 @@ final class NotchLockScreenService {
     private var island: NotchLockScreenPanel?
     private var space: NotchOverlaySpace?
     private var playbackSubscription: AnyCancellable?
+    private var trackSubscription: AnyCancellable?
+    private var powerSource: CFRunLoopSource?
+    private var chargeArrival = NotchLockScreenChargeArrival()
     private var screenObserver: NSObjectProtocol?
     private var padlockWork: DispatchWorkItem?
     private var shownFrames = Frames()
@@ -156,6 +160,18 @@ final class NotchLockScreenService {
                 guard let self, playback?.isPlaying == true, !self.model.playedWhileLocked else { return }
                 self.model.playedWhileLocked = true
             }
+        if gates.music {
+            // The music service already excludes its initial snapshot,
+            // pauses, seeks and metadata/cover refreshes from this event.
+            trackSubscription = NotchMusicService.shared.trackChanges
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] in
+                    guard let self, self.space != nil else { return }
+                    self.model.trackShimmerID = UUID()
+                }
+        }
+        startPower()
+        if closingPadlock { model.lockRippleID = UUID() }
         // A display attached or rearranged while locked moves the clock, the
         // login controls and the camera; the scene and the padlock follow.
         screenObserver = NotificationCenter.default.addObserver(
@@ -176,6 +192,37 @@ final class NotchLockScreenService {
         if gates.agents { AgentUsageService.shared.syncWithPreferences() }
     }
 
+    private func startPower() {
+        guard PowerSampler.hasInternalBattery, powerSource == nil else { return }
+        // Take a silent baseline after each appearance. Connecting while the
+        // display was asleep must not play an arrival when it wakes.
+        chargeArrival = NotchLockScreenChargeArrival()
+        powerChanged()
+        let callback: IOPowerSourceCallbackType = { context in
+            guard let context else { return }
+            Unmanaged<NotchLockScreenService>.fromOpaque(context).takeUnretainedValue().powerChanged()
+        }
+        if let source = IOPSNotificationCreateRunLoopSource(callback, Unmanaged.passUnretained(self).toOpaque())?.takeRetainedValue() {
+            powerSource = source
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+    }
+
+    private func powerChanged() {
+        guard space != nil else { return }
+        let reading = SystemInfo.batterySnapshot()
+        let percent = chargeArrival.update(onBattery: reading?.isOnBattery == true,
+                                           onExternalPower: reading?.isOnExternalPower == true,
+                                           percent: reading?.percent)
+        if let percent {
+            model.chargingPercent = percent
+            model.chargingArrivalID = UUID()
+        } else if reading?.isOnBattery == true {
+            model.chargingArrivalID = nil
+            model.chargingPercent = nil
+        }
+    }
+
     private func hide(unlocking: Bool, stopsSources: Bool) {
         if stopsSources, !scene.isEmpty {
             NotchMusicService.shared.stop()
@@ -184,6 +231,17 @@ final class NotchLockScreenService {
             AgentUsageService.shared.pause()
         }
         playbackSubscription = nil
+        trackSubscription = nil
+        if let powerSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), powerSource, .commonModes)
+            CFRunLoopSourceInvalidate(powerSource)
+        }
+        powerSource = nil
+        chargeArrival = NotchLockScreenChargeArrival()
+        model.lockRippleID = nil
+        model.trackShimmerID = nil
+        model.chargingArrivalID = nil
+        model.chargingPercent = nil
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
         padlockWork?.cancel()
