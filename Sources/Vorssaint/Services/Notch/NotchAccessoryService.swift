@@ -94,9 +94,15 @@ final class NotchAccessoryService: NSObject {
             let text = FeatureStrings.notchActivities(L10n.shared.language)
             // The status stays short beside its icon, so the name gets a
             // whole wing to itself before it has to be shortened.
-            self.enqueue(NotchNotice(event: .accessory, title: text.connected, detail: name,
+            let sample = SystemMonitor.shared.snapshot.peripheralBatterySample
+            let battery = sample.devices.first { $0.name == name &&
+                self.batteryState.isFresh($0, in: sample, observedAfter: self.activationTime) }
+            let status = battery.map { text.connected + " · \($0.percent)%" } ?? text.connected
+            self.enqueue(NotchNotice(event: .accessory, title: status, detail: name,
                 symbol: NotchAccessorySupport.symbol(name: name, majorClass: UInt32(device.deviceClassMajor),
-                                                     minorClass: UInt32(device.deviceClassMinor))),
+                                                     minorClass: UInt32(device.deviceClassMinor)),
+                audioHandoff: NotchAccessorySupport.isAudioConnection(name: name,
+                    majorClass: UInt32(device.deviceClassMajor), minorClass: UInt32(device.deviceClassMinor))),
                          device: name)
         }
     }

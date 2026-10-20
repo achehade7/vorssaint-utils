@@ -38,6 +38,11 @@ enum NotchAccessorySupport {
         !(0x01...0x03).contains(majorClass)
     }
 
+    static func isAudioConnection(name: String, majorClass: UInt32, minorClass: UInt32) -> Bool {
+        ["headphones", "airpods", "airpodspro", "airpodsmax", "hifispeaker"].contains(
+            symbol(name: name, majorClass: majorClass, minorClass: minorClass))
+    }
+
     /// A name says what an accessory is only until someone renames it. The
     /// Bluetooth class of device it announces still does, from a speaker or
     /// a car down to the trackpad that sets a pointer's digitizer bits.

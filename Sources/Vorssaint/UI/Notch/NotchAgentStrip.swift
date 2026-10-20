@@ -4,7 +4,7 @@
 import SwiftUI
 
 /// The closed island while an agent works: its mark on one side of the
-/// camera, one reading the person chose on the other. The wings are as wide
+/// camera, separate elapsed clocks or the chosen total on the other. The wings are as wide
 /// as the reading, and both sit at the ends, where the island shows.
 struct NotchAgentStrip: View {
     @ObservedObject var service: NotchService
@@ -12,6 +12,7 @@ struct NotchAgentStrip: View {
     /// another display's when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var usage = AgentUsageService.shared
+    @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var l10n = L10n.shared
     @AppStorage(DefaultsKey.notchAgentsReadout) private var readout = NotchAgentReadout.elapsed.rawValue
     @AppStorage(DefaultsKey.notchAgentsLimitDisplay) private var display = NotchAgentLimitDisplay.remaining.rawValue
@@ -32,19 +33,31 @@ struct NotchAgentStrip: View {
         // walks the preferences for every font, inset and frame.
         let geometry = displayGeometry ?? service.compactActivityGeometry
         let working = working(live)
-        let tint = working.first?.tint ?? .white
         let iconSize = NotchTimerSupport.stripAgentMarkSize(height: geometry.compactActivityContentHeight,
                                                           working: working.count)
-        let textSize = NotchAgentSupport.stripTextSize(height: geometry.compactActivityContentHeight)
+        let readingCount = readout == NotchAgentReadout.elapsed.rawValue ? working.count : 1
+        let stacked = readingCount == 2
+        let textSize = NotchAgentSupport.stripTextSize(height: geometry.compactActivityContentHeight,
+                                                      readingCount: readingCount)
+        let textHeight = stacked ? ceil(textSize * 1.2) * 2 : textSize * 0.72
+        let readingLayout = stacked ? AnyLayout(VStackLayout(alignment: .trailing, spacing: 0))
+            : AnyLayout(HStackLayout(spacing: NotchAgentSupport.stripReadingSpacing))
         let iconInset = !geometry.compactActivityUsesFooter
             ? geometry.compactActivityEdgeInset(boxHeight: iconSize + 4, radius: (iconSize + 4) / 2) : 0
         let textInset = !geometry.compactActivityUsesFooter
-            ? geometry.compactActivityEdgeInset(boxHeight: textSize * 0.72, radius: 0) : 0
+            ? geometry.compactActivityEdgeInset(boxHeight: textHeight, radius: 0) : 0
         HStack(spacing: 0) {
-            Button { service.openActivity(.agents) } label: {
+            Button { service.openActivity(service.compactCompanion == .music ? .music : .agents) } label: {
                 HStack(spacing: 1) {
                     if geometry.compactActivityWingWidth >= 28 {
-                        ForEach(working) { NotchAgentGlyph(provider: $0, size: iconSize) }
+                        if service.compactCompanion == .music {
+                            NotchLiveEqualizerBars(isPlaying: music.playback?.isPlaying == true,
+                                                  bars: 4, barWidth: 2.5, height: 18,
+                                                  tint: music.artworkTint?.color ?? Color(red: 0.49, green: 0.60, blue: 1))
+                                .frame(width: 28, height: 22)
+                        } else {
+                            ForEach(working) { NotchAgentGlyph(provider: $0, size: iconSize) }
+                        }
                     }
                 }
                 .padding(.leading, iconInset)
@@ -57,19 +70,20 @@ struct NotchAgentStrip: View {
                 Group {
                     if geometry.compactActivityWingWidth >= 42 {
                         NotchAgentReadoutTimeline(readout: NotchAgentReadout(rawValue: readout) ?? .elapsed) { date in
-                            let text = reading(at: date, live: live)
-                            Text(text)
-                                .font(.system(size: textSize, weight: .medium))
-                                .monospacedDigit()
-                                .foregroundStyle(tint)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.6)
-                                // A reading that gains a digit, like an hour
-                                // passing, needs wider wings; the service
-                                // measures the same reading.
-                                .onChange(of: NotchAgentSupport.readingShape(text)) { _, _ in
-                                    DispatchQueue.main.async { service.refreshPresentation() }
+                            let readings = readings(at: date, live: live)
+                            readingLayout {
+                                ForEach(readings, id: \.provider) { reading in
+                                    Text(reading.text)
+                                        .font(.system(size: textSize, weight: .medium))
+                                        .monospacedDigit()
+                                        .foregroundStyle(reading.provider.tint)
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.6)
                                 }
+                            }
+                            .onChange(of: readings.map { NotchAgentSupport.readingShape($0.text) }) { _, _ in
+                                DispatchQueue.main.async { service.refreshPresentation() }
+                            }
                         }
                     }
                 }
@@ -85,16 +99,17 @@ struct NotchAgentStrip: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(working.map(\.displayName).joined(separator: ", "))
-        .accessibilityValue(reading(at: Date(), live: live))
+        .accessibilityValue(readings(at: Date(), live: live)
+            .map { "\($0.provider.displayName) \($0.text)" }.joined(separator: ", "))
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { service.openActivity(.agents) }
         .accessibilityHint(FeatureStrings.notch(l10n.language).open)
     }
 
-    private func reading(at now: Date, live: [AgentLiveSession]) -> String {
+    private func readings(at now: Date, live: [AgentLiveSession]) -> [(provider: AgentProvider, text: String)] {
         var snapshot = usage.snapshot
         snapshot.live = live
-        return NotchAgentSupport.stripReading(snapshot, readout: NotchAgentReadout(rawValue: readout) ?? .elapsed,
+        return NotchAgentSupport.stripReadings(snapshot, readout: NotchAgentReadout(rawValue: readout) ?? .elapsed,
                                               display: NotchAgentLimitDisplay(rawValue: display) ?? .remaining,
                                               focus: NotchAgentLimitFocus(rawValue: focus) ?? .mostUsed, now: now)
     }

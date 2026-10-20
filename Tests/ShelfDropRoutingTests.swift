@@ -53,7 +53,20 @@ enum ShelfDropRoutingContract {
         func dockDidAccept() { dockCompletions += 1 }
         func noteInteraction() { interactionNotes += 1 }
     }
+    enum NotchAeroSpaceService {
+        static let shared = Stub()
+        final class Stub {
+            struct State { var current: String? = "1" }
+            var state = State()
+            var selections: [String] = []
+            func select(_ workspace: String) { selections.append(workspace) }
+        }
+    }
     class NotchState {
+        var routingFileDrag = false
+        var dragTargetWorkspace: String?
+        var workspaceDropFrames: [String: CGRect] = [:]
+        var workspaceDragWork: DispatchWorkItem?
         var acceptsUserInteraction = true
         var captureControls: Int?
         var modules: [NotchModule] = [.files]
@@ -101,6 +114,18 @@ enum ShelfDropRoutingTests {
     static func run(_ suite: TestSuite) {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
+        let routing = Context.Notch()
+        routing.routingFileDrag = true
+        routing.workspaceDropFrames = ["G": CGRect(x: 30, y: 5, width: 22, height: 26)]
+        suite.expect(!routing.updateFileDrop(at: CGPoint(x: 40, y: 15)), "workspace routes do not accept file storage")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.7))
+        suite.expect(Context.NotchAeroSpaceService.shared.selections == ["G"], "holding a file over a number switches its workspace")
+        routing.endFileDrop()
+        routing.routingFileDrag = true
+        _ = routing.updateFileDrop(at: CGPoint(x: 40, y: 15))
+        routing.endFileDrop()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.7))
+        suite.expect(Context.NotchAeroSpaceService.shared.selections == ["G"], "leaving a workspace cancels pending spring loading")
         for promised in [false, true] {
             for accepted in [false, true] {
                 Context.AppFeature.shelf.isAvailable = true

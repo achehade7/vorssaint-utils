@@ -1405,6 +1405,13 @@ enum NotchHoverTests {
             service.scheduleNoticeDismissal(after: notice.event.duration)
             service.updateBounds()
         }
+        let rewind = fixture(true)
+        var replay = banner()
+        replay.replayed = true
+        arrive(rewind, replay)
+        rewind.hover(true)
+        expect(!rewind.holdsNotification && rewind.noticeWork != nil && rewind.hoverWork == nil,
+               "rewound messages keep their dismissal timer under the pointer instead of opening or being held")
         for physical in [false, true] {
             let service = fixture(physical)
             arrive(service)

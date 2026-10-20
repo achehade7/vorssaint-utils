@@ -656,8 +656,12 @@ enum NotchActivityTests {
                      "an activity that is not showing offers no pair")
         suite.expect(companions(of: .calendar, running: false) == [.downloads, .agents, .music],
                      "an event's clock keeps its side beside a download, agents or music, whatever the timer does")
-        suite.expect([NotchCompactActivity.downloads, .agents, .music].allSatisfy { companions(of: $0).isEmpty },
-                     "downloads, agents and music need both wings and cannot lead a pair")
+        suite.expect([NotchCompactActivity.downloads, .music].allSatisfy { companions(of: $0).isEmpty },
+                     "downloads and music use both wings and cannot lead a pair")
+        suite.expect(companions(of: .agents) == [.music], "working agents offer music beside their elapsed time")
+        suite.expect(NotchSupport.compactCompanions(of: .agents, timer: false, running: false,
+                     downloads: false, agents: false, calendar: false, music: true).isEmpty,
+                     "inactive agents cannot lead a music pair")
         suite.expect(NotchActivityCombination(primary: .calendar, companion: .music).title(.enUS) == "Music + Calendar"
                      && NotchActivityCombination(primary: .timer, companion: .calendar).title(.enUS) == "Calendar + Timer",
                      "a pair is named in the order the island shows it, the companion left of the camera first")
@@ -853,6 +857,10 @@ enum NotchActivityTests {
     }
 
     private static func accessoryContracts(_ suite: TestSuite) {
+        suite.expect(NotchAccessorySupport.isAudioConnection(name: "Renamed", majorClass: 4, minorClass: 1)
+                     && NotchAccessorySupport.isAudioConnection(name: "AirPods Pro", majorClass: 0, minorClass: 0)
+                     && !NotchAccessorySupport.isAudioConnection(name: "Keyboard", majorClass: 5, minorClass: 16),
+                     "only an audio connection offers output selection and the handoff ripple")
         for (name, symbol) in [("airpods", "airpods"), ("AIRPODS PRO", "airpodspro"),
                                ("My airpods pro 2", "airpodspro"), ("airpods max", "airpodsmax"),
                                ("Max's airpods", "airpods"), ("Wireless Headphones", "headphones")] {

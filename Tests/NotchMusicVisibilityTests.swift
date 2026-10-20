@@ -102,7 +102,9 @@ enum NotchMusicVisibilityTests {
         var timerStripWing: CGFloat = 44
         func timerStripWing(for companion: NotchCompactActivity?, in geometry: NotchGeometry) -> CGFloat { timerStripWing }
         var agentStripWing: CGFloat = 58
-        func agentStripWing(in geometry: NotchGeometry) -> CGFloat { agentStripWing }
+        func agentStripGeometry(in geometry: NotchGeometry) -> NotchGeometry {
+            geometry.compactAgentGeometry(wing: agentStripWing)
+        }
         var watchStripWing: CGFloat = 60
         func watchStripWing(in geometry: NotchGeometry) -> CGFloat { watchStripWing }
         var calendarStripWing: CGFloat = 120
@@ -369,6 +371,13 @@ enum NotchMusicVisibilityTests {
         service.hasTimerActivity = true
         service.hasDownloadActivity = true
         suite.expect(service.compactActivity == .timer, "Nothing for resting music preserves a running timer")
+        service.timerCompanions = [.downloads, .music]
+        suite.expect(service.compactCompanion == .music, "automatic mixing favors music beside a live reading")
+        service.notice = NotchNotice(event: .accessory, title: "Headphones", detail: "Connected", symbol: "headphones")
+        suite.expect(service.compactCompanion == .music, "a notification does not discard the underlying activity pair")
+        service.notice = nil
+        suite.expect(service.compactActivity == .timer && service.compactCompanion == .music,
+                     "the automatic pair survives dismissal of an interrupting notice")
         service.timerCompanions = [.downloads]
         service.activitySelection.select(.timer, available: service.compactActivities)
         suite.expect(service.compactCompanion == nil,

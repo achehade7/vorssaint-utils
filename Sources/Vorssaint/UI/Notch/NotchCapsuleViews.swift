@@ -441,6 +441,7 @@ struct NotchCapsuleAgentStrip: View {
     /// Another display's capsule, when the island shows on every display.
     var displayGeometry: NotchGeometry? = nil
     @ObservedObject private var usage = AgentUsageService.shared
+    @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var l10n = L10n.shared
     @AppStorage(DefaultsKey.notchAgentsReadout) private var readout = NotchAgentReadout.elapsed.rawValue
     @AppStorage(DefaultsKey.notchAgentsLimitDisplay) private var display = NotchAgentLimitDisplay.remaining.rawValue
@@ -459,7 +460,14 @@ struct NotchCapsuleAgentStrip: View {
         let working = working(live)
         NotchCapsuleRow(size: size, geometry: displayGeometry ?? service.geometry) {
             HStack(spacing: CapsuleLayout.spacing) {
-                NotchCapsuleAgentMarks(providers: working)
+                if service.compactCompanion == .music {
+                    NotchLiveEqualizerBars(isPlaying: music.playback?.isPlaying == true,
+                                          bars: 3, barWidth: 2, height: 14,
+                                          tint: music.artworkTint?.color ?? .white)
+                        .frame(width: CapsuleLayout.symbolWidth)
+                } else {
+                    NotchCapsuleAgentMarks(providers: working)
+                }
                 NotchAgentReadoutTimeline(readout: NotchAgentReadout(rawValue: readout) ?? .elapsed) { date in
                     let text = reading(at: date, live: live)
                     Text(text)

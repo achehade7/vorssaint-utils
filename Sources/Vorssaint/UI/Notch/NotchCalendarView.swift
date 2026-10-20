@@ -366,8 +366,10 @@ private struct NotchCalendarEventRow: View {
             }
             .font(.system(size: 11)).monospacedDigit()
             .foregroundStyle(.white.opacity(0.75))
-            Text(event.calendar)
-                .font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
+            if !event.calendar.contains("@") {
+                Text(event.calendar)
+                    .font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
+            }
             if !event.location.isEmpty {
                 Label(event.location, systemImage: "mappin")
                     .font(.system(size: 10)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)

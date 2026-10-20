@@ -2106,10 +2106,31 @@ enum NotchAgentTests {
         suite.expect(NotchAgentSupport.stripReading(short, readout: .elapsed, display: .remaining, now: now) == "12:34"
                         && NotchAgentSupport.stripReading(long, readout: .elapsed, display: .remaining, now: now) == "1:02:03",
                      "the strip counts from the earliest turn still working")
+        let parallel = NotchAgentSupport.stripReadings(
+            snapshot([session(.codex, startedAgo: 60), session(.claude, startedAgo: 754),
+                      session(.claude, startedAgo: 30)]),
+            readout: .elapsed, display: .remaining, now: now)
+        suite.expect(parallel.map(\.provider) == [.claude, .codex]
+                        && parallel.map(\.text) == ["12:34", "1:00"],
+                     "parallel clocks match icon order and group each provider's active sessions")
+        let continuing = NotchAgentSupport.stripReadings(snapshot([session(.codex, startedAgo: 60)]),
+                                                         readout: .elapsed, display: .remaining,
+                                                         now: now.addingTimeInterval(1))
+        suite.expect(continuing.count == 1 && continuing.first?.provider == .codex
+                        && continuing.first?.text == "1:01",
+                     "one provider finishing removes only its clock without resetting the other")
+        suite.expect(NotchAgentSupport.stripReadings(long, readout: .elapsed, display: .remaining, now: now)
+                        .map(\.text) == ["1:02:03", "1:00"],
+                     "parallel elapsed clocks retain hours independently")
+        suite.expect(NotchAgentSupport.stripReadings(snapshot([]), readout: .elapsed, display: .remaining, now: now).isEmpty,
+                     "no active providers produces no invented clocks")
         suite.expect(NotchAgentSupport.stripReading(short, readout: .cost, display: .remaining, now: now) == AgentFormat.cost(4.56)
                         && NotchAgentSupport.stripReading(long, readout: .tokens, display: .remaining, now: now)
                             == AgentFormat.tokens(600),
                      "cost and written tokens add up every turn that is working")
+        suite.expect(NotchAgentSupport.stripReadings(long, readout: .tokens, display: .remaining, now: now)
+                        .map(\.text) == [AgentFormat.tokens(600)],
+                     "the optional token readout keeps its existing combined total")
         for readout in [NotchAgentReadout.tokens, .cost] {
             suite.expect(NotchAgentSupport.stripReading(short, readout: readout, display: .remaining, now: now)
                             == NotchAgentSupport.stripReading(short, readout: readout, display: .remaining,
@@ -2174,6 +2195,15 @@ enum NotchAgentTests {
         suite.expect(geometry.compactAgentGeometry(wing: 12).compactActivityWingWidth == 44
                         && geometry.compactAgentGeometry(wing: 300).compactActivityWingWidth == 80,
                      "a wing is never narrower than the music strip's nor wider than the menus allow")
+        let parallelGeometry = geometry.compactAgentGeometry(wing: 130, readingCount: 2)
+        suite.expect(parallelGeometry.compactActivityWingWidth == 80
+                        && parallelGeometry.compactActivityContentHeight == geometry.compactAgentGeometry(wing: 60).compactActivityContentHeight
+                        && !parallelGeometry.compactActivityUsesFooter,
+                     "stacked parallel clocks use one column without making the island taller")
+        var limitedRoom = geometry
+        limitedRoom.compactSideRoom = 60
+        suite.expect(limitedRoom.compactAgentGeometry(wing: 130, readingCount: 2).compactActivityWingWidth == 60,
+                     "parallel clocks still respect the display's available side room")
         var crowded = geometry
         crowded.compactSideRoom = 30
         suite.expect(crowded.compactAgentGeometry(wing: 57).compactActivityWingWidth == 0

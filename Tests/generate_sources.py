@@ -730,6 +730,7 @@ def main():
     write("NotchFullscreen.swift", "import CoreGraphics\nimport Foundation\nextension NotchFullscreenTests {\n"
           + declaration("Sources/Vorssaint/Services/Switcher/SpaceWindowBridge.swift", "    struct Topology {")
           + "final class Service: State {\n"
+          + declaration(notch, "    func toggleQuietMode()")
           + declaration(notch, "    var acceptsUserInteraction: Bool {")
           + declaration(notch, "    var acceptsSystemFeedback: Bool {")
           + declaration(notch, "    private func updateFullscreenVisibility(").replace("private func", "func", 1)
@@ -971,6 +972,7 @@ def main():
               .replace("content: AnyView, actions: AnyView? = nil", "content: Bool, actions: Bool? = nil")
               .replace("NotchSupport.routes(.capture)", "routesCaptures")
           + declaration(notch, "    func updateCaptureHeight(")
+          + declaration(notch, "    func dismissForOutsideClick()")
           + declaration(notch, "    func removeCapture(")
           + declaration(notch, "    private func clearCapture(")
           + declaration(notch, "    private func detachCaptureIfClosingOnCollapse(")
@@ -1081,6 +1083,7 @@ def main():
           + "}\nfinal class Canvas {\nvar acceptingDrag = false\n"
           + "var dropActions: NotchFileDropActions?\n"
           + "var visibleRect = CGRect(x: 0, y: 0, width: 440, height: 400)\n"
+          + "var contentSize: CGSize { visibleRect.size }\nfunc islandX(_ size: CGSize) -> CGFloat { 0 }\n"
           + "func convert(_ point: CGPoint, from: Int?) -> CGPoint { point }\n"
           + "func containsVisiblePoint(_ point: CGPoint) -> Bool { visibleRect.contains(point) }\n"
           + declaration(canvas, "    func beginDrop(")

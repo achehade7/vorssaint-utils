@@ -159,6 +159,9 @@ enum NotchPresentationRefreshContract {
         }
     }
     class State: ObservableObject {
+        var quietMode = false
+        var mirrorClosures = 0
+        func closeMirrors() { mirrorClosures += 1 }
         var showsAeroSpace = false
         var noticeFitsInPlace = false
         var activitySelection = NotchActivitySelection()
@@ -415,6 +418,27 @@ enum NotchPresentationRefreshContract {
     }
 
     static func run(_ suite: TestSuite) {
+        let preview = Service()
+        preview.selected = .captures
+        preview.expanded = true
+        preview.captureContent = true
+        preview.captureID = UUID()
+        var closed = 0
+        preview.captureClose = { closed += 1 }
+        preview.dismissForOutsideClick()
+        suite.expect(closed == 1 && preview.captureContent == nil && preview.captureID == nil && !preview.expanded,
+                     "an outside click closes the screenshot preview immediately without opening history")
+        preview.dismissForOutsideClick()
+        suite.expect(closed == 1, "later outside clicks cannot close the same preview twice")
+        let quiet = Service()
+        quiet.quietMode = true
+        quiet.refreshPresentation()
+        suite.expect(quiet.windowHost?.hideAnimations == [false] && quiet.mirrorClosures == 1,
+                     "quiet refresh hides the real presentation path and closes its mirrors")
+        quiet.quietMode = false
+        quiet.refreshPresentation(animated: false)
+        suite.expect(quiet.windowHost?.panel.isVisible == true,
+                     "restoring quiet mode presents the island again")
         compactMusicDepartureChecks(suite)
         mascotYieldChecks(suite)
         UserDefaults.standard.hides = false
@@ -447,7 +471,7 @@ enum NotchPresentationRefreshContract {
         workspaces.aeroSpaceNow = 12
         workspaces.refreshPresentation(animated: false)
         suite.expect(workspaces.windowHost?.workspaceBadge == false,
-                     "the workspace badge disappears after its two-second flash")
+                     "the workspace badge disappears after its flash")
 
         let outlined = Service()
         outlined.expanded = false

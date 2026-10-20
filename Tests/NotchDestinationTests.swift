@@ -101,6 +101,8 @@ enum NotchDestinationContract {
         var captureControls: AnyObject?
         var heldDrag = false
         var presentationSyncs = 0
+        var neonWakes = 0
+        func playNeonWake() { neonWakes += 1 }
         var presentationTearDowns = 0
         var captureControlsCancel: (() -> Void)?
         var captureClose: (() -> Void)?
@@ -680,7 +682,11 @@ enum NotchDestinationContract {
         service.updateSession { $0.sleeping = false }
         suite.expect(!timer.running && timer.syncs == 0 && service.presentationSyncs == 0,
                "display and system wake cannot resume an alarm or presentation while the session is locked")
+        suite.expect(service.neonWakes == 0, "a locked session must not start the wake light")
         service.updateSession { $0.locked = false }
+        suite.expect(service.neonWakes == 1, "unlocking starts one wake light after presentation returns")
+        service.updateSession { $0.sleeping = false; $0.displaysSleeping = false; $0.locked = false }
+        suite.expect(service.neonWakes == 1, "duplicate wake and unlock notifications must not replay the sequence")
         suite.expect(timer.running && timer.syncs == 1 && service.presentationSyncs == 1,
                "unlocking after every sleep condition clears resumes through the normal presentation path once")
 
@@ -703,6 +709,7 @@ enum NotchDestinationContract {
                "unlock and display wake cannot resume work while another login session owns the console")
         service.running = false
         service.updateSession { $0.onConsole = true }
+        suite.expect(service.neonWakes == 2, "another user's session and stopped service cannot start the wake light")
         suite.expect(!timer.running && service.presentationSyncs == 2,
                "late session notifications cannot restart a stopped island or timer")
     }

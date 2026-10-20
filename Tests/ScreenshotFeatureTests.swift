@@ -40,6 +40,18 @@ enum ScreenshotFeatureTests {
 
         // MARK: Screenshot tool
 
+        let conveyorIDs = [UUID(), UUID(), UUID()]
+        suite.expect(ScreenshotSupport.conveyorTarget(ids: conveyorIDs, selected: conveyorIDs[0], step: 1)
+                        == conveyorIDs[1],
+                     "scrolling the screenshot stack selects the next older image")
+        suite.expect(ScreenshotSupport.conveyorTarget(ids: conveyorIDs, selected: conveyorIDs[0], step: -1) == nil
+                     && ScreenshotSupport.conveyorTarget(ids: conveyorIDs, selected: conveyorIDs[2], step: 1) == nil,
+                     "the screenshot stack stops at either end without wrapping")
+        suite.expect(ScreenshotSupport.conveyorTarget(ids: [UUID()] + conveyorIDs,
+                                                       selected: conveyorIDs[1], step: -1) == conveyorIDs[0]
+                     && ScreenshotSupport.conveyorTarget(ids: conveyorIDs, selected: UUID(), step: 1) == nil,
+                     "new arrivals preserve selection identity and missing images cannot select another capture")
+
         let copyRecord = ScreenshotShareRecord(
             id: String(repeating: "a", count: 32),
             endpoint: URL(string: "https://example.com")!,
@@ -1313,8 +1325,8 @@ enum ScreenshotFeatureTests {
         suite.expect(serviceBody("    func syncWithPreferences() {")
                     .contains("enabled: ScreenshotSharingSupport.uploadShortcutEnabled(in: defaults),"),
                "the upload shortcut is registered only while it and temporary links are both on")
-        suite.expect(serviceBody("    private func route(_ capture:").contains("latestCapture: latestCaptureToken)")
-                && serviceBody("    func restorePreview(").contains("latestCapture: nil)")
+        suite.expect(serviceBody("    private func route(_ capture:").contains("latestCapture: latestCaptureToken,")
+                && serviceBody("    func restorePreview(").contains("latestCapture: nil,")
                 && screenshotServiceCode.contains("self.discardLatestCapture(latestCapture)\n                    return [.discard]"),
                "discarding the preview of the latest capture withholds it, while a preview reopened from history does not")
         let previewDiscard = screenshotServiceCode.components(separatedBy: "case .discard:")

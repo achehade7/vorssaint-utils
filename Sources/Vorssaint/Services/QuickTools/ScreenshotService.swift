@@ -448,7 +448,7 @@ final class ScreenshotService: ObservableObject {
         // The island's companion blinks hard, as a flash, if it is there to see.
         NotchService.shared.reactMascot(.flash, patience: 1)
         preview?.close()
-        RecentCaptureService.shared.recordScreenshot(capture)
+        let historyID = RecentCaptureService.shared.recordScreenshot(capture)
         let defaults = UserDefaults.standard
         if defaults.bool(forKey: DefaultsKey.screenshotCopyToClipboard) {
             autoCopy(capture)
@@ -473,7 +473,8 @@ final class ScreenshotService: ObservableObject {
                        initialSaved: result.saved,
                        completedActions: result.performed,
                        dismissInterval: dismissInterval,
-                       latestCapture: latestCaptureToken)
+                       latestCapture: latestCaptureToken,
+                       historyID: historyID)
     }
 
     /// Thrown away, the latest capture is no longer one the upload shortcut
@@ -530,14 +531,15 @@ final class ScreenshotService: ObservableObject {
 
     /// A history item returns to the same floating preview without repeating
     /// automatic copy or save actions that already ran when it was captured.
-    func restorePreview(_ capture: ScreenshotSelectionController.Capture) {
+    func restorePreview(_ capture: ScreenshotSelectionController.Capture, historyID: UUID? = nil) {
         preview?.close()
         presentPreview(capture,
                        defaultAction: .none,
                        initialSaved: nil,
                        completedActions: [],
                        dismissInterval: ScreenshotSupport.recoveryPreviewDismissInterval,
-                       latestCapture: nil)
+                       latestCapture: nil,
+                       historyID: historyID)
     }
 
     private func presentPreview(_ capture: ScreenshotSelectionController.Capture,
@@ -545,7 +547,8 @@ final class ScreenshotService: ObservableObject {
                                 initialSaved: SaveOutcome?,
                                 completedActions: Set<ScreenshotQuickPreviewController.Action>,
                                 dismissInterval: TimeInterval?,
-                                latestCapture: UUID?) {
+                                latestCapture: UUID?,
+                                historyID: UUID? = nil) {
         var saved = initialSaved
         let controller = ScreenshotQuickPreviewController(
             capture: capture,
@@ -602,7 +605,8 @@ final class ScreenshotService: ObservableObject {
                 return Self.temporaryExportFile(image: export.image, scale: export.scale,
                                                 strings: self.strings)
             },
-            onClose: { [weak self] in self?.preview = nil })
+            onClose: { [weak self] in self?.preview = nil },
+            historyID: historyID)
         preview = controller
         controller.show()
     }

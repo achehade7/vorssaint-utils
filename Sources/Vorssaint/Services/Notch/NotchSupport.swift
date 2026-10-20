@@ -969,8 +969,8 @@ enum NotchCapsuleLayout {
     }
 
     /// Working agents' marks and the reading the person chose.
-    static func agentSurface(reading: String, working: Int, geometry: NotchGeometry) -> CGSize {
-        let content = agentMarksWidth(working: working) + spacing
+    static func agentSurface(reading: String, working: Int, geometry: NotchGeometry, music: Bool = false) -> CGSize {
+        let content = (music ? symbolWidth : agentMarksWidth(working: working)) + spacing
             + width(NotchAgentSupport.readingShape(reading), font: readingFont)
         return surface(content: content, maximum: Maximum.activity, geometry: geometry)
     }
@@ -1562,6 +1562,8 @@ enum NotchSupport {
                      (running && music, .music)]
         case .calendar where calendar:
             pairs = [(downloads, .downloads), (agents, .agents), (music, .music)]
+        case .agents where agents:
+            pairs = [(music, .music)]
         default:
             pairs = []
         }
@@ -2200,13 +2202,14 @@ struct NotchGeometry: Equatable {
         compact.minimumWing = readable
         return compact
     }
-    /// A working agent keeps its mark and one reading beside the camera,
+    /// Working agents keep their marks and readings beside the camera,
     /// never below it, like the timer. Both wings take the width the reading
     /// needs, so a short one leaves no band of empty black at the ends.
-    func compactAgentGeometry(wing: CGFloat) -> NotchGeometry {
+    func compactAgentGeometry(wing: CGFloat, readingCount: Int = 1) -> NotchGeometry {
         var compact = self
         let room = compactSideRoom ?? 0
-        let fitted = min(NotchAgentSupport.stripWingRange.upperBound,
+        let columns = readingCount == 2 ? 1 : max(1, readingCount)
+        let fitted = min(NotchAgentSupport.stripWingRange.upperBound * CGFloat(columns),
                          max(NotchAgentSupport.stripWingRange.lowerBound, wing.isFinite ? wing.rounded(.up) : 0))
         compact.compactSideRoom = room.isFinite && room >= NotchAgentSupport.stripWingRange.lowerBound ? min(fitted, room) : 0
         compact.minimumCompactWidth = cameraWidth + fitted * 2

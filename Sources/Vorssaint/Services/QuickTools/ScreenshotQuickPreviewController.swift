@@ -54,6 +54,8 @@ final class ScreenshotQuickPreviewController {
     private var shownInNotch = false
     private var didStartPreview = false
     private var pointerInside = false
+    private let historyID: UUID?
+    private var browsingHistory = false
 
     var protectedWindowIDs: Set<CGWindowID> {
         guard let panel, panel.isVisible, panel.windowNumber > 0 else { return [] }
@@ -69,7 +71,8 @@ final class ScreenshotQuickPreviewController {
          share: @escaping (ScreenshotShareDuration,
                            @escaping @MainActor (ScreenshotShareRecord?) -> Void) -> Void,
          shareFile: @escaping () -> URL?,
-         onClose: @escaping () -> Void) {
+         onClose: @escaping () -> Void,
+         historyID: UUID? = nil) {
         self.capture = capture
         self.strings = strings
         self.defaultAction = defaultAction
@@ -79,6 +82,7 @@ final class ScreenshotQuickPreviewController {
         self.share = share
         self.shareFile = shareFile
         self.onClose = onClose
+        self.historyID = historyID
         model.disabledActions = completedActions.intersection([.save, .copy])
     }
 
@@ -110,7 +114,9 @@ final class ScreenshotQuickPreviewController {
             dismiss: { [weak self] in self?.close() },
             hoverChanged: { [weak self] inside in self?.hoverChanged(inside) },
             showsDismissButton: presentationPolicy.showsDismissButton,
-            embedded: wantsNotch)
+            embedded: wantsNotch,
+            historyID: historyID,
+            browseHistory: { [weak self] entry in self?.browse(entry) })
         if wantsNotch, NotchService.shared.presentCapture(
             id: presentationID, content: AnyView(content), actions: AnyView(content.toolbar), height: Self.size(showingLink: model.sharedRecord != nil).height,
             takeFocus: presentationPolicy.takesFocus,
@@ -169,6 +175,22 @@ final class ScreenshotQuickPreviewController {
             scanForQR()
         }
         scheduleAutoDismiss()
+    }
+
+    private func browse(_ entry: RecentCaptureEntry) {
+        guard !closed, shownInNotch, !browsingHistory, !model.sharing, !systemSharing,
+              entry.id != historyID else { return }
+        browsingHistory = true
+        RecentCaptureService.shared.screenshot(for: entry) { [weak self] capture in
+            guard let self else { return }
+            self.browsingHistory = false
+            // An outside click or a new capture can close this preview while
+            // its cache image loads. Never reopen an island the user dismissed.
+            guard !self.closed, self.shownInNotch,
+                  NotchService.shared.isCaptureVisible(id: self.presentationID),
+                  let capture else { return }
+            ScreenshotService.shared.restorePreview(capture, historyID: entry.id)
+        }
     }
 
     private func hoverChanged(_ inside: Bool) {
@@ -523,7 +545,10 @@ private struct ScreenshotQuickPreviewView: View {
     let hoverChanged: (Bool) -> Void
     let showsDismissButton: Bool
     var embedded = false
+    var historyID: UUID?
+    var browseHistory: (RecentCaptureEntry) -> Void = { _ in }
     var actionsOnly = false
+    @ObservedObject private var history = RecentCaptureService.shared
     var toolbar: Self {
         var view = self
         view.actionsOnly = true
@@ -643,34 +668,74 @@ private struct ScreenshotQuickPreviewView: View {
 
     private var preview: some View {
         VStack(spacing: 10) {
-            Button {
-                perform(.edit)
-            } label: {
-                Image(decorative: image, scale: 1)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .frame(maxWidth: 320, maxHeight: 138)
-                    .frame(width: embedded ? nil : 320, height: 138)
-                    .background(Color.black.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-                    )
+            VStack(spacing: 6) {
+                ZStack {
+                    if showsConveyor {
+                        ForEach(Array(backCards.enumerated()), id: \.element.id) { offset, entry in
+                            if let thumbnail = history.thumbnail(for: entry) {
+                                Image(nsImage: thumbnail)
+                                    .resizable().scaledToFit()
+                                    .frame(width: 290, height: 118)
+                                    .background(Color.white.opacity(0.06))
+                                    .clipShape(RoundedRectangle(cornerRadius: 9))
+                                    .overlay(RoundedRectangle(cornerRadius: 9)
+                                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
+                                    .rotationEffect(.degrees(Double(offset + 1) * -2))
+                                    .offset(x: CGFloat(offset + 1) * -6, y: CGFloat(offset + 1) * -5)
+                                    .opacity(offset == 0 ? 0.65 : 0.35)
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                    }
+                    Button {
+                        perform(.edit)
+                    } label: {
+                        Image(decorative: image, scale: 1)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .frame(maxWidth: showsConveyor ? 290 : 320, maxHeight: showsConveyor ? 118 : 138)
+                            .frame(width: embedded ? nil : 320, height: showsConveyor ? 118 : 138)
+                            .background(showsConveyor ? Color.black : Color.black.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .onDrag(dragItem)
+                    .screenshotSafeHelp(strings.editButton)
+                    .accessibilityLabel(strings.editButton)
+                    .overlay(alignment: .topLeading) {
+                        if showsDismissButton { thumbnailDismissButton }
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        // The floating action row already fills its fixed width in
+                        // longer languages, so share and pin ride on the thumbnail
+                        // there instead of squeezing Save, Copy and Edit.
+                        if !embedded { thumbnailButtons }
+                    }
+                }
+                .padding(.top, showsConveyor ? 10 : 0)
+                if showsConveyor {
+                    HStack(spacing: 12) {
+                        conveyorButton("chevron.left", title: "Newer screenshot", step: -1)
+                        Text("\((selectedIndex ?? 0) + 1) / \(screenshots.count)")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Screenshot \((selectedIndex ?? 0) + 1) of \(screenshots.count)")
+                        conveyorButton("chevron.right", title: "Older screenshot", step: 1)
+                    }
+                }
             }
-            .buttonStyle(.plain)
-            .onDrag(dragItem)
-            .screenshotSafeHelp(strings.editButton)
-            .accessibilityLabel(strings.editButton)
-            .overlay(alignment: .topLeading) {
-                if showsDismissButton { thumbnailDismissButton }
+            .background {
+                if showsConveyor { ScreenshotConveyorScroll { browse(by: $0) } }
             }
-            .overlay(alignment: .topTrailing) {
-                // The floating action row already fills its fixed width in
-                // longer languages, so share and pin ride on the thumbnail
-                // there instead of squeezing Save, Copy and Edit.
-                if !embedded { thumbnailButtons }
+            .accessibilityScrollAction { edge in
+                if edge == .bottom || edge == .trailing { browse(by: 1) }
+                else if edge == .top || edge == .leading { browse(by: -1) }
             }
 
             if let record = model.sharedRecord {
@@ -696,6 +761,37 @@ private struct ScreenshotQuickPreviewView: View {
             }
         }
         .onHover(perform: previewHoverChanged)
+    }
+
+    private var screenshots: [RecentCaptureEntry] {
+        history.entries.filter { $0.kind == .screenshot }
+    }
+
+    private var selectedIndex: Int? { screenshots.firstIndex { $0.id == historyID } }
+    private var showsConveyor: Bool { embedded && selectedIndex != nil && screenshots.count > 1 }
+    private var backCards: [RecentCaptureEntry] {
+        Array(screenshots.filter { $0.id != historyID }.prefix(2).reversed())
+    }
+
+    private func browse(by step: Int) {
+        guard let id = ScreenshotSupport.conveyorTarget(
+            ids: screenshots.map(\.id), selected: historyID, step: step),
+              let entry = screenshots.first(where: { $0.id == id }) else { return }
+        browseHistory(entry)
+    }
+
+    private func conveyorButton(_ symbol: String, title: String, step: Int) -> some View {
+        Button { browse(by: step) } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+                .frame(width: 22, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(ScreenshotSupport.conveyorTarget(
+            ids: screenshots.map(\.id), selected: historyID, step: step) == nil)
+        .accessibilityLabel(title)
+        .screenshotSafeHelp(title)
     }
 
     private func previewHoverChanged(_ inside: Bool) {

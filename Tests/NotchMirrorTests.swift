@@ -66,6 +66,7 @@ enum NotchMirrorContract {
     }
 
     class State {
+        var quietMode = false
         var showsOnAllDisplays = true, running = true, suspended = false
         var windowHost: Host? = Host()
         var displayID: CGDirectDisplayID? = 1

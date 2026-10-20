@@ -8,9 +8,30 @@ enum NotchSectionPagingTests {
         suite.expect(NotchSectionPaging.rows(count: 14, columns: 4) == 4 && NotchSectionPaging.rows(count: 12, columns: 4) == 3
                && NotchSectionPaging.rows(count: 0, columns: 4) == 1 && NotchSectionPaging.rows(count: 5, columns: 0) == 5,
                "rows round the last partial row up and never vanish")
-        suite.expect(NotchSectionPaging.positions(rows: 4, visible: 3) == 2 && NotchSectionPaging.positions(rows: 2, visible: 3) == 1
-               && NotchSectionPaging.positions(rows: 5, visible: 1) == 5 && NotchSectionPaging.positions(rows: 4, visible: 0) == 4,
-               "a gallery rests on as many rows as can lead the visible ones")
+        suite.expect(NotchSectionPaging.positions(rows: 4, visible: 3) == [0, 1] && NotchSectionPaging.positions(rows: 2, visible: 3) == [0]
+               && NotchSectionPaging.positions(rows: 5, visible: 1) == [0, 1, 2, 3, 4] && NotchSectionPaging.positions(rows: 4, visible: 0) == [0, 1, 2, 3],
+               "page positions fill the final page and never skip rows in a one-row gallery")
+        suite.expect(NotchSectionPaging.positions(rows: 4, visible: 2) == [0, 2],
+                     "four rows shown two at a time have exactly two page dots")
+        suite.expect(NotchSectionPaging.positions(rows: 5, visible: 2) == [0, 2, 3]
+                     && NotchSectionPaging.stepping(from: 3, by: -1, rows: 5, visible: 2) == 2
+                     && NotchSectionPaging.stepping(from: 2, by: 1, rows: 5, visible: 2) == 3,
+                     "a partial last step returns to the preceding page without skipping it")
+        suite.expect(NotchSectionPaging.stepping(from: 0, by: 1, rows: 4, visible: 2) == 2
+                     && NotchSectionPaging.stepping(from: 2, by: -1, rows: 4, visible: 2) == 0,
+                     "scrolling advances and returns two rows at a time")
+        for rows in 1...10 {
+            for visible in 1...4 {
+                let positions = NotchSectionPaging.positions(rows: rows, visible: visible)
+                for first in positions {
+                    for row in 0..<rows {
+                        let revealed = NotchSectionPaging.revealing(row: row, first: first, rows: rows, visible: visible)
+                        suite.expect(positions.contains(revealed) && (revealed..<(revealed + visible)).contains(row),
+                                     "keyboard selection reveals every row on a valid page")
+                    }
+                }
+            }
+        }
         suite.expect(NotchSectionPaging.clamped(5, rows: 4, visible: 3) == 1 && NotchSectionPaging.clamped(-1, rows: 4, visible: 3) == 0
                && NotchSectionPaging.clamped(1, rows: 4, visible: 3) == 1,
                "the first row never rests past the last position")
@@ -101,6 +122,7 @@ enum NotchSectionPagingTests {
         var movedRows = 0, gestureCalls = 0
         func scrollSections(by rows: Int) { movedRows += rows }
         func handleGesture(_ event: NSEvent) -> Bool { gestureCalls += 1; return false }
+        func handleRewindScroll(_ event: NSEvent) -> Bool { false }
     }
 
     private static func routing(_ suite: TestSuite) {

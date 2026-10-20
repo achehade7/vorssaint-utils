@@ -412,7 +412,8 @@ enum NotchPresentationProbe {
         var geometry = NotchGeometry(screen: screen.frame, safeAreaTop: screen.safeAreaInsets.top,
                                      cameraWidth: screen.safeAreaInsets.top > 0 ? 185 : 0)
         let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed,
-                                  background: surface, quickAccess: quickAccess)
+                                  background: surface, quickAccess: quickAccess,
+                                  neon: { AnyView(NotchNeonView(service: .shared, motion: $0, backdrop: $1)) })
         host.panel.alphaValue = 0
         host.panel.ignoresMouseEvents = true
         host.panel.orderFrontRegardless()
@@ -431,7 +432,13 @@ enum NotchPresentationProbe {
                 failures.append("workspace badge overlaps content or escapes the window")
             }
             if let surface = host.workspaceSurfaceProbeFrame {
-                if abs(surface.minX - (host.visibleFrame.minX - 36)) > 0.5
+                if host.workspaceNeonProbeFrame != surface.offsetBy(dx: 0, dy: -NotchNeonEdge.drop) {
+                    failures.append("neon does not follow the full joined workspace outline")
+                }
+                if !host.workspaceNeonProbePassesClicks {
+                    failures.append("workspace neon must draw above the island without taking clicks")
+                }
+                if abs(surface.minX - (host.visibleFrame.minX - 96)) > 0.5
                     || abs(surface.maxX - host.visibleFrame.maxX) > 0.5
                     || abs(surface.height - size.height) > 0.5 {
                     failures.append("workspace surface is not joined to the island")
@@ -454,8 +461,61 @@ enum NotchPresentationProbe {
             failures.append("the open island keeps an asymmetric workspace extension")
         }
         host.present(size: geometry.collapsed, geometry: geometry, animated: false, workspaceBadge: false)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.04))
         if host.workspaceBadgeProbeFrame != nil || host.workspaceSurfaceProbeFrame != nil {
             failures.append("disabled workspace badge remains visible or interactive")
+        }
+        if let neon = host.workspaceNeonProbeFrame {
+            let target = host.visibleFrame.offsetBy(dx: 0, dy: -NotchNeonEdge.drop)
+            if abs(neon.minX - target.minX) > 0.5 || abs(neon.width - target.width) > 0.5
+                || abs(neon.minY - target.minY) > 0.5
+                // AppKit may round the odd-width panel horizontally by half a point.
+                // The space below the surface must still fit without any tolerance.
+                || !host.panel.frame.insetBy(dx: -0.5, dy: 0).contains(neon) {
+                failures.append("resting neon is clipped or misplaced: neon=\(neon), target=\(target), window=\(host.panel.frame)")
+            }
+        } else { failures.append("resting neon is missing") }
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            host.present(size: geometry.collapsed, geometry: geometry, animated: false, workspaceBadge: true)
+            let reservedWidth = host.panel.frame.width
+            let oldBadge = host.workspaceBadgeProbeFrame
+            host.present(size: geometry.collapsed, geometry: geometry, animated: true, workspaceBadge: false)
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.06))
+            if host.workspaceSurfaceProbeFrame == nil || abs(host.panel.frame.width - reservedWidth) > 0.5 {
+                failures.append("workspace withdrawal releases its gutter before the surface finishes contracting")
+            }
+            if host.workspaceBadgeProbeFrame != nil {
+                failures.append("the departing workspace number remains interactive")
+            }
+            if let oldBadge {
+                let point = CGPoint(x: oldBadge.midX, y: oldBadge.midY)
+                if host.contains(point) || host.containsHover(point) {
+                    failures.append("the departing workspace gutter still takes clicks or hover")
+                }
+            }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
+            if host.workspaceSurfaceProbeFrame != nil
+                || abs(host.panel.frame.width - geometry.collapsed.width) > 0.5 {
+                failures.append("workspace withdrawal fails to release its surface and gutter after contracting")
+            }
+
+            host.present(size: geometry.collapsed, geometry: geometry, animated: false, workspaceBadge: true)
+            host.present(size: geometry.collapsed, geometry: geometry, animated: true, workspaceBadge: false)
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.06))
+            host.present(size: geometry.collapsed, geometry: geometry, animated: true, workspaceBadge: true)
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
+            if host.workspaceBadgeProbeFrame == nil || host.workspaceSurfaceProbeFrame == nil {
+                failures.append("an old workspace withdrawal removes a newer workspace flash")
+            }
+            host.present(size: geometry.expanded, geometry: geometry, animated: true, workspaceBadge: false)
+            if host.workspaceBadgeProbeFrame != nil || host.workspaceSurfaceProbeFrame != nil {
+                failures.append("opening the island retains the compact workspace extension")
+            }
+            host.present(size: geometry.collapsed, geometry: geometry, animated: false, workspaceBadge: true)
+            host.hide(animated: true)
+            if host.workspaceBadgeProbeFrame != nil || host.workspaceSurfaceProbeFrame != nil {
+                failures.append("hiding the island retains its workspace extension")
+            }
         }
         host.hide(animated: false)
         if host.panel.isVisible { failures.append("workspace badge keeps the hidden island visible") }

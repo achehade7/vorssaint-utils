@@ -194,8 +194,28 @@ enum NotchAgentSupport {
     static let stripWingRange: ClosedRange<CGFloat> = 44...80
     /// Air between the camera and what sits beside it.
     static let stripCameraGap: CGFloat = 6
+    static let stripReadingSpacing: CGFloat = 10
 
-    static func stripTextSize(height: CGFloat) -> CGFloat { min(14, height - 8) }
+    static func stripTextSize(height: CGFloat, readingCount: Int = 1) -> CGFloat {
+        readingCount == 2 ? min(10.5, height / 2 - 3) : min(13, height - 8)
+    }
+
+    /// Parallel clocks follow the same provider order as the marks on the left.
+    /// Multiple sessions of one provider share its earliest active turn.
+    static func stripReadings(_ snapshot: AgentUsageSnapshot, readout: NotchAgentReadout,
+                              display: NotchAgentLimitDisplay, focus: NotchAgentLimitFocus = .mostUsed,
+                              now: Date) -> [(provider: AgentProvider, text: String)] {
+        let providers = AgentProvider.allCases.filter { provider in snapshot.live.contains { $0.provider == provider } }
+        guard readout == .elapsed else {
+            return providers.prefix(1).map {
+                ($0, stripReading(snapshot, readout: readout, display: display, focus: focus, now: now))
+            }
+        }
+        return providers.map { provider in
+            let started = snapshot.live.filter { $0.provider == provider }.map(\.started).min() ?? now
+            return (provider, AgentFormat.clock(now.timeIntervalSince(started)))
+        }
+    }
 
     /// What the strip shows beside the camera while agents work: the reading
     /// the person chose, or the time elapsed while that one is unknown.

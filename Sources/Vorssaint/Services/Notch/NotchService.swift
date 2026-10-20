@@ -14,6 +14,10 @@ struct NotchNotice: Equatable {
     var level: Double? = nil
     var notification: NotchNotificationContent? = nil
     var notificationID: UUID? = nil
+    var fileURL: URL? = nil
+    var terminalStatus: Int? = nil
+    var audioHandoff = false
+    var replayed = false
     /// The agent an AI notice is about, which tints its mark.
     var agent: AgentProvider? = nil
     /// With the companion on, it takes the symbol's place in the notice and
@@ -126,6 +130,14 @@ final class NotchService: ObservableObject {
     /// The gallery's first visible row; the rows above it have stepped away.
     @Published private(set) var sectionRow = 0
     @Published private(set) var modules: [NotchModule] = []
+    @Published private(set) var quietMode = false
+    @Published private(set) var neonWakeAt: Date?
+    @Published private(set) var neonChargeAt: Date?
+    @Published private(set) var nightPalette: Double = 0
+    @Published private(set) var routingFileDrag = false
+    @Published private(set) var dragTargetWorkspace: String?
+    var workspaceDropFrames: [String: CGRect] = [:]
+    private var workspaceDragWork: DispatchWorkItem?
     @Published private(set) var notice: NotchNotice?
     @Published private(set) var noticeExpanded = false
     /// A compact notice stays drawn while the island closes around it.
@@ -213,6 +225,11 @@ final class NotchService: ObservableObject {
     /// every layout pass, which would decode them each time.
     private var headerShowsSectionsButton = false
     private var keepsWorkingSurface: Bool {
+        keepsOutsideClick || routingFileDrag
+            || (expanded && !showingSections && selected == .captures && captureContent != nil)
+    }
+
+    private var keepsOutsideClick: Bool {
         pinned || trackingMenu || NSApp.modalWindow != nil || panel?.attachedSheet != nil
             || NotchLyricsService.shared.isImporting
             // Like the lyrics chooser, these panels stand beside the island
@@ -223,7 +240,6 @@ final class NotchService: ObservableObject {
             || (expanded && !showingSections && selected == .calendar && Permissions.shared.keepsCalendarPrompt)
             || (expanded && !showingSections && selected == .files && fileInteractionActive)
             || CameraPreviewService.shared.keepsNotchPermissionPrompt
-            || (expanded && !showingSections && selected == .captures && captureContent != nil)
             || (expanded && !showingSections && selected == .tools && (QuickLauncherService.shared.activeUtility != nil || QuickLauncherService.shared.isEditing))
     }
     /// Up and measuring its display. Settings previews read the island's
@@ -241,6 +257,8 @@ final class NotchService: ObservableObject {
     private var settingsSignature = ""
     private var gesture = NotchGestureSupport()
     private var sectionScroll = NotchSectionScroll()
+    private var rewindScroll = NotchSectionScroll()
+    private let audioOutputMenu = NotchMenuAnchor()
     private var volumeBaseline: Double?
     private var muteBaseline: Bool?
     private var volumeDeviceUID: String?
@@ -592,10 +610,16 @@ final class NotchService: ObservableObject {
         }
     }
 
-    /// A single activity never borrows another activity's wing implicitly.
+    /// Automatic activity mixes keep music beside useful live readings.
+    /// An explicit single-activity or pair selection still takes precedence.
     var compactCompanion: NotchCompactActivity? {
-        guard let activity = compactActivity, activity == activitySelection.preferred else { return nil }
-        return activitySelection.companion(available: compactCompanions(of: activity))
+        guard let activity = compactActivity else { return nil }
+        let companions = compactCompanions(of: activity)
+        if activitySelection.preferred != nil {
+            guard activity == activitySelection.preferred else { return nil }
+            return activitySelection.companion(available: companions)
+        }
+        return companions.contains(.music) ? .music : companions.first
     }
 
     private var compactActivityIsVisible: Bool {
@@ -636,7 +660,7 @@ final class NotchService: ObservableObject {
         case .downloads:
             let name = NotchDownloadService.shared.items.first { $0.active && !$0.completed }?.name
             return geometry.compactDownloadGeometry(wing: NotchDownloadSupport.compactWing(for: name, in: geometry))
-        case .agents: return geometry.compactAgentGeometry(wing: agentStripWing(in: geometry))
+        case .agents: return agentStripGeometry(in: geometry)
         case .watch: return geometry.compactWatchGeometry(wing: watchStripWing(in: geometry))
         case .calendar:
             return geometry.compactCalendarGeometry(wing: calendarStripWing(for: companion, in: geometry),
@@ -751,16 +775,23 @@ final class NotchService: ObservableObject {
     /// The wider of the two sides, the reading or the working agents' marks,
     /// with the clearance from the silhouette's curve that the strip keeps
     /// and air beside the camera.
-    private func agentStripWing(in geometry: NotchGeometry) -> CGFloat {
+    private func agentStripGeometry(in geometry: NotchGeometry) -> NotchGeometry {
         let provisional = geometry.compactAgentGeometry(wing: NotchAgentSupport.stripWingRange.lowerBound)
-        let size = NotchAgentSupport.stripTextSize(height: provisional.compactActivityContentHeight)
-        let shape = NotchAgentSupport.readingShape(NotchAgentSupport.stripReading(
+        let readings = NotchAgentSupport.stripReadings(
             AgentUsageService.shared.snapshot, readout: NotchAgentSupport.readout(),
-            display: NotchAgentSupport.limitDisplay(), focus: NotchAgentSupport.limitFocus(), now: Date()))
-        let width = (shape as NSString).size(withAttributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .medium)
-        ]).width
-        let reading = width.rounded(.up) + provisional.compactActivityEdgeInset(boxHeight: size * 0.72, radius: 0)
+            display: NotchAgentSupport.limitDisplay(), focus: NotchAgentSupport.limitFocus(), now: Date())
+        let stacked = readings.count == 2
+        let size = NotchAgentSupport.stripTextSize(height: provisional.compactActivityContentHeight,
+                                                  readingCount: readings.count)
+        let widths = readings.map { reading in
+            (NotchAgentSupport.readingShape(reading.text) as NSString).size(withAttributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .medium)
+            ]).width
+        }
+        let width = stacked ? widths.max() ?? 0
+            : widths.reduce(0, +) + CGFloat(max(0, readings.count - 1)) * NotchAgentSupport.stripReadingSpacing
+        let textHeight = stacked ? ceil(size * 1.2) * 2 : size * 0.72
+        let reading = width.rounded(.up) + provisional.compactActivityEdgeInset(boxHeight: textHeight, radius: 0)
         // The marks on the other side, drawn as the strip draws them: two
         // working agents share a smaller size, each in a frame wider than it.
         let working = Set(AgentUsageService.shared.snapshot.live.map(\.provider)).count
@@ -769,7 +800,8 @@ final class NotchService: ObservableObject {
         let frame = mark * 1.45 + 1
         let marks = CGFloat(max(1, working)) * frame + CGFloat(max(0, working - 1))
             + provisional.compactActivityEdgeInset(boxHeight: mark + 4, radius: (mark + 4) / 2)
-        return max(reading, marks) + NotchAgentSupport.stripCameraGap
+        return geometry.compactAgentGeometry(wing: max(reading, marks) + NotchAgentSupport.stripCameraGap,
+                                             readingCount: readings.count)
     }
 
     var expandedSize: CGSize {
@@ -1030,7 +1062,7 @@ final class NotchService: ObservableObject {
             let reading = NotchAgentSupport.stripReading(AgentUsageService.shared.snapshot, readout: NotchAgentSupport.readout(),
                                                          display: NotchAgentSupport.limitDisplay(),
                                                          focus: NotchAgentSupport.limitFocus(), now: Date())
-            return layout.agentSurface(reading: reading, working: working, geometry: geometry)
+            return layout.agentSurface(reading: reading, working: working, geometry: geometry, music: companion == .music)
         case .calendar:
             guard let countdown = NotchCalendarService.shared.countdown else { return geometry.restingSize(showsContent: false) }
             if let companion {
@@ -1055,7 +1087,7 @@ final class NotchService: ObservableObject {
     var presentationWindow: NSPanel? { panel }
     /// User actions can open the island even when automatic full-screen feedback is hidden.
     var acceptsUserInteraction: Bool {
-        running && !suspended && panel != nil
+        running && !suspended && !quietMode && panel != nil
             && windowHost?.isConcealedForMissionControl != true
     }
     var acceptsSystemFeedback: Bool {
@@ -1223,6 +1255,7 @@ final class NotchService: ObservableObject {
     }
 
     private func tearDownPresentation() {
+        NotchScreenshotInbox.shared.stop()
         NotchAeroSpaceService.shared.onChange = nil
         NotchAeroSpaceService.shared.stop()
         screenRefreshWork?.cancel(); screenRefreshWork = nil
@@ -1243,8 +1276,10 @@ final class NotchService: ObservableObject {
         musicDetailVisible = false
         pageLayers.removeAll()
         panel?.handleScroll = nil
+        panel?.handleMiddleClick = nil
         gesture = NotchGestureSupport()
         sectionScroll = NotchSectionScroll()
+        rewindScroll = NotchSectionScroll()
         stopMenuSpaceMonitoring()
         geometry.compactSideRoom = nil
         hoverWork?.cancel(); hoverWork = nil
@@ -1612,7 +1647,7 @@ final class NotchService: ObservableObject {
     /// A mirrored banner the pointer can hold: on screen and not covered.
     /// Hidden mode keeps its notices out of reach, as the surface is not shown.
     private var holdsNotification: Bool {
-        notice?.notificationID != nil && noticeCanPresent && !hiddenUntilHover
+        notice?.notificationID != nil && notice?.replayed != true && noticeCanPresent && !hiddenUntilHover
     }
 
     /// A mirrored banner waits under the pointer, as the native one does, and
@@ -1712,7 +1747,11 @@ final class NotchService: ObservableObject {
         provideHapticFeedback()
     }
 
-    func scrollSections(by rows: Int) { showSectionRow(sectionRow + rows) }
+    func scrollSections(by pages: Int) {
+        let limits = sectionRowLimits
+        showSectionRow(NotchSectionPaging.stepping(from: sectionRow, by: pages,
+                                                  rows: limits.rows, visible: limits.visible))
+    }
 
     private func handleSectionKey(_ event: NSEvent) -> Bool {
         guard showingSections,
@@ -2153,6 +2192,7 @@ final class NotchService: ObservableObject {
 
     func beginFileDrop(_ pasteboard: NSPasteboard) {
         guard canAcceptFileDrop else { return }
+        routingFileDrag = NotchAeroSpaceService.shared.state.current != nil && pasteboard.types?.contains(.fileURL) == true
         choosingFileDropDestination = NotchFileToolsService.shared.mediaDropContent(for: pasteboard) != nil
         targetsMediaDrop = false
         open(.files, takeFocus: false)
@@ -2160,6 +2200,21 @@ final class NotchService: ObservableObject {
 
     @discardableResult
     func updateFileDrop(at point: CGPoint) -> Bool {
+        let workspace = routingFileDrag ? NotchAeroSpaceState.workspaces.first { workspaceDropFrames[$0]?.contains(point) == true } : nil
+        if workspace != dragTargetWorkspace {
+            workspaceDragWork?.cancel()
+            dragTargetWorkspace = workspace
+            if let workspace {
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self, self.routingFileDrag, self.dragTargetWorkspace == workspace else { return }
+                    NotchAeroSpaceService.shared.select(workspace)
+                }
+                workspaceDragWork = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.65, execute: work)
+            }
+        }
+        // The number is a spring-loaded route, not a destination that stores files.
+        if workspace != nil { return false }
         let targeted = choosingFileDropDestination
             && NotchFileToolsSupport.mediaDropArea(in: expandedGeometry, size: surfaceSize).contains(point)
         if targetsMediaDrop != targeted { targetsMediaDrop = targeted }
@@ -2167,6 +2222,9 @@ final class NotchService: ObservableObject {
     }
 
     func endFileDrop() {
+        workspaceDragWork?.cancel(); workspaceDragWork = nil
+        dragTargetWorkspace = nil
+        routingFileDrag = false
         let changed = choosingFileDropDestination
         if changed { choosingFileDropDestination = false }
         if targetsMediaDrop { targetsMediaDrop = false }
@@ -2180,7 +2238,7 @@ final class NotchService: ObservableObject {
 
     func accept(_ pasteboard: NSPasteboard) -> Bool {
         defer { endFileDrop() }
-        guard canAcceptFileDrop else { return false }
+        guard canAcceptFileDrop, dragTargetWorkspace == nil else { return false }
         let optimize = choosingFileDropDestination && targetsMediaDrop
         let accepted = optimize
             ? NotchFileToolsService.shared.openMediaDrop(pasteboard)
@@ -2226,12 +2284,36 @@ final class NotchService: ObservableObject {
             inside = true
             holdNotification(id)
         } else {
-            scheduleNoticeDismissal(after: incoming.event.duration)
+            scheduleNoticeDismissal(after: incoming.replayed ? 3 : incoming.event.duration)
         }
         return true
     }
 
     func activateNotice(_ selectedNotice: NotchNotice) {
+        if selectedNotice.audioHandoff {
+            guard notice == selectedNotice, let view = panel?.contentView else { return }
+            settleNotificationHover()
+            let mixer = AppVolumeMixer.shared
+            let items = mixer.outputDevices.filter(\.canBeDefaultOutput).map { device in
+                NotchMenuItem(title: device.name, checked: device.uid == mixer.currentOutputDeviceUID) {
+                    _ = mixer.setUniversalOutputDeviceUID(device.uid)
+                }
+            }
+            if items.isEmpty { open(.mixer) }
+            else { audioOutputMenu.popUp(items, from: view) }
+            return
+        }
+        if selectedNotice.terminalStatus != nil {
+            perform {
+                guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.mitchellh.ghostty") else { return }
+                NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+            }
+            return
+        }
+        if let url = selectedNotice.fileURL {
+            perform { if !NSWorkspace.shared.open(url) { NSSound.beep() } }
+            return
+        }
         guard notice == selectedNotice else { return }
         if let id = selectedNotice.notificationID {
             guard NotchNotificationService.shared.openingID == nil else { return }
@@ -2435,6 +2517,14 @@ final class NotchService: ObservableObject {
         captureClosesOnCollapse = false
     }
 
+    func dismissForOutsideClick() {
+        let closesPreview = expanded && selected == .captures && !showingSections && captureContent != nil
+        let close = closesPreview ? captureClose : nil
+        if closesPreview { clearCapture() }
+        collapse()
+        close?()
+    }
+
     /// Persistent captures must detach before their close callback runs so a
     /// replaced island surface cannot be collapsed again by that callback.
     /// Timed captures remain attached to their existing dismissal timer.
@@ -2499,6 +2589,11 @@ final class NotchService: ObservableObject {
     }
 
     func refreshPresentation(animated: Bool = true, transitionContent: NotchContentTransition = .none) {
+        if quietMode {
+            windowHost?.hide(animated: false)
+            closeMirrors()
+            return
+        }
         // A notice with a new reading, or the music strip naming its song,
         // fits its new width in place.
         let fitsInPlace = noticeFitsInPlace && notice != nil && !noticeExpanded
@@ -2952,7 +3047,7 @@ final class NotchService: ObservableObject {
     /// it shows closed. The copies are drawn for their own displays, a
     /// capsule or a notch, and they take no part in hovering or notices.
     private func syncMirrors() {
-        guard showsOnAllDisplays, running, !suspended, windowHost != nil else { closeMirrors(); return }
+        guard showsOnAllDisplays, running, !suspended, !quietMode, windowHost != nil else { closeMirrors(); return }
         let screens = NSScreen.screens
         for (id, mirror) in mirrors where !screens.contains(where: { $0.notchDisplayID == id }) {
             mirror.host.close()
@@ -3310,7 +3405,8 @@ final class NotchService: ObservableObject {
         if windowHost == nil {
             windowHost = NotchWindowHost(content: AnyView(NotchView(service: self)), geometry: geometry, size: surfaceSize,
                                         background: { AnyView(NotchWindowBackground(presentation: $0)) },
-                                        quickAccess: { AnyView(NotchQuickAccessView(service: self, motion: $0, backdrop: $1)) })
+                                        quickAccess: { AnyView(NotchQuickAccessView(service: self, motion: $0, backdrop: $1)) },
+                                        neon: { AnyView(NotchNeonView(service: self, motion: $0, backdrop: $1)) })
             windowHost?.missionControlDidRestore = { [weak self] in self?.missionControlDidRestore() }
             windowHost?.setHoverHandler { [weak self] in self?.hover($0) }
             panel?.title = FeatureStrings.notch(L10n.shared.language).title
@@ -3450,6 +3546,28 @@ final class NotchService: ObservableObject {
             self?.updateSession { $0.onConsole = true }
         }
         let distributed = DistributedNotificationCenter.default()
+        observe(distributed, Notification.Name("com.vorssaint.island.toggleQuiet")) { [weak self] in
+            self?.toggleQuietMode()
+        }
+        observe(distributed, Notification.Name("com.vorssaint.island.queryQuiet")) { [weak self] in
+            self?.publishQuietMode()
+        }
+        let paletteObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.palette"), object: nil, queue: .main) { [weak self] note in
+            guard let value = note.userInfo?["night"] as? Double, value.isFinite else { return }
+            self?.nightPalette = min(1, max(0, value))
+        }
+        observers.append((distributed, paletteObserver))
+        let terminalObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.terminal"), object: nil, queue: .main) { [weak self] note in
+            guard let self, let status = note.userInfo?["status"] as? Int,
+                  let seconds = note.userInfo?["seconds"] as? Int, seconds >= 10,
+                  let command = note.userInfo?["command"] as? String, !command.isEmpty else { return }
+            let label = String(command.filter { !$0.isNewline && !$0.isWhitespace }.prefix(32))
+            self.show(NotchNotice(event: .systemNotification, title: label,
+                detail: (status == 0 ? "Finished" : "Exit \(status)") + " · \(seconds)s",
+                symbol: "terminal", terminalStatus: status))
+        }
+        observers.append((distributed, terminalObserver))
+        publishQuietMode()
         observe(distributed, Notification.Name("com.apple.screenIsLocked")) { [weak self] in
             self?.updateSession { $0.locked = true }
         }
@@ -3526,6 +3644,7 @@ final class NotchService: ObservableObject {
         if couldPresent != session.canPresent {
             if session.canPresent {
                 syncWithPreferences()
+                playNeonWake()
             } else {
                 let cancel = captureControlsCancel
                 endCaptureControls()
@@ -3550,16 +3669,52 @@ final class NotchService: ObservableObject {
         else { NotchTimerService.shared.suspend() }
     }
 
+    func toggleQuietMode() {
+        quietMode.toggle()
+        collapse()
+        refreshPresentation(animated: false)
+        publishQuietMode()
+    }
+
+    private func publishQuietMode() {
+        let command = Process()
+        command.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/sketchybar")
+        command.arguments = ["--trigger", "island_quiet", "STATE=\(quietMode ? 1 : 0)"]
+        command.standardInput = FileHandle.nullDevice
+        command.standardOutput = FileHandle.nullDevice
+        command.standardError = FileHandle.nullDevice
+        try? command.run()
+    }
+
+    /// One sequence per return to an unlocked, awake session.
+    private func playNeonWake() {
+        guard !hiddenInFullscreen, !quietMode else { return }
+        let began = Date()
+        neonWakeAt = began
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self, self.session.canPresent, self.neonWakeAt == began,
+                  !self.hiddenInFullscreen else { return }
+            let command = Process()
+            command.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/sketchybar")
+            command.arguments = ["--trigger", "island_wake",
+                "REDUCE_MOTION=\(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 0)"]
+            command.standardInput = FileHandle.nullDevice
+            command.standardOutput = FileHandle.nullDevice
+            command.standardError = FileHandle.nullDevice
+            try? command.run()
+        }
+    }
+
     private func installEventMonitors() {
         guard eventMonitors.isEmpty else { return }
         clickedSinceOpening = false
         let clicks: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         if let token = NSEvent.addGlobalMonitorForEvents(matching: clicks, handler: { [weak self] _ in
-            guard let self, !self.keepsWorkingSurface,
+            guard let self, !self.keepsOutsideClick,
                   self.windowHost?.contains(NSEvent.mouseLocation) != true,
                   (NSApp.delegate as? AppDelegate)?.isOverStatusItem(NSEvent.mouseLocation) != true,
                   !AssistiveKeyboard.ownsCocoaPoint(NSEvent.mouseLocation) else { return }
-            self.collapse()
+            self.dismissForOutsideClick()
         }) { eventMonitors.append(token) }
         if let token = NSEvent.addLocalMonitorForEvents(matching: clicks.union(.keyDown), handler: { [weak self] event in
             guard let self else { return event }
@@ -3617,10 +3772,10 @@ final class NotchService: ObservableObject {
             let click = clicks.contains(NSEvent.EventTypeMask(rawValue: 1 << event.type.rawValue))
             let islandWindow = self.ownsWindow(event.window)
             if click, islandWindow { self.clickedSinceOpening = true }
-            if click, !islandWindow, !self.keepsWorkingSurface,
+            if click, !islandWindow, !self.keepsOutsideClick,
                self.windowHost?.contains(NSEvent.mouseLocation) != true,
                (NSApp.delegate as? AppDelegate)?.isOverStatusItem(NSEvent.mouseLocation) != true,
-               !AssistiveKeyboard.ownsCocoaPoint(NSEvent.mouseLocation) { self.collapse() }
+               !AssistiveKeyboard.ownsCocoaPoint(NSEvent.mouseLocation) { self.dismissForOutsideClick() }
             return event
         }) { eventMonitors.append(token) }
     }
@@ -3639,12 +3794,60 @@ final class NotchService: ObservableObject {
     private func syncGestures() {
         if !NotchGestureSupport.isEnabled() { gesture = NotchGestureSupport() }
         panel?.handleScroll = { [weak self] event in self?.handleScroll(event) ?? false }
+        panel?.handleMiddleClick = { [weak self] event in
+            guard let self, self.acceptsUserInteraction, !self.trackingMenu,
+                  self.captureControls == nil, !self.heldDrag, let panel = self.panel,
+                  self.windowHost?.contains(panel.convertPoint(toScreen: event.locationInWindow)) == true,
+                  event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return false }
+            self.hoverWork?.cancel(); self.hoverWork = nil
+            NotchAeroSpaceService.shared.togglePrevious()
+            return true
+        }
     }
 
     /// The gallery steps its rows from the wheel; every other scroll over the
     /// island is a gesture candidate.
     private func handleScroll(_ event: NSEvent) -> Bool {
-        handleSectionScroll(event) || handleGesture(event)
+        handleRewindScroll(event) || handleSectionScroll(event) || handleGesture(event)
+    }
+
+    private func handleRewindScroll(_ event: NSEvent) -> Bool {
+        // Fast hover opening must not outrun the wheel. Only the hovered
+        // home's header yields; its gallery and deliberately opened pages
+        // keep their own scrolling.
+        let hoveredHeader = expanded && openedByHover && showingSections
+            && panel.map { $0.frame.maxY - $0.convertPoint(toScreen: event.locationInWindow).y
+                <= expandedGeometry.headerTopInset + expandedGeometry.headerRowHeight } == true
+        guard acceptsUserInteraction, (!expanded || hoveredHeader), !pinned, !keepsWorkingSurface,
+              !peeking, !noticeExpanded, !trackingMenu,
+              captureControls == nil, !heldDrag, let panel,
+              event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+              abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX),
+              windowHost?.contains(panel.convertPoint(toScreen: event.locationInWindow)) == true,
+              NotchNotificationSupport.isEnabled(),
+              !NotchNotificationService.shared.items.isEmpty else {
+            rewindScroll = NotchSectionScroll()
+            return false
+        }
+        hoverWork?.cancel(); hoverWork = nil
+        let steps = rewindScroll.steps(deltaY: Double(event.scrollingDeltaY), timestamp: event.timestamp,
+                                       precise: event.hasPreciseScrollingDeltas, hasPhase: !event.phase.isEmpty,
+                                       began: event.phase.contains(.began),
+                                       ended: !event.phase.intersection([.ended, .cancelled]).isEmpty,
+                                       momentum: !event.momentumPhase.isEmpty)
+        guard steps != 0 else { return true }
+        let items = NotchNotificationService.shared.items
+        let current = notice?.replayed == true ? notice?.notificationID : nil
+        if hoveredHeader { collapse() }
+        guard let item = NotchNotificationRewind.selection(items: items, current: current, steps: steps) else {
+            settleNotificationHover()
+            dismissNotice()
+            return true
+        }
+        settleNotificationHover()
+        _ = show(NotchNotice(event: .systemNotification, title: item.content.title, detail: item.content.body,
+                            symbol: "bell.fill", notification: item.content, notificationID: item.id, replayed: true))
+        return true
     }
 
     private func handleSectionScroll(_ event: NSEvent) -> Bool {
@@ -3835,7 +4038,7 @@ final class NotchService: ObservableObject {
             NotchDownloadService.shared.onArrival = { [weak self] item in
                 self?.show(NotchNotice(event: .download,
                     title: FeatureStrings.notchFiles(L10n.shared.language).completed,
-                    detail: item.name, symbol: "arrow.down.circle.fill", mascot: .celebrate))
+                    detail: item.name, symbol: "doc", fileURL: item.url, mascot: .celebrate))
                 self?.reactMascot(.celebrate)
             }
             NotchDownloadService.shared.onFailure = { [weak self] in self?.reactMascot(.confused) }
@@ -3900,6 +4103,8 @@ final class NotchService: ObservableObject {
                 }
             }.store(in: &subscriptions)
         }
+        if NotchSupport.routes(.capture) { NotchScreenshotInbox.shared.start() }
+        else { NotchScreenshotInbox.shared.stop() }
         if NotchSupport.routes(.clipboard) {
             let history = ClipboardHistoryService.shared
             history.capturedEntry.receive(on: DispatchQueue.main).sink { [weak self] _ in
@@ -4052,6 +4257,7 @@ final class NotchService: ObservableObject {
         let next = sampler.sample()
         power = next
         let pluggedIn = !before.externalConnected && next.externalConnected
+        if pluggedIn, acceptsSystemFeedback { neonChargeAt = Date() }
         let low = (next.chargePercent ?? 100) <= 20 && (before.chargePercent ?? 0) > 20
         guard before.externalConnected != next.externalConnected || low
                 || (before.isCharging && !next.isCharging && next.chargePercent == 100) else { return }

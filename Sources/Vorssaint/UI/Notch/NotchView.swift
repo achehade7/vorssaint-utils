@@ -15,6 +15,9 @@ struct NotchView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var headerHovered = false
+    @State private var peekWorkspace: String?
+    @State private var hoveredWorkspace: String?
+    @State private var workspaceHoverTask: Task<Void, Never>?
     private var text: NotchStrings { FeatureStrings.notch(l10n.language) }
 
     var body: some View {
@@ -34,6 +37,8 @@ struct NotchView: View {
                 transaction.animation = .easeInOut(duration: NotchMascotMotion.restCrossfade)
             }
             .frame(width: service.surfaceSize.width, height: service.surfaceSize.height, alignment: .top)
+            .coordinateSpace(name: "islandDropSurface")
+            .onPreferenceChange(WorkspaceDropFrames.self) { service.workspaceDropFrames = $0 }
             .foregroundStyle(.white)
             // The window server leaves Liquid Glass out of its hit test, so a
             // click or a wheel over empty glass would reach the window behind:
@@ -45,6 +50,9 @@ struct NotchView: View {
             // The backdrop is a separate, non-interactive hosting view. Claim
             // empty space here so clicks and wheel events stay in this window.
             .onTapGesture { }
+            .onChange(of: service.expanded) { if !service.expanded { clearWorkspacePeek() } }
+            .onChange(of: service.showingSections) { if !service.showingSections { clearWorkspacePeek() } }
+            .onDisappear { clearWorkspacePeek() }
             .onChange(of: reduceTransparency) {
                 DispatchQueue.main.async { service.refreshPresentation(animated: false) }
             }
@@ -164,6 +172,7 @@ struct NotchView: View {
                 // its notices plain, as its other strips are.
                 .buttonStyle(NotchButtonStyle(cornerRadius: 14, lifts: false, highlights: floats))
                 .accessibilityElement(children: .ignore)
+                .modifier(NotchDownloadDrag(url: notice.fileURL))
                 .accessibilityLabel(notice.accessibilityText)
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAction { service.activateNotice(notice) }
@@ -300,7 +309,10 @@ struct NotchView: View {
         VStack(spacing: NotchLayout.spacing) {
             header.zIndex(1)
             Group {
-                if service.showingSections {
+                if service.showingSections, let peekWorkspace {
+                    NotchWorkspacePeek(workspace: peekWorkspace, service: service) { self.peekWorkspace = nil }
+                        .id(peekWorkspace)
+                } else if service.showingSections {
                     NotchSectionsView(service: service)
                 } else if scrollsVertically {
                     ScrollView {
@@ -385,24 +397,60 @@ struct NotchView: View {
     }
 
     private var showsWorkspaceHeader: Bool {
-        service.showingSections && service.aeroSpaceOpensOnHover
+        (service.showingSections || service.routingFileDrag) && service.aeroSpaceOpensOnHover
+    }
+
+    private func clearWorkspacePeek() {
+        workspaceHoverTask?.cancel()
+        workspaceHoverTask = nil
+        hoveredWorkspace = nil
+        peekWorkspace = nil
+    }
+
+    private func workspaceHover(_ workspace: String, inside: Bool) {
+        if inside {
+            hoveredWorkspace = workspace
+            workspaceHoverTask?.cancel()
+            workspaceHoverTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard !Task.isCancelled, hoveredWorkspace == workspace, service.showingSections else { return }
+                peekWorkspace = workspace
+            }
+        } else if hoveredWorkspace == workspace {
+            hoveredWorkspace = nil
+            workspaceHoverTask?.cancel()
+        }
+    }
+
+    private func headerBack() {
+        if peekWorkspace != nil { clearWorkspacePeek() }
+        else { service.toggleSections() }
     }
 
     private var workspaceButtons: some View {
         HStack(spacing: 4) {
             ForEach(NotchAeroSpaceState.workspaces, id: \.self) { workspace in
                 let active = workspace == NotchAeroSpaceService.shared.state.current
-                Button { NotchAeroSpaceService.shared.select(workspace) } label: {
+                Button { clearWorkspacePeek(); NotchAeroSpaceService.shared.select(workspace) } label: {
                     Text(workspace)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(active ? Color.orange : .white.opacity(0.65))
+                        .foregroundStyle(active ? NotchNeonPalette.workspace(workspace) : .white.opacity(0.65))
                         .frame(width: 22, height: 26)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .background(service.dragTargetWorkspace == workspace ? NotchNeonPalette.workspace(workspace).opacity(0.25) : .clear,
+                            in: RoundedRectangle(cornerRadius: 6))
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: WorkspaceDropFrames.self,
+                        value: [workspace: geometry.frame(in: .named("islandDropSurface"))])
+                })
+                .onHover { if !service.routingFileDrag { workspaceHover(workspace, inside: $0) } }
                 .accessibilityLabel("AeroSpace " + workspace)
+                .accessibilityAction(named: Text("Show windows")) { peekWorkspace = workspace }
                 .accessibilityAddTraits(active ? .isSelected : [])
             }
+            NotchObsidianButton(service: service)
         }
         .fixedSize()
         .padding(.trailing, 2)
@@ -413,12 +461,12 @@ struct NotchView: View {
         HStack(spacing: service.expandedGeometry.headerCameraGap > 0 ? 0 : 6) {
             let quickActions = NotchQuickAccessConfiguration.current().actions
             HStack(spacing: 6) {
-                if service.showingSections {
+                if service.showingSections || service.routingFileDrag {
                     if showsWorkspaceHeader {
-                        NotchIconButton(symbol: "chevron.left", title: l10n.s.obBack, action: service.toggleSections)
+                        NotchIconButton(symbol: "chevron.left", title: l10n.s.obBack, action: headerBack)
                         workspaceButtons
                     } else {
-                        NotchIconButton(symbol: "chevron.left", title: l10n.s.obBack, action: service.toggleSections)
+                        NotchIconButton(symbol: "chevron.left", title: l10n.s.obBack, action: headerBack)
                     }
                     if service.expandedGeometry.headerCameraGap == 0 && !showsWorkspaceHeader {
                         Text(text.sectionsTitle)
@@ -1097,5 +1145,12 @@ struct NotchActivityPicker: View {
                 .accessibilityIdentifier("notch.activity.\(activity.rawValue)")
             }
         }
+    }
+}
+
+private struct WorkspaceDropFrames: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
     }
 }

@@ -54,6 +54,23 @@ enum NotchNotificationTests {
         func expect(_ condition: Bool, _ message: String) {
             suite.expect(condition, message)
         }
+        let history = (0..<3).map { index in
+            NotchSystemNotification(id: UUID(),
+                content: NotchNotificationContent(app: "Test", title: "\(index)", subtitle: "", body: ""),
+                received: Date(), canOpen: false)
+        }
+        expect(NotchNotificationRewind.selection(items: [], current: nil, steps: 1) == nil,
+               "an empty notification inbox leaves scrolling to normal island gestures")
+        expect(NotchNotificationRewind.selection(items: history, current: nil, steps: 1)?.id == history[0].id,
+               "rewind begins with the newest notification")
+        expect(NotchNotificationRewind.selection(items: history, current: history[0].id, steps: 1)?.id == history[1].id,
+               "scrolling older advances through the existing inbox")
+        expect(NotchNotificationRewind.selection(items: history, current: history[2].id, steps: 100)?.id == history[2].id,
+               "rewind holds the oldest message rather than wrapping")
+        expect(NotchNotificationRewind.selection(items: history, current: history[0].id, steps: -1) == nil,
+               "scrolling newer than the latest notification returns to live content")
+        expect(NotchNotificationRewind.selection(items: history, current: UUID(), steps: 1)?.id == history[0].id,
+               "a dismissed or expired selection restarts from current inbox content")
         suite.expect(NotchEvent.systemNotification.duration == 3 && NotchEvent.timer.duration == 6,
                "message banners close sooner without shortening timers or other activities")
         expect(NotchNotificationSupport.nativeCloseGrace >= 1.2

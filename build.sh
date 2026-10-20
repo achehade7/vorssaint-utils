@@ -299,6 +299,7 @@ if (( TEST )); then
         Sources/Vorssaint/Services/Notch/NotchSliderEditing.swift
         Sources/Vorssaint/Services/Notch/NotchNotificationSupport.swift
         Sources/Vorssaint/Services/Notch/NotchAeroSpaceService.swift
+        Sources/Vorssaint/Services/Notch/NotchWorkspaceWindows.swift
         Sources/Vorssaint/Services/Notch/NotchNotificationReaderCore.swift
         Sources/Vorssaint/Services/Notch/NotchCalendarSupport.swift
         Sources/Vorssaint/Services/Notch/NotchKeepAwakeSupport.swift

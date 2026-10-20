@@ -52,6 +52,9 @@ enum NotchFullscreenTests {
         static func topology() -> Topology? { reads += 1; return value }
     }
     class State {
+        var quietMode = false
+        var quietPublications = 0
+        func publishQuietMode() { quietPublications += 1 }
         var running = true, suspended = false, hiddenInFullscreen = false
         var hoverEmphasized = false
         var panel: Bool? = true
@@ -81,6 +84,15 @@ enum NotchFullscreenTests {
             NotchService.shared = Service()
             PreciseVolumeRollerService.shared.stop()
         }
+        let quiet = Service()
+        quiet.toggleQuietMode()
+        suite.expect(quiet.quietMode && !quiet.acceptsUserInteraction && !quiet.acceptsSystemFeedback,
+                     "quiet mode blocks both hover interaction and automatic notices")
+        suite.expect(quiet.collapses == 1 && quiet.refreshes == 1 && quiet.quietPublications == 1 && quiet.running,
+                     "quiet mode publishes its state and hides presentation without stopping the service")
+        quiet.toggleQuietMode()
+        suite.expect(!quiet.quietMode && quiet.acceptsUserInteraction && quiet.acceptsSystemFeedback && quiet.quietPublications == 2,
+                     "a second toggle restores interaction and publishes the restored state")
         let topology = Topology(displays: [
             .init(displayID: 1, spaces: [10, 11], fullscreenSpaces: [11], currentSpace: 10),
             .init(displayID: 2, spaces: [20, 21], fullscreenSpaces: [21], currentSpace: 21)

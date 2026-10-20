@@ -7,16 +7,28 @@ import SwiftUI
 /// Only the transition owns animation state. No timer or display link survives
 /// the reveal, and a reversed transition cannot enable a departing button.
 final class NotchQuickAccessMotion: ObservableObject {
+    static let workspaceWithdrawalDuration: TimeInterval = 0.26
     @Published private(set) var progress: CGFloat = 0
     @Published private(set) var interactive = false
     @Published private(set) var configuration = NotchQuickAccessConfiguration(side: .left, actions: [.explore])
     @Published private(set) var placements: [NotchQuickAccessPlacement] = []
     @Published private(set) var workspaceBadgeFrame: CGRect?
     @Published private(set) var workspaceSurfaceFrame: CGRect?
+    @Published private(set) var neonCanvasOffset = CGPoint.zero
+    @Published private(set) var neonPointer: CGPoint?
+
+    func setNeonPointer(_ point: CGPoint?) {
+        if neonPointer != point { neonPointer = point }
+    }
+
+    func setNeonCanvasOffset(_ offset: CGPoint) {
+        if neonCanvasOffset != offset { neonCanvasOffset = offset }
+    }
 
     func setWorkspaceBadge(_ frame: CGRect?, surface: CGRect?, animated: Bool) {
         guard workspaceBadgeFrame != frame || workspaceSurfaceFrame != surface else { return }
-        withAnimation(animated && workspaceBadgeFrame != nil ? .smooth(duration: 0.2) : nil) {
+        withAnimation(animated && workspaceSurfaceFrame != nil
+                      ? .easeInOut(duration: Self.workspaceWithdrawalDuration) : nil) {
             workspaceBadgeFrame = frame
             workspaceSurfaceFrame = surface
         }
@@ -134,9 +146,8 @@ struct NotchQuickAccessView: View {
                         NotchAeroSpaceService.shared.select(workspace)
                     }
                 }, cornerRadius: 8) {
-                    Text(current)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.orange)
+                    NotchWorkspaceSignal(workspace: current)
+                        .id(current)
                         .frame(width: frame.width, height: frame.height)
                         .contentShape(Rectangle())
                 }

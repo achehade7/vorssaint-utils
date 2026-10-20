@@ -688,6 +688,11 @@ final class NotchMenuAnchor: NSObject {
     fileprivate weak var view: NSView?
     private var actions: [() -> Void] = []
 
+    func popUp(_ items: [NotchMenuItem], from view: NSView) {
+        self.view = view
+        popUp(items)
+    }
+
     func popUp(_ items: [NotchMenuItem]) {
         guard let view else { return }
         actions = items.map(\.action)

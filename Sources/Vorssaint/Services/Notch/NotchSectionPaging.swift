@@ -3,8 +3,8 @@
 
 import Foundation
 
-/// The gallery rests on a row boundary at all times: rows step whole, and a
-/// highlighted tile pulls its row into view with the least movement.
+/// The gallery advances two rows per page, or one when only one fits.
+/// The final page stays full and keyboard selection reveals its containing page.
 enum NotchSectionPaging {
     static func rows(count: Int, columns: Int) -> Int {
         let columns = max(1, columns)
@@ -12,28 +12,40 @@ enum NotchSectionPaging {
     }
 
     /// Rows the first visible row can rest on.
-    static func positions(rows: Int, visible: Int) -> Int {
-        max(1, max(1, rows) - max(1, visible) + 1)
+    static func positions(rows: Int, visible: Int) -> [Int] {
+        let last = max(0, max(1, rows) - max(1, visible))
+        let step = min(2, max(1, visible))
+        var positions = Array(stride(from: 0, through: last, by: step))
+        if positions.last != last { positions.append(last) }
+        return positions
     }
 
     static func clamped(_ row: Int, rows: Int, visible: Int) -> Int {
-        min(max(0, row), positions(rows: rows, visible: visible) - 1)
+        positions(rows: rows, visible: visible).last(where: { $0 <= max(0, row) }) ?? 0
+    }
+
+    static func stepping(from first: Int, by pages: Int, rows: Int, visible: Int) -> Int {
+        let positions = positions(rows: rows, visible: visible)
+        let current = positions.firstIndex(of: clamped(first, rows: rows, visible: visible)) ?? 0
+        return positions[min(max(0, current + pages), positions.count - 1)]
     }
 
     /// The first row that keeps `row` in view while moving as little as
     /// possible away from `first`.
     static func revealing(row: Int, first: Int, rows: Int, visible: Int) -> Int {
         let visible = max(1, visible)
-        var first = clamped(first, rows: rows, visible: visible)
-        if row < first { first = row } else if row >= first + visible { first = row - visible + 1 }
-        return clamped(first, rows: rows, visible: visible)
+        let first = clamped(first, rows: rows, visible: visible)
+        if row < first { return clamped(row, rows: rows, visible: visible) }
+        if row < first + visible { return first }
+        let positions = positions(rows: rows, visible: visible)
+        return positions.first(where: { row < $0 + visible }) ?? positions.last!
     }
 }
 
-/// Wheel and trackpad input becomes whole rows. A flick moves one row: the
+/// Wheel and trackpad input becomes page steps. A flick moves one page: the
 /// first step needs the same small distance as the island's own gestures,
 /// later steps of one continuous drag follow the row pitch, and momentum
-/// after the fingers lift is left alone. A wheel notch steps one row.
+/// after the fingers lift is left alone. A wheel notch steps one page.
 struct NotchSectionScroll {
     static let firstStep = 24.0
     static let rowStep = Double(NotchLayout.sectionTileHeight + NotchLayout.sectionSpacing)
@@ -45,7 +57,7 @@ struct NotchSectionScroll {
     private var stepped = false
     private var lastTimestamp: TimeInterval?
 
-    /// Rows to move; positive reveals the rows below. `deltaY` is AppKit's
+    /// Pages to move; positive reveals the rows below. `deltaY` is AppKit's
     /// scrolling delta, already flipped for natural scrolling.
     mutating func steps(deltaY: Double, timestamp: TimeInterval, precise: Bool, hasPhase: Bool,
                         began: Bool, ended: Bool, momentum: Bool) -> Int {

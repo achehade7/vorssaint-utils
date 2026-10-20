@@ -23,6 +23,14 @@ enum NotchPanelTests {
         expect(NotchPanel.fullscreenLevel.rawValue > NSWindow.Level.normal.rawValue
                && NotchPanel.fullscreenLevel.rawValue < NSWindow.Level.mainMenu.rawValue,
                "the simulated full-screen cutout stays over app content but yields to the revealed menu bar")
+        var middleClicks = 0
+        panel.handleMiddleClick = { _ in middleClicks += 1; return true }
+        if let input = CGEvent(mouseEventSource: nil, mouseType: .otherMouseDown,
+                               mouseCursorPosition: .zero, mouseButton: .center),
+           let event = NSEvent(cgEvent: input) {
+            panel.sendEvent(event)
+            expect(middleClicks == 1, "the native island panel dispatches a middle click once")
+        } else { expect(false, "the middle-click input fixture can be created") }
         sheetContracts(expect: expect)
         activeGlass(expect: expect)
     }

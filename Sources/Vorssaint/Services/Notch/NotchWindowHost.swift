@@ -25,6 +25,7 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
     private let quickAccessContainer: NotchQuickAccessContainer?
     private var quickAccessConfiguration: NotchQuickAccessConfiguration?
     private var workspaceBadgeVisible = false
+    private var workspaceBadgeWithdrawing = false
     private var quickAccessNotchSize = CGSize.zero
     private var quickAccessAnimate = false
     private var currentGeometry: NotchGeometry
@@ -56,7 +57,8 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
 
     init(content: AnyView, geometry: NotchGeometry, size: CGSize,
          background: (NotchBackdropPresentation) -> AnyView = { _ in AnyView(Color.black) },
-         quickAccess: ((NotchQuickAccessMotion, NotchBackdropPresentation) -> AnyView)? = nil) {
+         quickAccess: ((NotchQuickAccessMotion, NotchBackdropPresentation) -> AnyView)? = nil,
+         neon: ((NotchQuickAccessMotion, NotchBackdropPresentation) -> AnyView)? = nil) {
         targetSize = size
         currentGeometry = geometry
         panel = NotchPanel(contentRect: geometry.frame(for: size),
@@ -64,12 +66,15 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
                            backing: .buffered, defer: false)
         let mainCanvas = NotchCanvas(content: content, background: background, size: size)
         canvas = mainCanvas
-        quickAccessContainer = quickAccess.map { NotchQuickAccessContainer(canvas: mainCanvas, content: $0) }
+        quickAccessContainer = quickAccess.map {
+            NotchQuickAccessContainer(canvas: mainCanvas, content: $0, neon: neon)
+        }
         super.init()
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.appearance = NSAppearance(named: .darkAqua)
         panel.hasShadow = false
+        panel.acceptsMouseMovedEvents = neon != nil
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .none
@@ -189,17 +194,22 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
             probe.attach(level: panel.level, screen: geometry.screen)
         }
         let canAnimate = animated && (isPresented || revealing) && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let previousGutter = max(workspaceBadgeVisible ? 38 : 0, quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter)
+        let previousGutter = max(workspaceBadgeVisible ? 98 : 0, quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter)
         let previousBottom = quickAccessBottomInset(for: targetSize, geometry: currentGeometry)
         let previousFrame = currentGeometry.frame(for: CGSize(width: targetSize.width + previousGutter * 2, height: targetSize.height + previousBottom))
         let withdrawing = !revealing && quickAccessConfiguration != nil && quickAccess == nil
+        // Removing only the workspace extension does not resize the native
+        // island. Keep its gutter until the separate SwiftUI surface contracts.
+        workspaceBadgeWithdrawing = canAnimate && !workspaceBadge && !hideWhenSettled
+            && quickAccess == nil && size == targetSize && geometry.screen == currentGeometry.screen
+            && (workspaceBadgeVisible || workspaceBadgeWithdrawing)
         if revealing { quickAccessContainer?.motion.setVisible(false, animated: false) }
         quickAccessConfiguration = quickAccessContainer == nil ? nil : quickAccess
         workspaceBadgeVisible = workspaceBadge && quickAccessContainer != nil && !hideWhenSettled
         quickAccessAnimate = canAnimate
         if quickAccessConfiguration != nil { quickAccessNotchSize = size }
         if withdrawing { quickAccessContainer?.motion.setVisible(false, animated: canAnimate) }
-        let gutter = max(workspaceBadgeVisible ? 38 : 0, quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter)
+        let gutter = max(workspaceBadgeVisible ? 98 : 0, quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter)
         let bottom = quickAccessBottomInset(for: size, geometry: geometry)
         let frame = geometry.frame(for: CGSize(width: size.width + gutter * 2, height: size.height + bottom))
         let changesFrame = revealing || (hideWhenSettled && !canAnimate) || size != targetSize
@@ -314,7 +324,8 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
         animation.values = paths
         animation.keyTimes = motion.keyTimes.map { NSNumber(value: $0) }
         animation.calculationMode = .linear
-        animation.duration = motion.duration
+        animation.duration = workspaceBadgeWithdrawing
+            ? max(motion.duration, NotchQuickAccessMotion.workspaceWithdrawalDuration) : motion.duration
         if withdrawing {
             animation.beginTime = CACurrentMediaTime() + NotchQuickAccessLayout.withdrawalDuration
             animation.fillMode = .backwards
@@ -340,7 +351,8 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
 
     private func settle() {
         let generation = animationGeneration
-        let gutter: CGFloat = max(workspaceBadgeVisible ? 38 : 0, quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter)
+        workspaceBadgeWithdrawing = false
+        let gutter: CGFloat = max(workspaceBadgeVisible ? 98 : 0, quickAccessConfiguration == nil ? 0 : NotchQuickAccessLayout.gutter)
         let bottom = quickAccessBottomInset(for: targetSize, geometry: currentGeometry)
         // A departing island is ordered out below; its released bounds are never shown.
         let concealed = !hidesWhenSettled
@@ -396,17 +408,18 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
         pixelAligned(currentGeometry.frame(for: size)).minX - panel.frame.minX - canvas.convert(CGPoint.zero, to: nil).x
     }
 
-    /// Short pages may end above the last side button. Keep its circle and
-    /// hover margin inside the window without enlarging the island's surface.
+    /// Reserve the light below the island and any low floating buttons,
+    /// without enlarging the black surface or its interactive area.
     private func quickAccessBottomInset(for size: CGSize, geometry: NotchGeometry) -> CGFloat {
-        guard let configuration = quickAccessConfiguration else { return 0 }
+        let neonInset: CGFloat = quickAccessContainer?.neonView == nil ? 0 : 4
+        guard let configuration = quickAccessConfiguration else { return neonInset }
         let sideCount = max(configuration.buttons.filter { $0.side == .left }.count,
                             configuration.buttons.filter { $0.side == .right }.count)
         let sideBottom = sideCount > 0
             ? geometry.quickAccessCenterY + CGFloat(sideCount - 1) * NotchQuickAccessLayout.rowSpacing
                 + NotchQuickAccessLayout.diameter / 2 + NotchQuickAccessLayout.hoverMargin
             : 0
-        return max(configuration.hasBottom ? NotchQuickAccessLayout.gutter : 0, sideBottom - size.height)
+        return max(neonInset, configuration.hasBottom ? NotchQuickAccessLayout.gutter : 0, sideBottom - size.height)
     }
 
     /// Mission Control switches the window server into a mode where every
@@ -463,14 +476,18 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
 
     private func configureQuickAccess() {
         guard let container = quickAccessContainer else { return }
-        let badgeX = canvas.convert(CGPoint(x: islandMinX(targetSize), y: 0), to: container.quickView).x - 36
+        let badgeX = canvas.convert(CGPoint(x: islandMinX(targetSize), y: 0), to: container.quickView).x - 96
         let badgeFrame = workspaceBadgeVisible
-            ? CGRect(x: badgeX + 10, y: max(0, (currentGeometry.stripHeight - 26) / 2), width: 26, height: 26) : nil
+            ? CGRect(x: badgeX + 10, y: max(0, (currentGeometry.stripHeight - 26) / 2), width: 86, height: 26) : nil
         let badgeSurface = workspaceBadgeVisible
-            ? CGRect(x: badgeX, y: 0, width: targetSize.width + 36, height: targetSize.height) : nil
+            ? CGRect(x: badgeX, y: 0, width: targetSize.width + 96, height: targetSize.height)
+            : workspaceBadgeWithdrawing
+                ? CGRect(x: badgeX + 96, y: 0, width: targetSize.width, height: targetSize.height) : nil
         container.motion.setWorkspaceBadge(badgeFrame, surface: badgeSurface, animated: quickAccessAnimate)
+        container.motion.setNeonCanvasOffset(canvas.convert(canvas.backdropOrigin, to: container.quickView))
+        container.neonView?.isHidden = false
         let workspaceHover = workspaceBadgeVisible ? [container.convert(
-            CGRect(x: badgeX, y: 0, width: 36, height: currentGeometry.stripHeight),
+            CGRect(x: badgeX, y: 0, width: 96, height: currentGeometry.stripHeight),
             from: container.quickView).intersection(container.bounds)] : []
         container.quickView.isHidden = !workspaceBadgeVisible && quickAccessConfiguration == nil
             && container.gutter == 0 && container.bottomInset == 0
@@ -698,6 +715,24 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
         return panel.convertToScreen(container.quickView.convert(frame, to: nil))
     }
 
+    var workspaceNeonProbeFrame: CGRect? {
+        guard let container = quickAccessContainer,
+              let view = container.subviews.first(where: { $0.identifier?.rawValue == "notch.neon" }),
+              !view.isHidden else { return nil }
+        let offset = container.motion.neonCanvasOffset
+        let surface = container.motion.workspaceSurfaceFrame
+            ?? canvas.backdropPresentation.contour.boundingRect.offsetBy(dx: offset.x, dy: offset.y)
+        return panel.convertToScreen(view.convert(surface.offsetBy(dx: 0, dy: NotchNeonEdge.drop), to: nil))
+    }
+
+    var workspaceNeonProbePassesClicks: Bool {
+        guard let container = quickAccessContainer,
+              let view = container.subviews.first(where: { $0.identifier?.rawValue == "notch.neon" }),
+              let canvasIndex = container.subviews.firstIndex(of: canvas),
+              let neonIndex = container.subviews.firstIndex(of: view) else { return false }
+        return neonIndex > canvasIndex && view.hitTest(CGPoint(x: container.bounds.midX, y: 16)) == nil
+    }
+
     var workspaceBadgeProbeFrame: CGRect? {
         guard let container = quickAccessContainer, let frame = container.motion.workspaceBadgeFrame else { return nil }
         return panel.convertToScreen(container.quickView.convert(frame, to: nil))
@@ -885,6 +920,7 @@ final class NotchPanel: NSPanel {
     static let fullscreenLevel = NSWindow.Level.floating
     var acceptsKeyFocus = false
     var handleScroll: ((NSEvent) -> Bool)?
+    var handleMiddleClick: ((NSEvent) -> Bool)?
     var visibilityDidChange: (() -> Void)?
     override var canBecomeKey: Bool { acceptsKeyFocus }
     override var canBecomeMain: Bool { false }
@@ -915,20 +951,29 @@ final class NotchPanel: NSPanel {
     }
 
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .otherMouseDown, event.buttonNumber == 2,
+           handleMiddleClick?(event) == true { return }
         if event.type == .scrollWheel,
            handleScroll?(event) == true || HorizontalWheelScrolling.handle(event) { return }
         super.sendEvent(event)
     }
 }
 
-/// The notch keeps its existing masked canvas. A separate, transparent sibling
-/// holds the drops, so both surfaces share one window, focus and capture policy.
+/// Decorative light must never intercept clicks on the island or its buttons.
+private final class NotchNeonHost: NSHostingView<AnyView> {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// The masked island, floating controls and neon share one window. The neon
+/// stays above both black surfaces and outside the canvas's clipping mask.
 private final class NotchQuickAccessContainer: NSView {
     let canvas: NotchCanvas
     let motion: NotchQuickAccessMotion
     let quickView: NSHostingView<AnyView>
+    let neonView: NotchNeonHost?
     private(set) var hoverRects: [CGRect] = []
     private var hoverTrackingAreas: [NSTrackingArea] = []
+    private var neonTrackingArea: NSTrackingArea?
     var hoverChanged: ((Bool) -> Void)?
     var gutter: CGFloat = 0 { didSet { needsLayout = true } }
     var bottomInset: CGFloat = 0 { didSet { needsLayout = true } }
@@ -939,7 +984,8 @@ private final class NotchQuickAccessContainer: NSView {
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
 
-    init(canvas: NotchCanvas, content: (NotchQuickAccessMotion, NotchBackdropPresentation) -> AnyView) {
+    init(canvas: NotchCanvas, content: (NotchQuickAccessMotion, NotchBackdropPresentation) -> AnyView,
+         neon: ((NotchQuickAccessMotion, NotchBackdropPresentation) -> AnyView)?) {
         self.canvas = canvas
         let motion = NotchQuickAccessMotion()
         self.motion = motion
@@ -947,11 +993,17 @@ private final class NotchQuickAccessContainer: NSView {
         quickView.sizingOptions = []
         quickView.wantsLayer = true
         quickView.isHidden = true
+        neonView = neon.map { NotchNeonHost(rootView: $0(motion, canvas.backdropPresentation)) }
+        neonView?.sizingOptions = []
+        neonView?.wantsLayer = true
+        neonView?.isHidden = true
+        neonView?.identifier = NSUserInterfaceItemIdentifier("notch.neon")
         super.init(frame: canvas.frame)
         wantsLayer = true
         autoresizesSubviews = false
         addSubview(quickView)
         addSubview(canvas)
+        if let neonView { addSubview(neonView) }
     }
 
     @available(*, unavailable)
@@ -975,7 +1027,25 @@ private final class NotchQuickAccessContainer: NSView {
         stage = NotchStage.size(including: CGSize(width: max(stage.width, bounds.width), height: max(stage.height, bounds.height)))
         let stageFrame = NotchStage.frame(stage, in: bounds)
         if quickView.frame != stageFrame { quickView.frame = stageFrame }
+        if let neonView, neonView.frame != stageFrame {
+            neonView.frame = stageFrame
+        }
         CATransaction.commit()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let neonTrackingArea { removeTrackingArea(neonTrackingArea) }
+        guard neonView != nil else { return }
+        let area = NSTrackingArea(rect: .zero,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self, userInfo: nil)
+        neonTrackingArea = area
+        addTrackingArea(area)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        motion.setNeonPointer(quickView.convert(event.locationInWindow, from: nil))
     }
 
     func setHoverRects(_ rects: [CGRect]) {
@@ -989,11 +1059,13 @@ private final class NotchQuickAccessContainer: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        if event.trackingArea === neonTrackingArea { mouseMoved(with: event); return }
         if hoverTrackingAreas.contains(where: { event.trackingArea === $0 }) { hoverChanged?(true) }
         else { super.mouseEntered(with: event) }
     }
 
     override func mouseExited(with event: NSEvent) {
+        if event.trackingArea === neonTrackingArea { motion.setNeonPointer(nil); return }
         if hoverTrackingAreas.contains(where: { event.trackingArea === $0 }) { hoverChanged?(false) }
         else { super.mouseExited(with: event) }
     }
@@ -1054,6 +1126,7 @@ private final class NotchCanvas: NSView {
     private var dropActions: NotchFileDropActions?
     private var acceptingDrag = false
     private var contentSize: CGSize
+    var backdropOrigin: CGPoint { backdrop.frame.origin }
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
 
@@ -1205,7 +1278,7 @@ private final class NotchCanvas: NSView {
             return []
         }
         let operation = acceptingDrag ? .copy : beginDrop(sender.draggingPasteboard, localSource: sender.draggingSource != nil)
-        if acceptingDrag, dropActions?.update?(convert(sender.draggingLocation, from: nil)) == false { return [] }
+        if acceptingDrag, dropActions?.update?(CGPoint(x: convert(sender.draggingLocation, from: nil).x - islandX(contentSize), y: convert(sender.draggingLocation, from: nil).y)) == false { return [] }
         return operation
     }
 
@@ -1220,7 +1293,7 @@ private final class NotchCanvas: NSView {
             dropActions?.exit()
             return false
         }
-        if acceptingDrag, dropActions?.update?(convert(sender.draggingLocation, from: nil)) == false {
+        if acceptingDrag, dropActions?.update?(CGPoint(x: convert(sender.draggingLocation, from: nil).x - islandX(contentSize), y: convert(sender.draggingLocation, from: nil).y)) == false {
             acceptingDrag = false
             dropActions?.exit()
             return false

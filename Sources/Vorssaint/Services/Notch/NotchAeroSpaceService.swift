@@ -5,8 +5,15 @@ import Foundation
 
 struct NotchAeroSpaceState {
     static let workspaces = ["1", "2", "G", "P"]
+    static let flashDuration: TimeInterval = 1.34
+    static let trailDuration: TimeInterval = 0.8
+    static let trailFadeDuration: TimeInterval = 0.27
+    static let labelFadeDuration: TimeInterval = 0.24
     private(set) var current: String?
+    private(set) var previous: String?
     private(set) var flashUntil: TimeInterval = 0
+    var trailUntil: TimeInterval { flashUntil - (Self.flashDuration - Self.trailDuration) }
+    var labelFadeAt: TimeInterval { flashUntil - Self.labelFadeDuration - 0.02 }
 
     mutating func receive(_ data: Data, now: TimeInterval) -> Bool {
         guard let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -14,7 +21,8 @@ struct NotchAeroSpaceState {
               let workspace = event["workspace"] as? String, !workspace.isEmpty,
               workspace != current else { return false }
         // The subscription's initial snapshot sets the highlight without flashing.
-        flashUntil = current != nil && Self.workspaces.contains(workspace) ? now + 2 : 0
+        flashUntil = current != nil && Self.workspaces.contains(workspace) ? now + Self.flashDuration : 0
+        previous = current
         current = workspace
         return true
     }
@@ -103,7 +111,7 @@ final class NotchAeroSpaceService {
             flashEnd?.cancel()
             let work = DispatchWorkItem { [weak self] in self?.onChange?() }
             flashEnd = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + NotchAeroSpaceState.flashDuration, execute: work)
             onChange?()
         }
         if buffer.count > 65_536 { buffer.removeAll() }
@@ -124,8 +132,18 @@ final class NotchAeroSpaceService {
     }
 
     func select(_ workspace: String) {
+        guard NotchAeroSpaceState.workspaces.contains(workspace) else { return }
+        switchWorkspace(workspace)
+    }
+
+    func togglePrevious() {
+        guard let previous = state.previous else { return }
+        switchWorkspace(previous)
+    }
+
+    private func switchWorkspace(_ workspace: String) {
         guard running, state.current != nil, state.current != workspace,
-              NotchAeroSpaceState.workspaces.contains(workspace), switching?.isRunning != true, let executable else { return }
+              switching?.isRunning != true, let executable else { return }
         let child = Process()
         child.executableURL = executable
         child.arguments = ["workspace", workspace]

@@ -27,6 +27,18 @@ struct NotchSystemNotification: Equatable, Identifiable, Sendable {
     var canOpen: Bool
 }
 
+/// Browsing reuses the session inbox; scrolling newer than its first item
+/// returns to live content rather than wrapping around to an old message.
+enum NotchNotificationRewind {
+    static func selection(items: [NotchSystemNotification], current: UUID?, steps: Int) -> NotchSystemNotification? {
+        guard !items.isEmpty, steps != 0 else { return nil }
+        guard let current, let index = items.firstIndex(where: { $0.id == current }) else { return items.first }
+        let next = index + min(items.count, max(-items.count, steps))
+        guard next >= 0 else { return nil }
+        return items[min(items.count - 1, next)]
+    }
+}
+
 struct NotchNotificationInbox {
     private(set) var items: [NotchSystemNotification] = []
     private var seen = Set<UUID>()

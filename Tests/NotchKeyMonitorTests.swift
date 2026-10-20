@@ -68,6 +68,8 @@ enum NotchKeyMonitorTests {
         var eventMonitors: [Any] = []
         var clickedSinceOpening = false
         var keepsWorkingSurface = false
+        var keepsOutsideClick: Bool { keepsWorkingSurface }
+        func dismissForOutsideClick() { collapse() }
         let panel: Panel? = Panel()
         var windowHost: Host? = Host()
         var captureControls: Int?

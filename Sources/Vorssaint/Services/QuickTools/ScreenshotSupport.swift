@@ -217,6 +217,14 @@ enum ScreenshotSupport {
     static let recentCaptureLimit = 12
     static let recentCaptureMaximumBytes: Int64 = 256 * 1024 * 1024
 
+    /// Keep selection attached to its capture even as a new item arrives at
+    /// the front of history. The ends stop instead of wrapping unexpectedly.
+    static func conveyorTarget(ids: [UUID], selected: UUID?, step: Int) -> UUID? {
+        guard let selected, let index = ids.firstIndex(of: selected), step != 0 else { return nil }
+        let next = index + (step > 0 ? 1 : -1)
+        return ids.indices.contains(next) ? ids[next] : nil
+    }
+
     static func isRecentCaptureCacheFileName(_ name: String) -> Bool {
         guard name == URL(fileURLWithPath: name).lastPathComponent,
               name.lowercased().hasSuffix(".png") else { return false }
@@ -1101,6 +1109,10 @@ enum ScreenshotSupport {
                                                              options: 0) else { return }
         url.withUnsafeFileSystemRepresentation { path in
             guard let path else { return }
+            // Our own captures already have a preview; the native screenshot
+            // inbox must not open a second one when Spotlight indexes them.
+            var owned: UInt8 = 1
+            _ = setxattr(path, "com.vorssaint.capture", &owned, 1, 0, XATTR_NOFOLLOW)
             _ = data.withUnsafeBytes {
                 setxattr(path, "com.apple.metadata:kMDItemIsScreenCapture",
                          $0.baseAddress, data.count, 0, XATTR_NOFOLLOW)

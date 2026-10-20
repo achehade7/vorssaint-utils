@@ -74,12 +74,12 @@ struct NotchSectionsView: View {
     }
 
     /// One dot per resting position, the current one lit. Clicking a dot
-    /// rests the gallery there; the wheel and the arrow keys step rows. The
+    /// rests the gallery there; the wheel steps pages and arrow keys reveal tiles. The
     /// column keeps its width when everything fits, so tiles never shift.
-    @ViewBuilder private func indicator(positions: Int, current: Int) -> some View {
-        if positions > 1 {
+    @ViewBuilder private func indicator(positions: [Int], current: Int) -> some View {
+        if positions.count > 1 {
             VStack(spacing: 5) {
-                ForEach(0..<positions, id: \.self) { position in
+                ForEach(positions, id: \.self) { position in
                     Button { service.showSectionRow(position) } label: {
                         Circle()
                             .fill(.white.opacity(position == current ? 0.9 : contrast == .increased ? 0.5 : 0.28))

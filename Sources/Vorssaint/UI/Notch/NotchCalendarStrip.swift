@@ -70,7 +70,7 @@ struct NotchCalendarStrip: View {
         // The row below the camera ends in the island's deep lower corners;
         // a fixed margin left the dot and the clock on their curve.
         HStack(spacing: 6) {
-            Self.dot(countdown.event)
+            Self.countdownDot(countdown)
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
                 .lineLimit(1).truncationMode(.tail)
@@ -86,7 +86,7 @@ struct NotchCalendarStrip: View {
         let inset = geometry.compactActivityEdgeInset(boxHeight: 9, radius: 0)
         return HStack(spacing: 0) {
             HStack(spacing: NotchCalendarSupport.stripTitleSpacing) {
-                Self.dot(countdown.event)
+                Self.countdownDot(countdown)
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1).truncationMode(.tail)
@@ -152,16 +152,28 @@ struct NotchCalendarStrip: View {
     /// The event's dot and its clock, as the island draws them beside another activity.
     static func clockMark(_ countdown: NotchCalendarCountdown, remaining: String) -> some View {
         HStack(spacing: NotchCalendarSupport.stripClockSpacing) {
-            dot(countdown.event)
+            countdownDot(countdown)
             clock(remaining, ongoing: countdown.ongoing)
         }
     }
 
-    private static func dot(_ event: NotchCalendarEvent) -> some View {
-        Circle().fill(event.color.color).frame(width: NotchCalendarSupport.stripDotWidth,
-                                               height: NotchCalendarSupport.stripDotWidth)
-            .overlay { Circle().strokeBorder(.white.opacity(0.5), lineWidth: 0.5) }
-            .accessibilityHidden(true)
+    private static func countdownDot(_ countdown: NotchCalendarCountdown) -> some View {
+        let seconds = countdown.target.timeIntervalSinceNow
+        let approaching = !countdown.ongoing && seconds > 0 && seconds <= 15 * 60
+        let progress = max(0, min(1, 1 - seconds / (15 * 60)))
+        return ZStack {
+            if approaching {
+                Circle().stroke(NotchNeonPalette.amber.opacity(0.2), lineWidth: 1.5)
+                Circle().trim(from: 0, to: progress)
+                    .stroke(NotchNeonPalette.amber, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            } else {
+                Circle().fill(countdown.event.color.color)
+                    .overlay { Circle().strokeBorder(.white.opacity(0.5), lineWidth: 0.5) }
+            }
+        }
+        .frame(width: NotchCalendarSupport.stripDotWidth, height: NotchCalendarSupport.stripDotWidth)
+        .accessibilityHidden(true)
     }
 
     /// Time left in an event under way takes the agenda's "happening now"

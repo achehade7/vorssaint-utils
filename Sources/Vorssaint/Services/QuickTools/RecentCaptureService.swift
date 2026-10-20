@@ -211,7 +211,8 @@ final class RecentCaptureService: ObservableObject {
         }
     }
 
-    func recordScreenshot(_ capture: ScreenshotSelectionController.Capture) {
+    @discardableResult
+    func recordScreenshot(_ capture: ScreenshotSelectionController.Capture) -> UUID {
         let id = UUID()
         let screenshotName = "\(id.uuidString).png"
         let thumbnailName = "\(id.uuidString)-thumbnail.png"
@@ -251,6 +252,7 @@ final class RecentCaptureService: ObservableObject {
                 return
             }
         }
+        return id
     }
 
     func recordRecording(at url: URL) {
@@ -371,9 +373,19 @@ final class RecentCaptureService: ObservableObject {
             DispatchQueue.main.async {
                 appDelegate()?.closePopover()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                    ScreenshotService.shared.restorePreview(capture)
+                    ScreenshotService.shared.restorePreview(capture, historyID: entry.id)
                 }
             }
+        }
+    }
+
+    /// The island browses the existing cache without reopening the history
+    /// window or repeating a capture's automatic save/copy actions.
+    func screenshot(for entry: RecentCaptureEntry,
+                    completion: @escaping (ScreenshotSelectionController.Capture?) -> Void) {
+        queue.async { [weak self] in
+            let capture = self?.loadScreenshot(entry)
+            DispatchQueue.main.async { completion(capture) }
         }
     }
 

@@ -14,7 +14,7 @@ struct NotchAeroSpaceStrip: View {
                     Button { NotchAeroSpaceService.shared.select(workspace) } label: {
                         Text(workspace)
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(workspace == NotchAeroSpaceService.shared.state.current ? Color.orange : .white.opacity(0.65))
+                            .foregroundStyle(workspace == NotchAeroSpaceService.shared.state.current ? NotchNeonPalette.workspace(workspace) : .white.opacity(0.65))
                             .frame(width: 26, height: 24)
                             .background(workspace == NotchAeroSpaceService.shared.state.current ? Color.white.opacity(0.12) : .clear,
                                         in: RoundedRectangle(cornerRadius: 6))

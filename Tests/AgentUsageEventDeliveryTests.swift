@@ -20,12 +20,18 @@ enum AgentUsageEventDeliveryTests {
         func send(_ event: AgentUsageEvent) { values.append(event) }
     }
 
+    final class Completions {
+        var values: [AgentProvider] = []
+        func send(_ provider: AgentProvider) { values.append(provider) }
+    }
+
     class Fixture {
         var running = true
         var session = 1
         var readerSession = 1
         var providers: [AgentProvider] = [.claude, .codex, .copilot]
         let events = Events()
+        let completions = Completions()
     }
 
     static func run(_ suite: TestSuite) {
@@ -57,6 +63,8 @@ enum AgentUsageEventDeliveryTests {
         drain()
         suite.expect(host.events.values.isEmpty,
                      "events queued by a previous agent reading cannot leak into a restarted session")
+        suite.expect(host.completions.values.isEmpty,
+                     "completion glows cannot leak into a restarted session")
 
         host.events.values.removeAll()
         host.readerSession = host.session
@@ -64,12 +72,16 @@ enum AgentUsageEventDeliveryTests {
         drain()
         suite.expect(host.events.values == events,
                      "the current session still delivers completion, warning, renewal and budget events")
+        suite.expect(host.completions.values == [.claude],
+                     "only the completed provider produces a visual completion signal")
 
         host.events.values.removeAll()
+        host.completions.values.removeAll()
         host.report(finished)
         host.running = false
         drain()
         suite.expect(host.events.values.isEmpty, "stopping without restarting still drops queued events")
+        suite.expect(host.completions.values.isEmpty, "stopping also drops queued completion glows")
         host.running = true
 
         host.providers = [.codex]
@@ -78,6 +90,7 @@ enum AgentUsageEventDeliveryTests {
         host.report(events[2])
         drain()
         suite.expect(host.events.values.isEmpty, "delivery still respects disabled providers")
+        suite.expect(host.completions.values.isEmpty, "disabled providers cannot produce completion glows")
         host.providers = [.claude, .codex, .copilot]
         NotchAgentSupport.minimum = 30
         host.report(finished)
@@ -88,5 +101,13 @@ enum AgentUsageEventDeliveryTests {
         host.report(events[3])
         drain()
         suite.expect(host.events.values.isEmpty, "duration and disabled-alert preferences still filter current events")
+        suite.expect(host.completions.values == [.claude],
+                     "a short Claude turn still glows while Codex remains enabled without adding a notification")
+        host.completions.values.removeAll()
+        NotchAgentSupport.minimum = nil
+        host.report(finished)
+        drain()
+        suite.expect(host.events.values.isEmpty && host.completions.values == [.claude],
+                     "turning finish notifications off does not hide the completion glow")
     }
 }

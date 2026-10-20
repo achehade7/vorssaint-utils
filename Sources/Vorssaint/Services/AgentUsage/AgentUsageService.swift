@@ -26,6 +26,8 @@ final class AgentUsageService: ObservableObject {
     /// The day of the price list in use.
     @Published private(set) var pricesUpdated: Date?
     let events = PassthroughSubject<AgentUsageEvent, Never>()
+    /// Visual feedback also follows short turns that do not warrant a notice.
+    let completions = PassthroughSubject<AgentProvider, Never>()
 
     /// The history the island can show: thirteen weeks for the activity map.
     static let horizon = TimeInterval(AgentUsageSnapshot.dayCount) * 86_400
@@ -600,7 +602,9 @@ final class AgentUsageService: ObservableObject {
             guard let self, self.running, self.session == session else { return }
             switch event {
             case .finished(let provider, let duration, _, _, _):
-                guard self.providers.contains(provider), let minimum = NotchAgentSupport.finishMinimum(),
+                guard self.providers.contains(provider) else { return }
+                self.completions.send(provider)
+                guard let minimum = NotchAgentSupport.finishMinimum(),
                       duration >= minimum else { return }
             case .limitWarning(let provider, _), .limitReset(let provider, _):
                 guard self.providers.contains(provider), NotchAgentSupport.limitThreshold() != nil else { return }
