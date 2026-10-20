@@ -29,22 +29,72 @@ enum NotchNeonPalette {
 /// A bounded plug-in signal, independent of notifications and agent completions.
 enum NotchChargingSignal {
     static let duration: TimeInterval = 3.2
-    static let cometDuration: TimeInterval = 1.15
+    static let travelDuration: TimeInterval = 0.52
+    static let echoDelay: TimeInterval = 0.13
+    static let sweepDuration = travelDuration * 2 + echoDelay
     static let riseDuration: TimeInterval = 0.12
     static let fadeDuration: TimeInterval = 0.7
 
-    static func opacity(at age: TimeInterval, reduceMotion: Bool = false) -> Double {
+    static func opacity(at age: TimeInterval) -> Double {
         guard age >= 0, age < duration else { return 0 }
         let rise = min(1, age / riseDuration)
         let fade = min(1, (duration - age) / fadeDuration)
-        let pulse = reduceMotion ? 0 : sin(min(1, max(0,
-            (age - cometDuration) / (duration - fadeDuration - cometDuration))) * .pi)
         return rise * rise * (3 - 2 * rise) * fade * fade * (3 - 2 * fade)
-            * (0.82 + 0.18 * pulse)
     }
 
-    static func cometPosition(at age: TimeInterval) -> Double {
-        min(1, max(0, age / cometDuration))
+    /// Two staggered lights each cross the edge, turn, and return off-screen.
+    static func beamPosition(at age: TimeInterval, echo: Int) -> Double? {
+        let elapsed = age - Double(echo) * echoDelay
+        guard elapsed >= 0, elapsed <= travelDuration * 2 else { return nil }
+        return (1 - cos(elapsed / travelDuration * .pi)) / 2
+    }
+
+    static func glow(at age: TimeInterval, reduceMotion: Bool) -> Double {
+        guard !reduceMotion else { return 0.72 }
+        let settle = min(1, max(0, age / sweepDuration))
+        return 0.24 + 0.48 * settle * settle * (3 - 2 * settle)
+    }
+}
+
+/// The same fine green edge on the desktop and lock screen. The moving lights
+/// leave the contour before it settles; the soft halo is never clipped flat.
+struct NotchChargingEdge: View {
+    let shape: Path
+    let size: CGSize
+    let age: TimeInterval
+    let reduceMotion: Bool
+
+    var body: some View {
+        let green = NotchNeonPalette.charging
+        let width = min(60, size.width * 0.18)
+        ZStack {
+            shape.stroke(green, lineWidth: 1.5)
+                .opacity(NotchChargingSignal.glow(at: age, reduceMotion: reduceMotion))
+            if !reduceMotion {
+                ZStack(alignment: .leading) {
+                    ForEach(0..<2) { echo in
+                        if let position = NotchChargingSignal.beamPosition(at: age, echo: echo) {
+                            LinearGradient(colors: [.clear, green.opacity(0.4), green,
+                                                    .white.opacity(0.95), green, .clear],
+                                           startPoint: .leading, endPoint: .trailing)
+                                .frame(width: width, height: size.height)
+                                .offset(x: -width + position * (size.width + width))
+                                .opacity(echo == 0 ? 1 : 0.8)
+                        }
+                    }
+                }
+                .frame(width: size.width, height: size.height, alignment: .leading)
+                .mask(shape.stroke(lineWidth: 1.8))
+            }
+        }
+        .mask(alignment: .bottom) {
+            LinearGradient(colors: [.clear, .white], startPoint: .top, endPoint: .bottom)
+                .frame(height: 12)
+        }
+        .shadow(color: green.opacity(0.8), radius: 2)
+        .opacity(NotchChargingSignal.opacity(at: age))
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -108,7 +158,7 @@ struct NotchNeonEdge: View, Animatable {
     var body: some View {
         Group {
             if (animated && !reduceMotion) || chargeAt != nil {
-                TimelineView(.animation(minimumInterval: 1.0 / 24)) { context in
+                TimelineView(.animation(minimumInterval: chargeAt != nil ? 1.0 / 60 : 1.0 / 24)) { context in
                     edge(at: context.date)
                 }
             } else if progressAdvancing {
@@ -324,35 +374,16 @@ struct NotchNeonEdge: View, Animatable {
                 .blur(radius: 2)
                 .opacity(pointerX == nil || showsMusicProgress ? 0 : 0.8)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: pointerX == nil)
-            if let chargeAt {
-                // The existing agent/music edge stays underneath throughout,
-                // including during the fade and any simultaneous completion.
-                let elapsed = date.timeIntervalSince(chargeAt)
-                let green = NotchNeonPalette.charging
-                let position = NotchChargingSignal.cometPosition(at: elapsed)
-                ZStack {
-                    ZStack {
-                        shape.stroke(green, lineWidth: 6).blur(radius: 3).opacity(0.65)
-                        shape.stroke(green, lineWidth: 1.8)
-                    }
-                    .opacity(reduceMotion ? 1 : 0.45 + 0.55 * position)
-                    if !reduceMotion, elapsed < NotchChargingSignal.cometDuration {
-                        let comet = LinearGradient(stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: green.opacity(0.1), location: max(0, position - 0.22)),
-                            .init(color: green, location: position),
-                            .init(color: .clear, location: min(1, position + 0.04)),
-                            .init(color: .clear, location: 1)
-                        ], startPoint: .leading, endPoint: .trailing)
-                        shape.stroke(comet, lineWidth: 4)
-                            .shadow(color: green, radius: 4)
-                    }
-                }
-                .opacity(NotchChargingSignal.opacity(at: elapsed, reduceMotion: reduceMotion))
-            }
         }
         .mask(alignment: .bottom) { Rectangle().frame(height: 10) }
         .clipShape(shape)
+        .overlay {
+            if let chargeAt {
+                // Keep the agent/music edge below the shared charging light.
+                NotchChargingEdge(shape: shape, size: surfaceSize,
+                                  age: date.timeIntervalSince(chargeAt), reduceMotion: reduceMotion)
+            }
+        }
     }
 }
 
@@ -370,7 +401,7 @@ struct NotchNeonView: View {
         let frame = motion.workspaceDeparting ? resting : motion.workspaceSurfaceFrame ?? resting
         ZStack(alignment: .topLeading) {
             if !frame.isNull, frame.width > 0, frame.height > 0,
-               !service.hiddenInFullscreen, service.captureControls == nil {
+               !service.displayIsFullscreen, service.captureControls == nil {
                 NotchNeonEdge(service: service, surfaceSize: frame.size,
                               contour: motion.workspaceSurfaceFrame == nil
                                 ? backdrop.contour.offsetBy(dx: -bounds.minX, dy: -bounds.minY) : nil,

@@ -222,27 +222,40 @@ charging.charge(at: Date().addingTimeInterval(10))
 expect(charging.chargeAt == nil, "a timestamp in the future must not keep the animation clock alive")
 expect(NotchChargingSignal.duration >= 3 && NotchChargingSignal.duration <= 3.5,
        "the charging edge must have a bounded roughly three-second lifetime")
-expect(NotchChargingSignal.cometPosition(at: 0) == 0
-       && NotchChargingSignal.cometPosition(at: NotchChargingSignal.cometDuration / 2) == 0.5
-       && NotchChargingSignal.cometPosition(at: NotchChargingSignal.cometDuration) == 1,
-       "the green comet must traverse the complete lower edge from left to right")
+for echo in 0..<2 {
+    let delay = Double(echo) * NotchChargingSignal.echoDelay
+    let leg = NotchChargingSignal.travelDuration
+    expect(NotchChargingSignal.beamPosition(at: delay, echo: echo) == 0
+           && NotchChargingSignal.beamPosition(at: delay + leg, echo: echo) == 1
+           && abs(NotchChargingSignal.beamPosition(at: delay + leg * 2, echo: echo) ?? 1) < 0.000001,
+           "each light must travel left to right and back to the left")
+    expect(NotchChargingSignal.beamPosition(at: delay - 0.01, echo: echo) == nil
+           && NotchChargingSignal.beamPosition(at: delay + leg * 2 + 0.01, echo: echo) == nil,
+           "lights must not linger at either end before or after their sweep")
+}
+expect((NotchChargingSignal.beamPosition(at: 0.3, echo: 0) ?? 0)
+       > (NotchChargingSignal.beamPosition(at: 0.3, echo: 1) ?? 1),
+       "the second light must visibly follow the first on the outward pass")
+expect((NotchChargingSignal.beamPosition(at: 0.85, echo: 0) ?? 1)
+       < (NotchChargingSignal.beamPosition(at: 0.85, echo: 1) ?? 0),
+       "the second light must follow back after the direction reverses")
 expect(NotchChargingSignal.opacity(at: 0) == 0
        && NotchChargingSignal.opacity(at: NotchChargingSignal.duration) == 0,
        "the overlay must start and finish transparent so the underlying neon is revealed")
-let pulseMiddle = (NotchChargingSignal.cometDuration
-    + NotchChargingSignal.duration - NotchChargingSignal.fadeDuration) / 2
-expect(NotchChargingSignal.opacity(at: pulseMiddle) > 0.99
-       && NotchChargingSignal.opacity(at: NotchChargingSignal.cometDuration) > 0.8
-       && NotchChargingSignal.opacity(at: NotchChargingSignal.duration - NotchChargingSignal.fadeDuration) > 0.8,
-       "the whole edge must hold clearly green and rise once to a soft bright pulse")
-expect(abs(NotchChargingSignal.opacity(at: pulseMiddle, reduceMotion: true)
-       - NotchChargingSignal.opacity(at: NotchChargingSignal.cometDuration, reduceMotion: true)) < 0.000001,
-       "Reduce Motion must suppress the brightness pulse while retaining a static green hold")
+let calmStart = NotchChargingSignal.sweepDuration + 0.01
+let calmEnd = NotchChargingSignal.duration - NotchChargingSignal.fadeDuration
+expect(calmEnd - calmStart > 1
+       && NotchChargingSignal.glow(at: calmStart, reduceMotion: false)
+          == NotchChargingSignal.glow(at: calmEnd, reduceMotion: false)
+       && NotchChargingSignal.opacity(at: calmStart) == 1
+       && NotchChargingSignal.opacity(at: calmEnd) > 0.99,
+       "after the double sweep, green must hold calmly for at least a second without pulsing")
+expect(NotchChargingSignal.glow(at: 0.3, reduceMotion: true)
+       == NotchChargingSignal.glow(at: calmStart, reduceMotion: true),
+       "Reduce Motion must keep the green glow still throughout the hold")
 let halfFade = NotchChargingSignal.duration - NotchChargingSignal.fadeDuration / 2
-expect(NotchChargingSignal.opacity(at: halfFade) > 0.3
-       && NotchChargingSignal.opacity(at: halfFade) < 0.5
-       && NotchChargingSignal.opacity(at: halfFade, reduceMotion: true) > 0.3,
-       "normal and Reduce Motion modes must fade the green overlay smoothly into the existing edge")
+expect(abs(NotchChargingSignal.opacity(at: halfFade) - 0.5) < 0.000001,
+       "both surfaces must fade smoothly into their existing neon")
 let track = Model()
 track.music.playback = Music.Playback()
 expect(track.showsMusicProgress && track.progressAdvancing,

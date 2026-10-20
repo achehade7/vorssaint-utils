@@ -137,6 +137,7 @@ final class NotchService: ObservableObject {
     @Published private(set) var quietMode = false
     @Published private(set) var neonWakeAt: Date?
     @Published private(set) var neonChargeAt: Date?
+    private var chargingWork: DispatchWorkItem?
     @Published private(set) var neonCopyAt: Date?
     @Published private(set) var nightPalette: Double = 0
     @Published private(set) var routingFileDrag = false
@@ -259,6 +260,7 @@ final class NotchService: ObservableObject {
     private(set) var running = false
     private var session = NotchSessionState()
     private var suspended: Bool { !session.canPresent }
+    @Published private(set) var displayIsFullscreen = false
     @Published private(set) var hiddenInFullscreen = false {
         didSet {
             guard hiddenInFullscreen != oldValue else { return }
@@ -972,6 +974,16 @@ final class NotchService: ObservableObject {
             capturesAudio: captureControls?.selectedTool.capturesAudio == true)
     }
 
+    /// An idle physical camera has no drawable pixels. Give a fullscreen
+    /// plug-in signal temporary side wings, without displacing live activities.
+    var fullscreenChargingWingWidth: CGFloat {
+        guard displayIsFullscreen, acceptsSystemFeedback, neonChargeAt != nil, geometry.isNotched,
+              !expanded, !peeking, !showsAeroSpace, !dragPlaceholder, captureControls == nil,
+              notice == nil, departingNotice == nil, departingMusic == nil, lingeringMusic == nil,
+              compactActivity == nil, idleContent == .none, !mascotShows(on: geometry) else { return 0 }
+        return geometry.noticeWingWidth(preferred: 40)
+    }
+
     var surfaceSize: CGSize {
         if showsAeroSpace { return aeroSpaceSize }
         if let capsule = capsuleSurfaceSize { return capsule }
@@ -1002,7 +1014,9 @@ final class NotchService: ObservableObject {
                                           reach: named.map { ($0.leading - $0.trailing) / 2 } ?? 0)
                 : resting
         }
-        let resting = geometry.restingSize(showsContent: idleContent != .none || mascotShows(on: geometry))
+        let resting = fullscreenChargingWingWidth > 0
+            ? geometry.noticeSize(wingWidth: fullscreenChargingWingWidth)
+            : geometry.restingSize(showsContent: idleContent != .none || mascotShows(on: geometry))
         return hoverEmphasized ? NotchHoverEmphasis.size(from: resting, geometry: geometry) : resting
     }
 
@@ -1408,6 +1422,7 @@ final class NotchService: ObservableObject {
         displayID = nil
         syncPanelKey()
         hiddenInFullscreen = false
+        displayIsFullscreen = false
     }
 
     /// Opening without a page shows what the closed island is already
@@ -3629,8 +3644,12 @@ final class NotchService: ObservableObject {
     }
 
     private func updateFullscreenVisibility(displayID: CGDirectDisplayID) {
-        let hidden = UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen)
-            && SpaceWindowBridge.topology()?.isFullscreen(on: displayID, separateSpaces: NSScreen.screensHaveSeparateSpaces) == true
+        let fullscreen = SpaceWindowBridge.topology()?.isFullscreen(
+            on: displayID, separateSpaces: NSScreen.screensHaveSeparateSpaces) == true
+        // Keep the surface visible when preferred, but leave fullscreen content
+        // free of the neon's glow. Updates arrive from Space/app events.
+        if displayIsFullscreen != fullscreen { displayIsFullscreen = fullscreen }
+        let hidden = UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen) && fullscreen
         guard hidden != hiddenInFullscreen else { return }
         hiddenInFullscreen = hidden
         if hidden {
@@ -3653,18 +3672,17 @@ final class NotchService: ObservableObject {
     }
 
     private func fullscreenEnvironmentDidChange() {
-        // Only the opt-in option depends on Spaces and the active app.
-        guard running, !suspended,
-              hiddenInFullscreen || UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen)
-        else { return }
+        // The neon follows full screen even when the surface stays visible.
+        guard running, !suspended else { return }
         let wasHidden = hiddenInFullscreen
+        let hadChargingWings = fullscreenChargingWingWidth > 0
         updateScreen()
         // Each copy follows full screen on its own display.
         updateFullscreenDisplays()
         syncMirrors()
         // An unchanged state must not cut short a transition on screen, such
         // as the island closing after a click in another app.
-        guard hiddenInFullscreen != wasHidden else { return }
+        guard hiddenInFullscreen != wasHidden || (fullscreenChargingWingWidth > 0) != hadChargingWings else { return }
         syncVisibleConsumers()
         refreshPresentation(animated: false)
     }
@@ -4512,6 +4530,7 @@ final class NotchService: ObservableObject {
     }
 
     private func stopPower() {
+        chargingWork?.cancel(); chargingWork = nil
         neonChargeAt = nil
         if let source = powerSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
@@ -4521,15 +4540,32 @@ final class NotchService: ObservableObject {
         powerSampler = nil
     }
 
+    private func setChargingSignal(at date: Date?) {
+        guard neonChargeAt != date else { return }
+        let previousSize = surfaceSize
+        chargingWork?.cancel(); chargingWork = nil
+        neonChargeAt = date
+        if let date {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.neonChargeAt == date else { return }
+                self.setChargingSignal(at: nil)
+            }
+            chargingWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0,
+                NotchChargingSignal.duration - Date().timeIntervalSince(date)), execute: work)
+        }
+        if surfaceSize != previousSize { refreshPresentation() }
+    }
+
     private func powerChanged() {
         guard running, !suspended, let sampler = powerSampler else { return }
         let before = power
         let next = sampler.sample()
         power = next
         let pluggedIn = !before.externalConnected && next.externalConnected
-        if !next.externalConnected { neonChargeAt = nil }
+        if !next.externalConnected { setChargingSignal(at: nil) }
         if pluggedIn, acceptsSystemFeedback, NotchSupport.routes(.battery) {
-            neonChargeAt = Date()
+            setChargingSignal(at: Date())
         }
         let low = (next.chargePercent ?? 100) <= 20 && (before.chargePercent ?? 0) > 20
         // The green edge and bolt acknowledge the cable without replacing

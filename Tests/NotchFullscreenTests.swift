@@ -55,8 +55,16 @@ enum NotchFullscreenTests {
         var quietMode = false
         var quietPublications = 0
         func publishQuietMode() { quietPublications += 1 }
-        var running = true, suspended = false, hiddenInFullscreen = false
+        var running = true, suspended = false, hiddenInFullscreen = false, displayIsFullscreen = false
         var hoverEmphasized = false
+        var neonChargeAt: Date?
+        var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1512, height: 982),
+                                     safeAreaTop: 32, cameraWidth: 185, compactSideRoom: 200)
+        var expanded = false, peeking = false, showsAeroSpace = false, mascotVisible = false
+        var captureControls: Bool?, departingNotice: Bool?, departingMusic: Bool?, lingeringMusic: Bool?
+        var compactActivity: NotchCompactActivity?
+        var idleContent = NotchIdleContent.none
+        func mascotShows(on geometry: NotchGeometry) -> Bool { mascotVisible }
         var panel: Bool? = true
         var windowHost: Host? = Host()
         struct Host { var isConcealedForMissionControl = false }
@@ -115,8 +123,10 @@ enum NotchFullscreenTests {
         SpaceWindowBridge.value = topology
         SpaceWindowBridge.reads = 0
         service.updateFullscreenVisibility(displayID: 2)
-        suite.expect(!service.hiddenInFullscreen && SpaceWindowBridge.reads == 0,
-                     "the opt-in preference avoids Space queries while disabled")
+        suite.expect(!service.hiddenInFullscreen && service.displayIsFullscreen && SpaceWindowBridge.reads == 1,
+                     "fullscreen is tracked for the neon even when the island stays visible")
+        suite.expect(service.collapses == 0 && service.cancellations == 0,
+                     "tracking fullscreen alone keeps the island content and interaction intact")
         UserDefaults.standard.enabled = true
         service.hoverEmphasized = true
         service.hoverWork = DispatchWorkItem {}
@@ -140,11 +150,13 @@ enum NotchFullscreenTests {
         service.updateFullscreenVisibility(displayID: 2)
         UserDefaults.standard.enabled = false
         service.updateFullscreenVisibility(displayID: 2)
-        suite.expect(!service.hiddenInFullscreen, "disabling the option restores eligibility in fullscreen")
+        suite.expect(!service.hiddenInFullscreen && service.displayIsFullscreen,
+                     "disabling hiding restores the island while keeping fullscreen neon suppression")
         UserDefaults.standard.enabled = true
         SpaceWindowBridge.value = nil
         service.updateFullscreenVisibility(displayID: 2)
-        suite.expect(!service.hiddenInFullscreen, "unavailable Space queries leave the island reachable")
+        suite.expect(!service.hiddenInFullscreen && !service.displayIsFullscreen,
+                     "unavailable Space queries leave the island reachable")
         service.fullscreenEnvironmentDidChange()
         suite.expect(service.screenUpdates == 1 && service.consumerSyncs == 0 && service.refreshes == 0,
                      "an unchanged fullscreen state leaves consumers and a transition on screen alone")
@@ -158,12 +170,47 @@ enum NotchFullscreenTests {
         suite.expect(service.screenUpdates == 2, "Space changes cannot reveal a locked or sleeping session")
         UserDefaults.standard.enabled = false
         let idle = Service()
+        SpaceWindowBridge.value = topology
+        var displayID: CGDirectDisplayID = 2
+        idle.screenUpdate = { [weak idle] in idle?.updateFullscreenVisibility(displayID: displayID) }
         idle.fullscreenEnvironmentDidChange()
-        suite.expect(idle.screenUpdates == 0 && idle.consumerSyncs == 0 && idle.refreshes == 0,
-                     "with the option off, app and Space changes do no fullscreen work")
+        suite.expect(idle.screenUpdates == 1 && idle.displayIsFullscreen && !idle.hiddenInFullscreen
+                     && idle.consumerSyncs == 0 && idle.refreshes == 0 && idle.collapses == 0,
+                     "with hiding off, fullscreen changes only update the neon state without dismissing content")
+        displayID = 1
+        idle.fullscreenEnvironmentDidChange()
+        suite.expect(!idle.displayIsFullscreen && !idle.hiddenInFullscreen && idle.collapses == 0,
+                     "moving back to the desktop restores neon eligibility without changing the island")
+        idle.running = false
+        idle.fullscreenEnvironmentDidChange()
+        suite.expect(idle.screenUpdates == 2, "stopped islands do not query fullscreen state")
         suite.expect(Defaults.registeredDefaults[DefaultsKey.notchHideInFullscreen] as? Bool == false
                      && SettingsBackupSupport.exportKeys().contains(DefaultsKey.notchHideInFullscreen),
                      "fullscreen hiding is opt-in and included in settings backup")
+        let charging = Service()
+        charging.displayIsFullscreen = true
+        charging.notice = nil
+        charging.dragPlaceholder = false
+        suite.expect(charging.fullscreenChargingWingWidth == 0,
+                     "idle fullscreen has no added wings until a cable connects")
+        charging.neonChargeAt = Date()
+        let wing = charging.fullscreenChargingWingWidth
+        suite.expect(wing == 40 && charging.geometry.noticeSize(wingWidth: wing).height == charging.geometry.stripHeight,
+                     "idle fullscreen charging exposes two usable wings beside the real camera without adding height")
+        for activity in [NotchCompactActivity.agents, .music, .timer] {
+            charging.compactActivity = activity
+            suite.expect(charging.fullscreenChargingWingWidth == 0,
+                         "charging does not resize or displace a live activity")
+        }
+        charging.compactActivity = nil
+        charging.expanded = true
+        suite.expect(charging.fullscreenChargingWingWidth == 0, "an open island does not request temporary compact wings")
+        charging.expanded = false
+        charging.displayIsFullscreen = false
+        suite.expect(charging.fullscreenChargingWingWidth == 0, "ordinary desktop charging keeps the established layout")
+        charging.displayIsFullscreen = true
+        charging.neonChargeAt = nil
+        suite.expect(charging.fullscreenChargingWingWidth == 0, "expiry or unplugging removes the temporary wings")
         volumeLifecycleChecks(topology, suite)
     }
 

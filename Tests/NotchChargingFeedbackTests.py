@@ -10,24 +10,27 @@ repo = Path(__file__).resolve().parents[1]
 source = (repo / "Sources/Vorssaint/Services/Notch/NotchService.swift").read_text()
 
 
-def declaration(marker):
-    start = source.index(marker)
-    opening = source.index("{", start)
+def declaration(marker, text=source):
+    start = text.index(marker)
+    opening = text.index("{", start)
     depth, end = 1, opening + 1
     while depth:
-        if source[end] == "{":
+        if text[end] == "{":
             depth += 1
-        elif source[end] == "}":
+        elif text[end] == "}":
             depth -= 1
         end += 1
-    return source[start:end].replace("private func", "func", 1)
+    return text[start:end].replace("private func", "func", 1)
 
 
 handlers = "\n".join(declaration(marker) for marker in [
-    "    private func powerChanged()", "    private func stopPower()",
+    "    private func powerChanged()", "    private func stopPower()", "    private func setChargingSignal(",
 ])
+charging = declaration('enum NotchChargingSignal', (repo / 'Sources/Vorssaint/UI/Notch/NotchNeonEdge.swift').read_text())
 swift = r'''
 import Foundation
+import CoreGraphics
+CHARGING_PROFILE
 struct PowerReading {
     var chargePercent: Int? = 42
     var externalConnected = false, isCharging = false
@@ -69,6 +72,9 @@ final class Service {
     var running = true, suspended = false, acceptsSystemFeedback = true
     var power = PowerReading(), powerSampler: Sampler? = Sampler(), powerSource: Int? = 1
     var neonChargeAt: Date?
+    var chargingWork: DispatchWorkItem?
+    var surfaceSize = CGSize(width: 285, height: 32)
+    func refreshPresentation() {}
     var shown: [NotchNotice] = [], reactions: [Reaction] = []
     var notice = NotchNotice(event: .agents, title: "agents", detail: "0:20 / 12:34", symbol: "agents")
     func show(_ incoming: NotchNotice) {
@@ -150,8 +156,26 @@ for suspended in [true, false] {
     expect(stopped.neonChargeAt == nil && stopped.shown.isEmpty,
            "suspended or stopped services ignore power callbacks")
 }
+let lifecycle = Service()
+lifecycle.sample()
+let stale = lifecycle.chargingWork
+expect(stale != nil, "plug-in schedules a bounded lifetime for temporary charging wings")
+lifecycle.sample(plugged: false, charging: false)
+expect(lifecycle.chargingWork == nil && lifecycle.neonChargeAt == nil,
+       "unplugging cancels the charging lifetime immediately")
+lifecycle.sample()
+let renewed = lifecycle.neonChargeAt
+stale?.perform()
+expect(lifecycle.neonChargeAt == renewed, "an old expiry must not clear a newer plug-in")
+lifecycle.chargingWork?.perform()
+expect(lifecycle.chargingWork == nil && lifecycle.neonChargeAt == nil,
+       "the real expiry handler clears the signal so idle wings retract")
+lifecycle.sample(plugged: false, charging: false)
+lifecycle.sample()
+lifecycle.stopPower()
+expect(lifecycle.chargingWork == nil, "stopping power monitoring cancels the outstanding expiry")
 print("PASS: \(checks) charging feedback checks")
-'''.replace("HANDLERS", handlers)
+'''.replace("HANDLERS", handlers).replace("CHARGING_PROFILE", charging)
 with tempfile.TemporaryDirectory(prefix="notch-charging-feedback-") as directory:
     path = Path(directory)
     (path / "main.swift").write_text(swift)

@@ -687,27 +687,35 @@ struct NotchView: View {
     }
 }
 
-/// Charging is a transient accent in spare space, never another activity
-/// that moves the marks, readings or the island's hit area.
+/// Charging borrows idle wings or spare space, keeping live marks and readings
+/// in place rather than replacing them with another activity.
 private struct NotchChargingBolt: View {
     @ObservedObject var service: NotchService
     @ObservedObject private var agents = AgentUsageService.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var opacity: Double = 0
+    @State private var chargingAt: Date?
+
+    private var canShow: Bool {
+        service.acceptsSystemFeedback && !service.expanded && !service.peeking
+            && !service.fullscreenCompact && !service.dragPlaceholder && !service.showsAeroSpace
+            && !service.showsAeroSpaceBadge && !service.showsCompactActivityPicker
+            && service.notice == nil && service.departingNotice == nil && service.captureControls == nil
+            && service.departingMusic == nil && service.lingeringMusic == nil && service.namedMusicWings == nil
+    }
 
     private var position: CGPoint? {
-        guard service.acceptsSystemFeedback, !service.expanded, !service.peeking,
-              !service.fullscreenCompact, !service.dragPlaceholder, !service.showsAeroSpace,
-              !service.showsAeroSpaceBadge, !service.showsCompactActivityPicker,
-              service.notice == nil, service.departingNotice == nil, service.captureControls == nil,
-              service.departingMusic == nil, service.lingeringMusic == nil,
-              service.namedMusicWings == nil else { return nil }
+        guard canShow else { return nil }
         let activity = service.compactActivity
         guard activity == nil || activity == .agents || activity == .music else { return nil }
         let geometry = activity == nil ? service.geometry : service.compactActivityGeometry
         guard !service.mascotShows(on: geometry) else { return nil }
         let center = service.surfaceSize.width / 2
         let y = geometry.stripHeight / 2
+        let chargingWing = service.fullscreenChargingWingWidth
+        if chargingWing >= 32 {
+            return CGPoint(x: center - geometry.cameraWidth / 2 - chargingWing / 2, y: y)
+        }
         if geometry.floats {
             return activity == nil && service.idleContent == .none ? CGPoint(x: center, y: y) : nil
         }
@@ -730,13 +738,23 @@ private struct NotchChargingBolt: View {
             occupied = NotchMusicStripLayout.coverInset(geometry) + NotchMusicStripLayout.coverSide(geometry)
         }
         // Leave 8 points between the bolt and existing artwork/agent marks,
-        // and 8 before the camera. Narrow wings keep only the green edge.
+        // and 8 before the camera. Narrow wings keep only the edge signal.
         guard geometry.compactActivityWingWidth - occupied >= 28 else { return nil }
         return CGPoint(x: center - gap / 2 - 14, y: y)
     }
 
     var body: some View {
         GeometryReader { _ in
+            if canShow, service.displayIsFullscreen, let chargingAt {
+                TimelineView(.animation(minimumInterval: 1.0 / 60)) { context in
+                    let size = service.surfaceSize
+                    NotchFullscreenChargePulse(
+                        shape: NotchShape.island(height: size.height, geometry: service.geometry)
+                            .path(in: CGRect(origin: .zero, size: size)),
+                        size: size, age: context.date.timeIntervalSince(chargingAt),
+                        reduceMotion: reduceMotion)
+                }
+            }
             if let position {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 12, weight: .semibold))
@@ -750,9 +768,11 @@ private struct NotchChargingBolt: View {
         .accessibilityHidden(true)
         .task(id: service.neonChargeAt) {
             opacity = 0
+            chargingAt = nil
             guard let date = service.neonChargeAt else { return }
             let age = Date().timeIntervalSince(date)
             guard age >= 0, age < NotchChargingSignal.duration else { return }
+            chargingAt = date
             withAnimation(.easeOut(duration: reduceMotion ? 0.2 : NotchChargingSignal.riseDuration)) {
                 opacity = 1
             }
@@ -761,11 +781,45 @@ private struct NotchChargingBolt: View {
                 try await Task.sleep(for: .seconds(hold))
                 try Task.checkCancellation()
                 let remaining = max(0, NotchChargingSignal.duration - Date().timeIntervalSince(date))
-                withAnimation(.easeOut(duration: min(NotchChargingSignal.fadeDuration, remaining))) {
-                    opacity = 0
-                }
+                let fade = min(NotchChargingSignal.fadeDuration, remaining)
+                withAnimation(.easeOut(duration: fade)) { opacity = 0 }
+                try await Task.sleep(for: .seconds(fade))
+                chargingAt = nil
             } catch { }
         }
+    }
+}
+
+/// A brief green signal inside fullscreen wings; the lower neon stays off.
+private struct NotchFullscreenChargePulse: View {
+    let shape: Path
+    let size: CGSize
+    let age: TimeInterval
+    let reduceMotion: Bool
+
+    var body: some View {
+        let green = NotchNeonPalette.charging
+        let travel = min(1, max(0, age / 0.8))
+        let lift = reduceMotion ? 0 : sin(travel * .pi)
+        let rise = min(1, max(0, age / 0.12))
+        let fade = min(1, max(0, (1.6 - age) / 0.65))
+        shape.stroke(green, lineWidth: 1.8)
+            .mask {
+                HStack {
+                    Rectangle().frame(width: 14)
+                    Spacer(minLength: 0)
+                    Rectangle().frame(width: 14)
+                }
+                .mask {
+                    LinearGradient(colors: [.clear, .white, .white, .clear],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: 10)
+                        .position(x: size.width / 2, y: size.height * (0.46 - 0.16 * lift))
+                }
+            }
+            .shadow(color: green.opacity(0.6), radius: 1.8)
+            .clipShape(shape)
+            .opacity(rise * fade * fade * (3 - 2 * fade))
     }
 }
 

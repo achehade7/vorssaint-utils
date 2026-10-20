@@ -900,6 +900,7 @@ def main():
           + declaration(notch, "    func toggleQuietMode()")
           + declaration(notch, "    var acceptsUserInteraction: Bool {")
           + declaration(notch, "    var acceptsSystemFeedback: Bool {")
+          + declaration(notch, "    var fullscreenChargingWingWidth:")
           + declaration(notch, "    private func updateFullscreenVisibility(").replace("private func", "func", 1)
           + declaration(notch, "    private func fullscreenEnvironmentDidChange()").replace("private func", "func", 1)
           + "}\nfinal class PreciseVolumeRollerService: VolumeState {\n"
@@ -1044,7 +1045,7 @@ def main():
         "    private func musicStripHolds(", "    var compactActivity:",
         "    var compactActivityGeometry:", "    private func compactGeometry(", "    var compactActivities:",
         "    var compactCompanion:",
-        "    var surfaceSize:", "    var surfaceShift:", "    func collapse(",
+        "    var fullscreenChargingWingWidth:", "    var surfaceSize:", "    var surfaceShift:", "    func collapse(",
         "    private func detachCaptureIfClosingOnCollapse(", "    func endCaptureControls(",
         "    private func syncVisibleConsumers(", "    private func releaseMonitor("])
     for call in ["NotchSupport.controls", "NotchSupport.watchesMusicActivity", "NotchSupport.idleContent",

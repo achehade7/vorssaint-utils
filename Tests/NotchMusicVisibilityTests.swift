@@ -64,6 +64,9 @@ enum NotchMusicVisibilityTests {
         var compactActivityPickerLayout = NotchActivityPickerLayout(
             count: 2, labelWidth: 80, stripSize: CGSize(width: 300, height: 32), screenWidth: 1440)
         var hiddenInFullscreen = false
+        var displayIsFullscreen = false, acceptsSystemFeedback = true
+        var neonChargeAt: Date?
+        var departingNotice: Bool?, departingMusic: Bool?, lingeringMusic: Bool?
         var running = true
         var suspended = false
         var expanded = false
@@ -165,6 +168,24 @@ enum NotchMusicVisibilityTests {
         let service = Service()
         let reader = NotchMusicService.shared
         service.modules = NotchSupport.modules(in: defaults)
+
+        let charging = Service()
+        charging.displayIsFullscreen = true
+        charging.modules = [.agents]
+        let chargingBare = charging.surfaceSize
+        charging.neonChargeAt = Date()
+        suite.expect(charging.surfaceSize.width == chargingBare.width + 80 && charging.surfaceSize.height == chargingBare.height,
+                     "plugging in while idle exposes charging beside the physical camera without lowering the island")
+        charging.hasAgentActivity = true
+        let chargingBusy = charging.surfaceSize
+        charging.neonChargeAt = nil
+        suite.expect(charging.compactActivity == .agents && charging.surfaceSize == chargingBusy,
+                     "charging does not move the existing agent strip")
+        charging.hasAgentActivity = false
+        suite.expect(charging.surfaceSize == chargingBare, "idle wings retract when the charge signal expires")
+        charging.displayIsFullscreen = false
+        charging.neonChargeAt = Date()
+        suite.expect(charging.surfaceSize == chargingBare, "ordinary desktop idle dimensions remain unchanged")
 
         let devices = Service()
         devices.modules = [.system]

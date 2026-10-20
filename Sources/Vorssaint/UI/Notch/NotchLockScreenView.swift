@@ -50,6 +50,7 @@ struct NotchLockScreenIsland: View {
     @ObservedObject private var music = NotchMusicService.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsChargingSignal = false
+    @State private var chargingAt: Date?
 
     var body: some View {
         let wing = max(0, (size.width - cameraWidth) / 2)
@@ -103,8 +104,15 @@ struct NotchLockScreenIsland: View {
                     .allowsHitTesting(false)
             }
             .overlay {
-                NotchLockScreenEdgePulse(event: model.lockRippleID, ripple: true, size: size)
-                NotchLockScreenEdgePulse(event: model.chargingArrivalID, ripple: false, size: size)
+                NotchLockScreenEdgePulse(event: model.lockRippleID, size: size)
+                if let chargingAt {
+                    TimelineView(.animation(minimumInterval: 1.0 / 60)) { context in
+                        NotchChargingEdge(
+                            shape: NotchShape(attached: true, radius: NotchLayout.surfaceRadius(height: size.height))
+                                .path(in: CGRect(origin: .zero, size: size)),
+                            size: size, age: context.date.timeIntervalSince(chargingAt), reduceMotion: reduceMotion)
+                    }
+                }
             }
             .frame(width: size.width, height: size.height)
             .padding(.leading, origin.x)
@@ -112,59 +120,49 @@ struct NotchLockScreenIsland: View {
             .frame(width: window?.width ?? size.width, height: window?.height ?? size.height, alignment: .topLeading)
             .accessibilityHidden(true)
             .task(id: model.chargingArrivalID) {
-                withAnimation(nil) { showsChargingSignal = false }
-                guard model.chargingArrivalID != nil, model.chargingPercent != nil, wing >= 30 else { return }
+                withAnimation(nil) { showsChargingSignal = false; chargingAt = nil }
+                guard model.chargingArrivalID != nil else { return }
+                chargingAt = Date()
                 do {
                     try await Task.sleep(for: .seconds(NotchChargingSignal.riseDuration))
-                    withAnimation(.easeOut(duration: 0.18)) { showsChargingSignal = true }
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        showsChargingSignal = model.chargingPercent != nil && wing >= 30
+                    }
                     try await Task.sleep(for: .seconds(NotchChargingSignal.duration
                                                       - NotchChargingSignal.riseDuration - NotchChargingSignal.fadeDuration))
                     withAnimation(.easeOut(duration: NotchChargingSignal.fadeDuration)) { showsChargingSignal = false }
+                    try await Task.sleep(for: .seconds(NotchChargingSignal.fadeDuration))
+                    chargingAt = nil
                 } catch { return }
             }
     }
 }
 
-/// A single light travels over the existing edge, then leaves no animation
-/// clock behind. Both effects stay inside the panel's reserved glow margin.
+/// Two purple lights split from the centre on locking, then stop completely.
 private struct NotchLockScreenEdgePulse: View {
     let event: UUID?
-    let ripple: Bool
     let size: CGSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var progress: CGFloat = 0
     @State private var opacity: Double = 0
-    @State private var chargingPulse: Double = 0
 
     var body: some View {
         let shape = NotchShape(attached: true, radius: NotchLayout.surfaceRadius(height: size.height))
-        let tint = ripple ? NotchNeonPalette.purple : NotchNeonPalette.charging
+        let tint = NotchNeonPalette.purple
         let width = min(60, size.width * 0.22)
         ZStack {
-            if !ripple {
-                shape.stroke(tint.opacity(0.7 + chargingPulse * 0.3), lineWidth: 1.8)
-                    .mask(alignment: .bottom) {
-                        LinearGradient(colors: [.clear, .white], startPoint: .top, endPoint: .bottom)
-                            .frame(height: 12)
-                    }
-            }
             if reduceMotion {
-                if ripple { shape.stroke(tint, lineWidth: 1.5) }
+                shape.stroke(tint, lineWidth: 1.5)
             } else {
                 ZStack(alignment: .leading) {
                     beam(tint: tint, width: width)
-                        .offset(x: ripple ? size.width / 2 + progress * (size.width + width) / 2 - width / 2
-                                : -width + progress * (size.width + width))
-                    if ripple {
-                        beam(tint: tint, width: width)
-                            .offset(x: size.width / 2 - progress * (size.width + width) / 2 - width / 2)
-                    }
+                        .offset(x: size.width / 2 + progress * (size.width + width) / 2 - width / 2)
+                    beam(tint: tint, width: width)
+                        .offset(x: size.width / 2 - progress * (size.width + width) / 2 - width / 2)
                 }
                 .frame(width: size.width, height: size.height, alignment: .leading)
                 .mask(shape.stroke(lineWidth: 1.5))
-                .mask(alignment: .bottom) {
-                    Rectangle().frame(height: ripple ? size.height : 12)
-                }
+                .mask(alignment: .bottom) { Rectangle().frame(height: size.height) }
             }
         }
         .shadow(color: tint.opacity(0.8), radius: 2)
@@ -172,35 +170,22 @@ private struct NotchLockScreenEdgePulse: View {
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .task(id: event) {
-            withAnimation(nil) { progress = 0; opacity = 0; chargingPulse = 0 }
+            withAnimation(nil) { progress = 0; opacity = 0 }
             guard event != nil else { return }
             do {
-                // Give a retriggered pulse its initial frame before travel.
                 try await Task.sleep(for: .milliseconds(30))
                 withAnimation(.easeOut(duration: 0.12)) { opacity = 1 }
                 if !reduceMotion {
-                    withAnimation(.easeInOut(duration: ripple ? 0.95 : NotchChargingSignal.cometDuration)) { progress = 1 }
+                    withAnimation(.easeInOut(duration: 0.95)) { progress = 1 }
                 }
-                if ripple {
-                    try await Task.sleep(for: .seconds(reduceMotion ? 0.45 : 0.95))
-                    withAnimation(.easeOut(duration: 0.45)) { opacity = 0 }
-                } else {
-                    if !reduceMotion {
-                        try await Task.sleep(for: .seconds(NotchChargingSignal.cometDuration))
-                        withAnimation(.easeInOut(duration: 0.35)) { chargingPulse = 1 }
-                        try await Task.sleep(for: .seconds(0.35))
-                        withAnimation(.easeInOut(duration: 0.6)) { chargingPulse = 0 }
-                    }
-                    let elapsed = 0.03 + (reduceMotion ? 0 : NotchChargingSignal.cometDuration + 0.35)
-                    try await Task.sleep(for: .seconds(NotchChargingSignal.duration - elapsed - NotchChargingSignal.fadeDuration))
-                    withAnimation(.easeOut(duration: NotchChargingSignal.fadeDuration)) { opacity = 0 }
-                }
+                try await Task.sleep(for: .seconds(reduceMotion ? 0.45 : 0.95))
+                withAnimation(.easeOut(duration: 0.45)) { opacity = 0 }
             } catch { return }
         }
     }
 
     private func beam(tint: Color, width: CGFloat) -> some View {
-        LinearGradient(colors: [.clear, tint.opacity(0.35), tint, ripple ? .white.opacity(0.85) : tint, .clear],
+        LinearGradient(colors: [.clear, tint.opacity(0.35), tint, .white.opacity(0.85), .clear],
                        startPoint: .leading, endPoint: .trailing)
             .frame(width: width, height: size.height)
     }
