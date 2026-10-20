@@ -56,7 +56,8 @@ struct NSWorkspace {
 enum NotchNotificationSources {
     static func source(for names: [String]) -> (bundleIdentifier: String, name: String)? {
         let apps = ["Ghostty": "com.mitchellh.ghostty", "Codex": "com.openai.codex",
-                    "Claude": "com.anthropic.claudefordesktop", "Slack": "com.tinyspeck.slackmacgap"]
+                    "Claude": "com.anthropic.claudefordesktop", "Slack": "com.tinyspeck.slackmacgap",
+                    "Brave Browser": "com.brave.Browser"]
         guard let name = names.first, let identifier = apps[name] else { return nil }
         return (identifier, name)
     }
@@ -93,6 +94,11 @@ let children = [
     item("Completed `/root/task_1/nested_child`", field: "subtitle"),
     item("Completed /root/child", app: "Codex"),
     item(" Completed `/root/child` \n"),
+    item("Completed `/root/upstream_feature_guide`", app: ""),
+    item("Completed `/root/upstream_feature_guide`", app: "Unknown"),
+    item("Completed `/root/upstream_feature_guide`", app: "Brave Browser"),
+    item("Completed `/root/child`", app: "Claude"),
+    item("Completed `/root/child`", app: "Slack"),
 ]
 service.accept(children)
 expect(service.received.items.isEmpty, "child-task completions must not interrupt the island")
@@ -101,17 +107,20 @@ expect(service.inbox.unreadCount == 0, "filtered child-task completions must not
 let kept = [
     item("Completed `/root`"), item("Completed /root"), item("Codex finished"),
     item("Claude finished", app: "Claude"),
-    item("Completed `/root/desktop_cpu_measurement`", app: "Slack"),
-    item("Completed `/root/desktop_cpu_measurement`", app: "Unknown"),
+    item("Completed `/root`", app: ""),
+    item("Completed `/root`", app: "Unknown"),
+    item("Completed `/root`", app: "Brave Browser"),
+    item("Review this report: Completed `/root/desktop_cpu_measurement`", app: "Slack"),
+    item("Completed `/root/desktop_cpu_measurement` — please review", app: "Unknown"),
     item("Approval requested for `/root/child`"),
     item("Completed `/root/child` and updated the main session"),
     item("Report: Completed `/root/child`"),
-    item("Completed `/root/child`", app: "Claude"),
+    item("Claude finished", app: ""),
     item("Completed /rootish"), item("Completed /root/"), item("Completed `/root/child"),
 ]
 service.accept(children + kept)
 expect(Set(service.received.items.map(\.id)) == Set(kept.map(\.id)),
-       "main completion, Claude, unrelated senders and non-completion notices must arrive unchanged")
+       "main completion, Claude and ordinary notification text must arrive unchanged")
 expect(Set(service.inbox.items.map(\.id)) == Set(kept.map(\.id)),
        "only eligible notices enter history")
 expect(service.inbox.unreadIDs == Set(kept.map(\.id)),
@@ -133,13 +142,11 @@ let root = item("Completed `/root`")
 startup.accept([root])
 expect(startup.received.items.map(\.id) == [root.id], "a new main session finish must still notify")
 for child in children {
-    expect(!NotchNotificationSupport.shouldMirror(child.content,
-        sourceBundleIdentifier: NotchNotificationSources.source(for: [child.content.app])?.bundleIdentifier),
+    expect(!NotchNotificationSupport.shouldMirror(child.content),
         "each observed child completion format must be filtered")
 }
 for notice in kept {
-    expect(NotchNotificationSupport.shouldMirror(notice.content,
-        sourceBundleIdentifier: NotchNotificationSources.source(for: [notice.content.app])?.bundleIdentifier),
+    expect(NotchNotificationSupport.shouldMirror(notice.content),
         "each non-child notification must remain eligible")
 }
 print("Main-session notification filtering: \(checks) checks passed")

@@ -142,7 +142,7 @@ final class NotchNotificationService: ObservableObject {
         shownIDs.formIntersection(liveIDs)
         closingIDs.formIntersection(liveIDs)
         let arrivals = inbox.update(live.filter {
-            NotchNotificationSupport.shouldMirror($0.content, sourceBundleIdentifier: sources[$0.content.app] ?? nil)
+            NotchNotificationSupport.shouldMirror($0.content)
         })
         trimIcons()
         for item in arrivals { received.send(item) }

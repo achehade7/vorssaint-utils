@@ -95,12 +95,10 @@ enum NotchNotificationSupport {
     static let bannerRoles: Set<String> = ["AXNotificationCenterAlert", "AXNotificationCenterBanner"]
     static let stackRoles: Set<String> = ["AXNotificationCenterAlertStack", "AXNotificationCenterBannerStack"]
     static let maximumItems = 50
-    /// The Codex terminal emits a separate native banner for every child task.
-    /// Mirror main-session finishes, but keep those exact child-completion
-    /// messages out of the island. Other senders and non-completion text stay.
-    static func shouldMirror(_ content: NotchNotificationContent, sourceBundleIdentifier: String?) -> Bool {
-        guard let sourceBundleIdentifier,
-              ["com.mitchellh.ghostty", "com.openai.codex"].contains(sourceBundleIdentifier) else { return true }
+    /// Child-task completion banners can come through a terminal, browser or
+    /// an unresolved native sender. Recognize the exact task message regardless
+    /// of its delivery app; root completions and ordinary message text stay.
+    static func shouldMirror(_ content: NotchNotificationContent) -> Bool {
         let childCompletion = #"^Completed (?:`/root(?:/[a-z0-9_]+)+`|/root(?:/[a-z0-9_]+)+)$"#
         return ![content.title, content.subtitle, content.body].contains {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
