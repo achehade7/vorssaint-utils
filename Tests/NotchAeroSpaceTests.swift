@@ -70,7 +70,12 @@ enum NotchAeroSpaceTests {
                 if (root / 'fail-switch').exists():
                     (root / 'failed').write_text(sys.argv[2])
                     sys.exit(1)
+                with (root / 'commands').open('a') as commands:
+                    commands.write(sys.argv[2] + '\\n')
+                (root / 'switch-pid').write_text(str(os.getpid()))
                 (root / 'selected').write_text(sys.argv[2])
+                while (root / 'hold-switch').exists():
+                    time.sleep(.01)
             else:
                 sys.exit(1)
             """
@@ -85,16 +90,29 @@ enum NotchAeroSpaceTests {
             service.togglePrevious()
             suite.expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("selected").path),
                          "a previous-workspace gesture before the first switch sends no command")
+            let holdSwitch = folder.appendingPathComponent("hold-switch")
+            try Data().write(to: holdSwitch)
             service.select("2")
             suite.expect(wait { service.state.current == "2" }, "clicking a workspace sends the command and waits for the confirmed event")
+            let switchingPID = Int32(try String(contentsOf: folder.appendingPathComponent("switch-pid"), encoding: .utf8))!
+            suite.expect(kill(switchingPID, 0) == 0,
+                         "the fixture confirms the switch while its command is still alive")
             suite.expect(updates >= 2 && service.state.flashUntil > ProcessInfo.processInfo.systemUptime,
                          "confirmed switching publishes the new selection and starts its flash")
             service.select("unlisted")
             suite.expect((try? String(contentsOf: folder.appendingPathComponent("selected"), encoding: .utf8)) == "2",
                          "only the four configured workspace buttons can send commands")
+            service.select("G")
             service.togglePrevious()
+            suite.expect((try? String(contentsOf: folder.appendingPathComponent("commands"), encoding: .utf8)) == "2\n",
+                         "requests wait for the active workspace command instead of running in parallel")
+            suite.expect(service.state.current == "2" && service.state.previous == "1",
+                         "queued requests leave the event-confirmed workspace history unchanged")
+            try FileManager.default.removeItem(at: holdSwitch)
             suite.expect(wait { service.state.current == "1" && service.state.previous == "2" },
                          "previous-workspace switching returns to the confirmed prior workspace")
+            suite.expect((try? String(contentsOf: folder.appendingPathComponent("commands"), encoding: .utf8)) == "2\n1\n",
+                         "only the latest workspace request runs after the prior command exits")
             service.togglePrevious()
             suite.expect(wait { service.state.current == "2" && service.state.previous == "1" },
                          "repeating previous-workspace switching toggles back")
@@ -114,17 +132,37 @@ enum NotchAeroSpaceTests {
             service.togglePrevious()
             suite.expect(wait { service.state.current == "Q" && service.state.previous == "2" },
                          "the gesture can return to a confirmed workspace outside the visible four buttons")
+            try Data().write(to: holdSwitch)
+            service.select("1")
+            suite.expect(wait { service.state.current == "1" }, "the disconnect fixture holds a confirmed workspace command")
+            let disconnectedSwitchPID = Int32(try String(contentsOf: folder.appendingPathComponent("switch-pid"), encoding: .utf8))!
+            service.select("P")
             let pidFile = folder.appendingPathComponent("pid")
             let pid = Int32(try String(contentsOf: pidFile, encoding: .utf8))!
             kill(pid, SIGTERM)
             suite.expect(wait { service.state.current == nil && service.state.previous == nil },
                          "a disconnected event stream clears stale selection and history")
+            try FileManager.default.removeItem(at: holdSwitch)
+            suite.expect(wait { kill(disconnectedSwitchPID, 0) != 0 },
+                         "disconnecting terminates an unfinished workspace command")
             suite.expect(wait(timeout: 5) {
                 service.state.current != nil && (try? String(contentsOf: pidFile, encoding: .utf8)) != String(pid)
             }, "the event stream reconnects after AeroSpace restarts")
+            suite.expect(!(try String(contentsOf: folder.appendingPathComponent("commands"), encoding: .utf8)).split(separator: "\n").contains("P"),
+                         "disconnecting discards the pending target instead of replaying it on reconnect")
             let reconnectedPID = Int32(try String(contentsOf: pidFile, encoding: .utf8))!
+            try Data().write(to: holdSwitch)
+            service.select("G")
+            suite.expect(wait { service.state.current == "G" }, "the stop fixture holds a confirmed workspace command")
+            let stoppedSwitchPID = Int32(try String(contentsOf: folder.appendingPathComponent("switch-pid"), encoding: .utf8))!
+            service.select("P")
             service.stop()
+            try FileManager.default.removeItem(at: holdSwitch)
             suite.expect(wait { kill(reconnectedPID, 0) != 0 }, "stopping the island terminates its subscription process")
+            let stoppedSwitch = wait { kill(stoppedSwitchPID, 0) != 0 }
+            let stoppedCommands = try String(contentsOf: folder.appendingPathComponent("commands"), encoding: .utf8)
+            suite.expect(stoppedSwitch && !stoppedCommands.split(separator: "\n").contains("P"),
+                         "stopping terminates the active command and discards its pending target")
             suite.expect(service.state.current == nil && service.state.previous == nil
                          && !service.state.showsStrip(hovered: true, blocked: false, now: 0),
                          "stopping removes stale workspace controls")

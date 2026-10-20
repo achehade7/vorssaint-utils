@@ -46,6 +46,7 @@ final class NotchAeroSpaceService {
     private var reconnect: DispatchWorkItem?
     private var flashEnd: DispatchWorkItem?
     private var switching: Process?
+    private var pendingWorkspace: String?
 
     init(executable: URL? = ["/opt/homebrew/bin/aerospace", "/usr/local/bin/aerospace"]
         .first(where: { FileManager.default.isExecutableFile(atPath: $0) }).map(URL.init(fileURLWithPath:))) {
@@ -65,9 +66,11 @@ final class NotchAeroSpaceService {
         flashEnd?.cancel(); flashEnd = nil
         output?.fileHandleForReading.readabilityHandler = nil
         process?.terminationHandler = nil
+        switching?.terminationHandler = nil
         if process?.isRunning == true { process?.terminate() }
         if switching?.isRunning == true { switching?.terminate() }
         process = nil; output = nil; switching = nil
+        pendingWorkspace = nil
         buffer.removeAll()
         let wasConnected = state.current != nil
         state = NotchAeroSpaceState()
@@ -121,6 +124,9 @@ final class NotchAeroSpaceService {
         generation += 1
         output?.fileHandleForReading.readabilityHandler = nil
         process = nil; output = nil
+        switching?.terminationHandler = nil
+        if switching?.isRunning == true { switching?.terminate() }
+        switching = nil; pendingWorkspace = nil
         buffer.removeAll()
         flashEnd?.cancel(); flashEnd = nil
         state = NotchAeroSpaceState()
@@ -142,15 +148,37 @@ final class NotchAeroSpaceService {
     }
 
     private func switchWorkspace(_ workspace: String) {
-        guard running, state.current != nil, state.current != workspace,
-              switching?.isRunning != true, let executable else { return }
+        guard running, state.current != nil else { return }
+        // A confirmed event can arrive before its command exits. Keep the
+        // latest click until that child releases the lane instead of losing it.
+        if switching != nil { pendingWorkspace = workspace; return }
+        guard state.current != workspace else { return }
+        startWorkspaceSwitch(workspace)
+    }
+
+    private func startWorkspaceSwitch(_ workspace: String) {
+        guard let executable else { return }
+        let requested = generation
         let child = Process()
         child.executableURL = executable
         child.arguments = ["workspace", workspace]
         child.standardInput = FileHandle.nullDevice
         child.standardOutput = FileHandle.nullDevice
         child.standardError = FileHandle.nullDevice
+        child.terminationHandler = { [weak self] completed in
+            DispatchQueue.main.async {
+                guard let self, self.running, self.generation == requested,
+                      self.switching === completed else { return }
+                self.switching = nil
+                let pending = self.pendingWorkspace
+                self.pendingWorkspace = nil
+                // The stream may still be delivering the prior confirmation,
+                // so a queued target runs even if it matches the old reading.
+                if let pending { self.startWorkspaceSwitch(pending) }
+            }
+        }
         // The event stream, rather than an optimistic click, updates the highlight.
-        do { try child.run(); switching = child } catch { switching = nil }
+        switching = child
+        do { try child.run() } catch { switching = nil }
     }
 }

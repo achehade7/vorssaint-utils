@@ -79,7 +79,8 @@ struct NotchMusicStrip: View {
                     if named != nil { namedLabel }
                     if wing > 0 {
                         // Circular corners, like the strip's, so the two stay parallel.
-                        NotchMusicCover(artwork: artwork, side: artworkSide, radius: artworkRadius)
+                        NotchMusicCover(artwork: artwork, side: artworkSide, radius: artworkRadius,
+                                        source: playback?.track)
                     }
                 }
                 .padding(.leading, named == nil ? artworkInset : Layout.endInset)
@@ -213,11 +214,17 @@ struct NotchMusicCover: View {
     let artwork: NSImage?
     let side: CGFloat
     let radius: CGFloat
+    /// The player whose icon stands in for a missing cover; see NotchArtwork.
+    var source: RadialNowPlayingSnapshot? = nil
 
     var body: some View {
         Group {
             if let artwork {
                 Image(nsImage: artwork).resizable().scaledToFill()
+            } else if let icon = source.flatMap(RadialNowPlayingApplication.icon(for:)) {
+                Color.black.overlay {
+                    Image(nsImage: icon).resizable().interpolation(.high).scaledToFit().padding(side * 0.08)
+                }
             } else {
                 Color.black.overlay { Image(systemName: "music.note").foregroundStyle(.secondary) }
             }

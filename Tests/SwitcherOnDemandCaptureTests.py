@@ -49,6 +49,11 @@ final class View {
 }
 final class Controller { let view = View() }
 final class Panel { let contentViewController: Controller? = Controller() }
+final class SecureInputWatch {
+    var starts = 0, stops = 0
+    func start() { starts += 1 }
+    func stop() { stops += 1 }
+}
 struct Item { var previewWindowID: Int? }
 struct Pending { var commitWhenReady = false }
 enum PreviewSizing { static let switcherScale = 1.0 }
@@ -69,6 +74,7 @@ final class WindowPreviewProvider {
 }
 final class Switcher {
     let routeLock = NSLock()
+    let secureInputWatch = SecureInputWatch()
     var routeShortcut = GlobalShortcut.switcherDefault
     var routeWindowShortcut = GlobalShortcut.switcherWindowDefault
     var routeCanStartSession = false
@@ -118,6 +124,9 @@ for previews in [true, false] {
                "the panel's first layout must still be prepared")
         expect(takesOver ? switcher.suppressed == 1 : switcher.restored == 1,
                "the user's native shortcut preference must still apply")
+        expect(switcher.secureInputWatch.starts == (takesOver ? 1 : 0)
+               && switcher.secureInputWatch.stops == (takesOver ? 0 : 1),
+               "secure-input monitoring follows native shortcut takeover without starting capture")
         switcher.syncWithPreferences()
         expect(provider.starts == 0 && provider.stops == 2 && provider.refreshes == 0,
                "repeated sync must stay capture-free")
@@ -136,6 +145,8 @@ for previews in [true, false] {
         expect(provider.starts == 0 && provider.stops == 3 && switcher.removed == 1
                && !switcher.routeCanStartSession,
                "disabling the switcher must still stop capture and keyboard routing")
+        expect(switcher.secureInputWatch.stops == (takesOver ? 1 : 3),
+               "disabling the switcher also stops secure-input monitoring")
     }
 }
 WindowPreviewProvider.shared = WindowPreviewProvider()
