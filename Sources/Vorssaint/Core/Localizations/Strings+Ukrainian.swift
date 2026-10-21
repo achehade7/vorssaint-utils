@@ -706,6 +706,7 @@ extension Strings {
         obPurposeSkip: "Функції можна додати або прибрати пізніше в Налаштуваннях.",
         tabMonitor: "Монітор",
         monitorMenuBarSection: "На смузі меню",
+        monitorMenuBarPreview: "Попередній перегляд смуги меню",
         monitorMenuBarCaption: "Виберіть, що показувати біля значка на смузі меню.",
         monitorCombineTemperatures: "Об’єднувати навантаження та температуру",
         monitorCombineTemperaturesCaption: "Коли увімкнені і навантаження, і температура одного елемента, показувати їх одним блоком.",

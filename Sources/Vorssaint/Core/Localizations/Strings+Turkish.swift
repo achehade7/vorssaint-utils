@@ -729,6 +729,7 @@ extension Strings {
 
         tabMonitor: "Monitör",
         monitorMenuBarSection: "Menü çubuğunda",
+        monitorMenuBarPreview: "Menü çubuğu önizlemesi",
         monitorMenuBarCaption: "Menü çubuğunda simgenin yanında ne görüneceğini seç.",
         monitorCombineTemperatures: "Kullanımı ve sıcaklığı birleştir",
         monitorCombineTemperaturesCaption: "Aynı öğe için kullanım ve sıcaklık etkinse, bunları tek blokta göster.",

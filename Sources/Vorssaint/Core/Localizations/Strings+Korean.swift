@@ -730,6 +730,7 @@ extension Strings {
 
         tabMonitor: "모니터",
         monitorMenuBarSection: "메뉴 막대",
+        monitorMenuBarPreview: "메뉴 막대 미리보기",
         monitorMenuBarCaption: "메뉴 막대의 아이콘 옆에 표시할 항목을 선택합니다.",
         monitorCombineTemperatures: "사용량과 온도 결합",
         monitorCombineTemperaturesCaption: "같은 항목의 사용량과 온도가 모두 활성화되면 하나의 블록으로 묶어 표시합니다.",

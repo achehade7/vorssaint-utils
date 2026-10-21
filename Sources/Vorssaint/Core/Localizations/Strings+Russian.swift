@@ -730,6 +730,7 @@ extension Strings {
 
         tabMonitor: "Монитор",
         monitorMenuBarSection: "В строке меню",
+        monitorMenuBarPreview: "Предпросмотр строки меню",
         monitorMenuBarCaption: "Выберите, что показывать рядом со значком в строке меню.",
         monitorCombineTemperatures: "Объединять нагрузку и температуру",
         monitorCombineTemperaturesCaption: "Когда включены и нагрузка, и температура одного и того же элемента, показывать их одним блоком.",

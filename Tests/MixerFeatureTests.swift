@@ -834,6 +834,19 @@ enum MixerFeatureTests {
         suite.expect(framesGuard != nil && cycleCount != nil && framesGuard! < cycleCount!,
                "a cycle is counted only once the engine has handed the device audio")
 
+        // A refresh pass has to publish and reconcile the volumes resolved when it
+        // lands, not the ones captured when it was requested. The pass lives in a
+        // class the contracts cannot instantiate, so its body is read as text.
+        let applyBody = mixerBody
+            .range(of: "private func apply(_ snapshot: RefreshSnapshot, generation: Int) {")
+            .flatMap { start in
+                mixerBody.range(of: "\n    }\n", range: start.upperBound..<mixerBody.endIndex)
+                    .map { String(mixerBody[start.upperBound..<$0.lowerBound]) }
+            } ?? ""
+        suite.expect(appearsInOrder(applyBody, ["let next = applyingCurrentVolumes(to: readApps)", "apps = next",
+                                                "reconcileEngines(with: next)"]),
+                     "a refresh pass publishes and reconciles the current saved volumes, not the ones captured at request time")
+
         let identifiedRow = MixerRoutingSupport.rowIdentity(bundleIdentifier: "com.example.Player",
                                                            ownerPid: 501,
                                                            displayName: "Player")

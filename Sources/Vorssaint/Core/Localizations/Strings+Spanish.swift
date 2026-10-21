@@ -729,6 +729,7 @@ extension Strings {
 
         tabMonitor: "Monitor",
         monitorMenuBarSection: "En la barra de menús",
+        monitorMenuBarPreview: "Vista previa de la barra de menús",
         monitorMenuBarCaption: "Elige qué aparece junto al icono en la barra de menús.",
         monitorCombineTemperatures: "Combinar uso y temperatura",
         monitorCombineTemperaturesCaption: "Cuando el uso y la temperatura del mismo elemento estén activos, se muestran en un solo bloque.",

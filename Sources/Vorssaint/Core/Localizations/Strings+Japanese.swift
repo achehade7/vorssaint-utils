@@ -729,6 +729,7 @@ extension Strings {
 
         tabMonitor: "モニタ",
         monitorMenuBarSection: "メニューバー",
+        monitorMenuBarPreview: "メニューバーのプレビュー",
         monitorMenuBarCaption: "メニューバーのアイコンの横に表示する項目を選びます。",
         monitorCombineTemperatures: "使用率と温度をまとめる",
         monitorCombineTemperaturesCaption: "同じ項目の使用率と温度が有効な場合、1つのブロックにまとめて表示します。",

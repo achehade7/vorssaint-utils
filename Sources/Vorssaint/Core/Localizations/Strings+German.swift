@@ -729,6 +729,7 @@ extension Strings {
 
         tabMonitor: "Überwachung",
         monitorMenuBarSection: "In der Menüleiste",
+        monitorMenuBarPreview: "Vorschau der Menüleiste",
         monitorMenuBarCaption: "Wähle, was neben dem Symbol in der Menüleiste erscheint.",
         monitorCombineTemperatures: "Auslastung und Temperatur kombinieren",
         monitorCombineTemperaturesCaption: "Wenn Auslastung und Temperatur desselben Elements aktiv sind, erscheinen sie in einem Block.",

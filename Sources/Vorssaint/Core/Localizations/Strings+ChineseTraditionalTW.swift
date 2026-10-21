@@ -730,6 +730,7 @@ extension Strings {
 
         tabMonitor: "監控",
         monitorMenuBarSection: "在選單列中",
+        monitorMenuBarPreview: "選單列預覽",
         monitorMenuBarCaption: "選擇選單列中圖示旁顯示的內容。",
         monitorCombineTemperatures: "合併使用率和溫度",
         monitorCombineTemperaturesCaption: "同一項目的使用率和溫度都啟用時，在一個區塊中顯示。",
