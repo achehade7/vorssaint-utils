@@ -115,6 +115,14 @@ enum NotchScreenRefreshContract {
         var menuSpaceTimer: Timer?
         var menuSpaceGeneration = 0
         var screenRefreshWork: DispatchWorkItem?
+        var displayConnections = NotchDisplayConnectionTracker()
+        var displayArrival: NotchDisplayArrival?
+        var displayArrivalWork: DispatchWorkItem?
+        var acceptsSystemFeedback = true
+        var currentDisplayFrames: [CGDirectDisplayID: CGRect] {
+            Dictionary(uniqueKeysWithValues: NSScreen.screens.map { ($0.notchDisplayID, $0.frame) })
+        }
+        var surfaceSize: CGSize { CGSize(width: displayArrival == nil ? 210 : 290, height: 32) }
         var preferenceSyncWork: DispatchWorkItem?
         var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1440, height: 900),
                                      safeAreaTop: 32, cameraWidth: 210, compactSideRoom: 64)
@@ -136,7 +144,7 @@ enum NotchScreenRefreshContract {
             appliedRooms.append(room)
             geometry.compactSideRoom = room
         }
-        func refreshPresentation(animated: Bool) { presentations += 1 }
+        func refreshPresentation(animated: Bool = true) { presentations += 1 }
         func collapse() { collapses += 1 }
         var displayHasMenuBar = true
         static let pointerFollowDelay: TimeInterval = 0.2
@@ -460,6 +468,7 @@ enum NotchScreenRefreshContract {
         suite.expect(noMenuBar.menuSpaceTimer == nil && noMenuBar.reads == 0 && noMenuBar.geometry.compactSideRoom != nil,
                "a display without a menu bar keeps the island at rest with nothing to measure or cover")
         pointerFollowContracts(suite)
+        displayArrivalContracts(suite)
 
         let source = (try? String(contentsOfFile: "Sources/Vorssaint/Services/Notch/NotchService.swift",
                                   encoding: .utf8)) ?? ""
@@ -475,6 +484,48 @@ enum NotchScreenRefreshContract {
         suite.expect(reader.contains("menuBarOwningApplication") && !reader.contains("frontmostApplication"),
                "the menu read measures the application whose menus are on the bar: an accessory app with focus "
                + "leaves the previous app's menus displayed, and its own menu geometry is never laid out")
+    }
+
+    private static func displayArrivalContracts(_ suite: TestSuite) {
+        DispatchQueue.main = Scheduler()
+        defer { DispatchQueue.main = Scheduler(); NSScreen.screens = [] }
+        let builtIn = NSScreen(1, CGRect(x: 0, y: 0, width: 1512, height: 982))
+        let right = NSScreen(2, builtIn.frame.offsetBy(dx: 1512, dy: 0))
+        NSScreen.screens = [builtIn]
+        let service = Service()
+        service.displayID = 1
+        service.displayConnections.reset(service.currentDisplayFrames)
+        NSScreen.screens = [builtIn, right]
+        service.screenParametersDidChange()
+        suite.expect(service.displayArrival == nil, "display feedback waits for the settled screen callback")
+        DispatchQueue.main.advance(0.11)
+        suite.expect(service.displayArrival?.direction == NotchDisplayConnectionDirection(x: 1, y: 0)
+                     && service.presentations == 1,
+                     "the settled native callback exposes idle wings and points toward the new display")
+        let first = service.displayArrival
+        let firstExpiry = service.displayArrivalWork
+        service.screenParametersDidChange()
+        DispatchQueue.main.advance(0.11)
+        suite.expect(service.displayArrival == first, "brightness callbacks do not restart a display arrival")
+        service.setDisplayArrival(.init(began: Date(timeIntervalSince1970: 5), direction: .init(x: -1, y: 0)))
+        let replacement = service.displayArrival
+        firstExpiry?.perform()
+        suite.expect(service.displayArrival == replacement, "stale arrival expiry cannot erase the newer event")
+        DispatchQueue.main.advance(NotchDisplayArrivalSignal.duration)
+        suite.expect(service.displayArrival == nil && service.displayArrivalWork == nil && service.presentations == 2,
+                     "expiry removes the event and retracts its temporary idle wings")
+        NSScreen.screens = [builtIn]
+        service.screenParametersDidChange()
+        DispatchQueue.main.advance(0.11)
+        service.acceptsSystemFeedback = false
+        NSScreen.screens = [builtIn, right]
+        service.screenParametersDidChange()
+        DispatchQueue.main.advance(0.11)
+        suite.expect(service.displayArrival == nil, "quiet/hidden feedback gates suppress the attached-screen cue")
+        service.acceptsSystemFeedback = true
+        service.screenParametersDidChange()
+        DispatchQueue.main.advance(0.11)
+        suite.expect(service.displayArrival == nil, "reenabling feedback does not replay a display attached while quiet")
     }
 
     /// Following the pointer runs the shipped monitors, wait and move against

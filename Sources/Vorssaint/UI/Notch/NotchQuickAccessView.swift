@@ -100,6 +100,9 @@ struct NotchQuickAccessView: View {
     @ObservedObject private var microphone = MicMuteService.shared
     @ObservedObject private var recorder = ScreenRecorderService.shared
     @ObservedObject private var music = NotchMusicService.shared
+    @State private var musicVolumeFeedback: Double?
+    @State private var musicVolumeFeedbackID: UUID?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(DefaultsKey.notchLiquidGlassEnabled) private var glass = false
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
@@ -164,6 +167,26 @@ struct NotchQuickAccessView: View {
                 .accessibilityIdentifier("notch.aerospace.current")
             }
         }
+        .task(id: musicVolumeFeedbackID) {
+            guard musicVolumeFeedbackID != nil else { return }
+            do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { musicVolumeFeedback = nil }
+        }
+        .onChange(of: motion.interactive) {
+            if !motion.interactive { musicVolumeFeedback = nil; musicVolumeFeedbackID = nil }
+        }
+    }
+
+    private func adjustMusicVolume(by amount: Double) {
+        guard motion.interactive else { return }
+        let mixer = AppVolumeMixer.shared
+        service.noteOwnLevelAdjustment(.volume)
+        mixer.requestOutputStep(level: { min(1, max(0, $0 + amount)) }) { applied in
+            guard applied, motion.interactive, let level = mixer.systemOutputVolume else { return }
+            service.noteOwnLevelAdjustment(.volume)
+            musicVolumeFeedback = mixer.systemOutputMuted == true ? 0 : level
+            musicVolumeFeedbackID = UUID()
+        }
     }
 
     private func bubble(_ button: NotchQuickButton) -> some View {
@@ -199,7 +222,9 @@ struct NotchQuickAccessView: View {
         }
         let title = isBack ? l10n.s.obBack : button.label.isEmpty ? actionTitle : button.label
         return Button {
-            if action == .settings {
+            if isMusic, NotchMusicShortcutScroll.optionOnly(NSEvent.modifierFlags) {
+                if music.canPerform(.toggle) { music.send(.toggle) }
+            } else if action == .settings {
                 service.perform {
                     if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.systempreferences") {
                         NSWorkspace.shared.open(url)
@@ -240,12 +265,111 @@ struct NotchQuickAccessView: View {
                         .allowsHitTesting(false)
                 }
                 .contentShape(Circle())
+                .overlay {
+                    if isMusic, let level = musicVolumeFeedback {
+                        ZStack {
+                            Circle().trim(from: 0, to: 0.75)
+                                .stroke(NotchNeonPalette.purple.opacity(0.2), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                            Circle().trim(from: 0, to: 0.75 * level)
+                                .stroke(NotchNeonPalette.purple, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                        }
+                        .rotationEffect(.degrees(135))
+                        .padding(3)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                        .transition(.opacity)
+                    }
+                }
         }
         .buttonStyle(NotchButtonStyle(cornerRadius: NotchQuickAccessLayout.diameter / 2))
+        .background {
+            if isMusic, motion.interactive {
+                NotchMusicShortcutScroll(adjusted: adjustMusicVolume)
+            }
+        }
         .help(title)
         .accessibilityLabel(title)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("notch.quickAccess.\(button.id.uuidString)")
+    }
+}
+
+/// A passive listener over just the live music shortcut. Ordinary scrolling,
+/// horizontal swipes and clicks still belong to the island and its button.
+struct NotchMusicShortcutScroll: NSViewRepresentable {
+    let adjusted: (Double) -> Void
+
+    static func optionOnly(_ flags: NSEvent.ModifierFlags) -> Bool {
+        flags.intersection([.command, .control, .option, .shift]) == .option
+    }
+
+    func makeNSView(context: Context) -> ScrollArea {
+        let view = ScrollArea()
+        view.adjusted = adjusted
+        return view
+    }
+
+    func updateNSView(_ view: ScrollArea, context: Context) { view.adjusted = adjusted }
+    static func dismantleNSView(_ view: ScrollArea, coordinator: ()) { view.stop() }
+
+    final class ScrollArea: NSView {
+        var adjusted: ((Double) -> Void)?
+        private var monitor: Any?
+        private var travel: CGFloat = 0
+        private var lastTimestamp: TimeInterval?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stop()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                self?.handle(event) == true ? nil : event
+            }
+        }
+
+        func handle(_ event: NSEvent) -> Bool {
+            guard event.type == .scrollWheel, let window, window.isVisible, event.window === window,
+                  !isHiddenOrHasHiddenAncestor, Self.inCircle(convert(event.locationInWindow, from: nil), bounds),
+                  NotchMusicShortcutScroll.optionOnly(event.modifierFlags),
+                  event.scrollingDeltaX.isFinite, event.scrollingDeltaY.isFinite, event.timestamp.isFinite,
+                  abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) else {
+                travel = 0; lastTimestamp = nil
+                return false
+            }
+            guard event.momentumPhase.isEmpty else { travel = 0; return true }
+            if !event.phase.intersection([.ended, .cancelled]).isEmpty {
+                travel = 0; lastTimestamp = nil
+                return true
+            }
+            if event.phase.contains(.began) || lastTimestamp.map({ event.timestamp < $0 || event.timestamp - $0 > 0.35 }) == true {
+                travel = 0
+            }
+            lastTimestamp = event.timestamp
+            // Physical upward motion raises the level with either scrolling preference.
+            let delta = event.scrollingDeltaY * (event.isDirectionInvertedFromDevice ? -1 : 1)
+            if travel * delta < 0 { travel = 0 }
+            travel += delta
+            let threshold: CGFloat = event.hasPreciseScrollingDeltas ? 20 : 1
+            let steps = Int(min(4, max(-4, (travel / threshold).rounded(.towardZero))))
+            if steps != 0 {
+                travel = travel.truncatingRemainder(dividingBy: threshold)
+                adjusted?(Double(steps) / 32)
+            }
+            return true
+        }
+
+        private static func inCircle(_ point: CGPoint, _ bounds: CGRect) -> Bool {
+            hypot(point.x - bounds.midX, point.y - bounds.midY) <= min(bounds.width, bounds.height) / 2
+        }
+
+        func stop() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil; travel = 0; lastTimestamp = nil
+        }
+
+        deinit { stop() }
     }
 }
 

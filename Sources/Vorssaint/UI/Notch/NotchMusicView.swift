@@ -612,6 +612,8 @@ struct NotchMusicTimeline: View {
     let playback: NotchPlayback
     @ObservedObject var service: NotchMusicService
     var tint: Color = .white
+    /// The lock-screen player uses a fine line without shrinking its seek target.
+    var trackThickness: CGFloat?
     /// The island's player sets the times beside the bar, as a phone's
     /// island does, which leaves its short row room for the artist.
     var timesBeside = false
@@ -686,6 +688,7 @@ struct NotchMusicTimeline: View {
                 label: FeatureStrings.notch(l10n.language).playbackPosition,
                 range: 0...playback.duration,
                 tint: tint,
+                trackThickness: trackThickness,
                 valueLabel: timestamp(position),
                 onEditingChanged: { editing in
                     if editing {
@@ -698,7 +701,7 @@ struct NotchMusicTimeline: View {
                 .frame(height: 10)
                 .disabled(service.commandPending)
         } else {
-            NotchMeter(value: position / playback.duration, height: 6, tint: tint)
+            NotchMeter(value: position / playback.duration, height: trackThickness ?? 6, tint: tint)
         }
     }
 

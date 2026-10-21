@@ -74,6 +74,8 @@ enum ShelfDropRoutingContract {
         var dragPlaceholder = true
         var choosingFileDropDestination = false
         var targetsMediaDrop = false
+        var fileDropActive = false
+        var fileDropPoint: CGPoint?
         var pinned = false
         var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1440, height: 900), safeAreaTop: 32, cameraWidth: 180)
         var expandedGeometry: NotchGeometry { geometry }
@@ -115,12 +117,14 @@ enum ShelfDropRoutingTests {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         let routing = Context.Notch()
+        routing.fileDropActive = true
         routing.routingFileDrag = true
         routing.workspaceDropFrames = ["G": CGRect(x: 30, y: 5, width: 22, height: 26)]
         suite.expect(!routing.updateFileDrop(at: CGPoint(x: 40, y: 15)), "workspace routes do not accept file storage")
         RunLoop.main.run(until: Date().addingTimeInterval(0.7))
         suite.expect(Context.NotchAeroSpaceService.shared.selections == ["G"], "holding a file over a number switches its workspace")
         routing.endFileDrop()
+        routing.fileDropActive = true
         routing.routingFileDrag = true
         _ = routing.updateFileDrop(at: CGPoint(x: 40, y: 15))
         routing.endFileDrop()

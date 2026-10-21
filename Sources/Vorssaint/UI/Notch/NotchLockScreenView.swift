@@ -7,6 +7,10 @@ import SwiftUI
 /// What the lock screen may show, settled when it appears: preferences cannot
 /// change while the Mac is locked, so the views never read them again.
 final class NotchLockScreenModel: ObservableObject {
+    struct DeviceFeedback: Equatable {
+        let id = UUID()
+        let notice: NotchNotice
+    }
     struct Gates: Equatable {
         var music = false
         var timer = false
@@ -21,10 +25,15 @@ final class NotchLockScreenModel: ObservableObject {
     /// sleeping and waking, and cleared once it unlocks.
     @Published var playedWhileLocked = false
     @Published var padlockOpen = false
+    @Published var unlockHandoffAt: Date?
     @Published var lockRippleID: UUID?
     @Published var trackShimmerID: UUID?
     @Published var chargingArrivalID: UUID?
     @Published var chargingPercent: Int?
+    @Published var lowBatteryAt: Date?
+    @Published var fullChargeAt: Date?
+    @Published var deviceFeedback: DeviceFeedback?
+    @Published var displayArrival: NotchDisplayArrival?
 
     func showsMusic(_ playback: NotchPlayback?) -> Bool {
         gates.music && playback.map {
@@ -57,14 +66,16 @@ struct NotchLockScreenIsland: View {
         let contentHeight = min(size.height, geometry.bareCutout.height)
         let padlockSide = min(geometry.compactMusicArtworkSide, wing)
         let playing = model.showsMusic(music.playback) && music.playback?.isPlaying == true
+        let device = model.deviceFeedback
+        let cue = device.flatMap { NotchDeviceFeedback($0.notice) }
         NotchShape(attached: true, radius: NotchLayout.surfaceRadius(height: size.height))
             .fill(.black)
             .overlay(alignment: .top) {
                 HStack(spacing: 0) {
-                    Image(systemName: showsChargingSignal ? "bolt.fill" : model.padlockOpen ? "lock.open.fill" : "lock.fill")
+                    Image(systemName: device?.notice.symbol ?? (showsChargingSignal ? "bolt.fill" : model.padlockOpen ? "lock.open.fill" : "lock.fill"))
                         .font(.system(size: min(13, contentHeight * 0.42), weight: .semibold))
-                        .foregroundStyle(showsChargingSignal ? NotchNeonPalette.charging
-                                         : model.padlockOpen ? NotchNeonPalette.blue : NotchNeonPalette.purple)
+                        .foregroundStyle(cue?.tint ?? (showsChargingSignal ? NotchNeonPalette.charging
+                                         : model.padlockOpen ? NotchNeonPalette.blue : NotchNeonPalette.purple))
                         .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
                         .symbolEffect(.bounce, options: .speed(1.4), value: reduceMotion ? false : model.padlockOpen)
                         .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: model.padlockOpen)
@@ -76,8 +87,14 @@ struct NotchLockScreenIsland: View {
                         NotchEqualizerBars(isPlaying: playing, bars: NotchLayout.compactMusicBarCount,
                                            barWidth: NotchLayout.compactMusicBarWidth, height: geometry.compactMusicBarHeight,
                                            tint: NotchNeonPalette.blue)
-                            .opacity(playing && !showsChargingSignal ? 1 : 0)
-                        if showsChargingSignal, let percent = model.chargingPercent, wing >= 30 {
+                            .opacity(playing && !showsChargingSignal && device == nil ? 1 : 0)
+                        if let device, !device.notice.title.isEmpty, wing >= 30 {
+                            Text(device.notice.title)
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .monospacedDigit()
+                                .foregroundStyle(cue?.tint ?? .white)
+                                .fixedSize()
+                        } else if device == nil, showsChargingSignal, let percent = model.chargingPercent, wing >= 30 {
                             Text("\(percent)%")
                                 .font(.system(size: 10.5, weight: .semibold))
                                 .monospacedDigit()
@@ -90,6 +107,9 @@ struct NotchLockScreenIsland: View {
                         .padding(.trailing, max(0, min(geometry.compactMusicBarsInset, wing - NotchLayout.compactMusicBarsWidth)))
                         .frame(width: wing, height: contentHeight, alignment: .trailing)
                 }
+                .modifier(NotchDeviceNoticeEffect(notice: device?.notice
+                    ?? NotchNotice(event: .battery, title: "", detail: "", symbol: "lock.fill"), clearsCamera: true))
+                .id(device?.id)
             }
             .overlay {
                 // The surface sits below the camera and the panel reserves
@@ -101,16 +121,53 @@ struct NotchLockScreenIsland: View {
                             .frame(height: 12)
                     }
                     .shadow(color: NotchNeonPalette.purple.opacity(0.55), radius: 2)
+                    .opacity(model.unlockHandoffAt == nil ? 1 : 0)
                     .allowsHitTesting(false)
             }
             .overlay {
                 NotchLockScreenEdgePulse(event: model.lockRippleID, size: size)
+                if let began = model.unlockHandoffAt {
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                        NotchUnlockHandoffEdge(
+                            shape: NotchShape(attached: true, radius: NotchLayout.surfaceRadius(height: size.height))
+                                .path(in: CGRect(origin: .zero, size: size)),
+                            size: size, age: context.date.timeIntervalSince(began), leaving: true,
+                            fullscreen: false, reduceMotion: reduceMotion)
+                    }
+                }
                 if let chargingAt {
                     TimelineView(.animation(minimumInterval: 1.0 / 60)) { context in
                         NotchChargingEdge(
                             shape: NotchShape(attached: true, radius: NotchLayout.surfaceRadius(height: size.height))
                                 .path(in: CGRect(origin: .zero, size: size)),
                             size: size, age: context.date.timeIntervalSince(chargingAt), reduceMotion: reduceMotion)
+                    }
+                }
+                if let began = model.lowBatteryAt {
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                        NotchBatteryEdge(
+                            shape: NotchShape(attached: true, radius: NotchLayout.surfaceRadius(height: size.height))
+                                .path(in: CGRect(origin: .zero, size: size)),
+                            size: size, age: context.date.timeIntervalSince(began), fullscreen: false,
+                            reduceMotion: reduceMotion)
+                    }
+                }
+                if let began = model.fullChargeAt {
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                        NotchFullChargeEdge(
+                            shape: NotchShape(attached: true, radius: NotchLayout.surfaceRadius(height: size.height))
+                                .path(in: CGRect(origin: .zero, size: size)),
+                            size: size, age: context.date.timeIntervalSince(began), fullscreen: false,
+                            reduceMotion: reduceMotion)
+                    }
+                }
+                if let arrival = model.displayArrival {
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                        NotchDisplayArrivalEdge(
+                            shape: NotchShape(attached: true, radius: NotchLayout.surfaceRadius(height: size.height))
+                                .path(in: CGRect(origin: .zero, size: size)),
+                            size: size, direction: arrival.direction,
+                            age: context.date.timeIntervalSince(arrival.began), reduceMotion: reduceMotion)
                     }
                 }
             }
@@ -138,7 +195,7 @@ struct NotchLockScreenIsland: View {
     }
 }
 
-/// Two purple lights split from the centre on locking, then stop completely.
+/// Violet and blue lights split along the lower edge on locking, then stop.
 private struct NotchLockScreenEdgePulse: View {
     let event: UUID?
     let size: CGSize
@@ -152,20 +209,24 @@ private struct NotchLockScreenEdgePulse: View {
         let width = min(60, size.width * 0.22)
         ZStack {
             if reduceMotion {
-                shape.stroke(tint, lineWidth: 1.5)
+                shape.stroke(NotchLockScreenSurface.light, lineWidth: 1.5)
             } else {
                 ZStack(alignment: .leading) {
-                    beam(tint: tint, width: width)
+                    beam(tint: NotchNeonPalette.blue, width: width)
                         .offset(x: size.width / 2 + progress * (size.width + width) / 2 - width / 2)
                     beam(tint: tint, width: width)
                         .offset(x: size.width / 2 - progress * (size.width + width) / 2 - width / 2)
                 }
                 .frame(width: size.width, height: size.height, alignment: .leading)
                 .mask(shape.stroke(lineWidth: 1.5))
-                .mask(alignment: .bottom) { Rectangle().frame(height: size.height) }
             }
         }
         .shadow(color: tint.opacity(0.8), radius: 2)
+        .mask(alignment: .bottom) {
+            // Keep the moving light and its halo off the upper contour.
+            LinearGradient(colors: [.clear, .white], startPoint: .top, endPoint: .bottom)
+                .frame(height: 10)
+        }
         .opacity(opacity)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -191,47 +252,16 @@ private struct NotchLockScreenEdgePulse: View {
     }
 }
 
-/// A smoked-black pane with the same violet-to-blue edge as the desktop
-/// island. The lighting is static; it adds no animation or polling clock.
-private struct NotchLockScreenSurface: ViewModifier {
-    let cornerRadius: CGFloat
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorSchemeContrast) private var contrast
-
+/// The lock-screen island and cover shimmer share the same accent gradient.
+private enum NotchLockScreenSurface {
     static var light: LinearGradient {
         LinearGradient(colors: [NotchNeonPalette.purple, NotchNeonPalette.blue],
                        startPoint: .leading, endPoint: .trailing)
     }
-
-    func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        content
-            .background {
-                shape.fill(.black.opacity(reduceTransparency || contrast == .increased ? 1 : 0.92))
-                    .overlay {
-                        shape.fill(LinearGradient(colors: [NotchNeonPalette.purple.opacity(0.10), .clear,
-                                                           NotchNeonPalette.blue.opacity(0.05)],
-                                                  startPoint: .topLeading, endPoint: .bottomTrailing))
-                    }
-            }
-            .overlay {
-                shape.strokeBorder(Self.light.opacity(contrast == .increased ? 0.9 : 0.42), lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-            .overlay(alignment: .bottom) {
-                Capsule().fill(Self.light)
-                    .frame(height: 1.5)
-                    .padding(.horizontal, cornerRadius)
-                    .padding(.bottom, 1)
-                    .shadow(color: NotchNeonPalette.purple.opacity(0.55), radius: 6, y: 2)
-                    .allowsHitTesting(false)
-            }
-            .shadow(color: .black.opacity(0.3), radius: 12, y: 6)
-    }
 }
 
-/// The song between the system clock and login controls, on a dark neon
-/// pane. A smaller display takes a smaller cover, then puts it by the title.
+/// The song floats directly over the wallpaper between the clock and login controls.
+/// A smaller display takes a smaller cover, then puts it by the title.
 struct NotchLockScreenPlayer: View {
     @ObservedObject var model: NotchLockScreenModel
     let size: CGSize
@@ -253,7 +283,6 @@ struct NotchLockScreenPlayer: View {
                     player(playback, artwork: 84)
                     compact(playback)
                 }
-                .overlay { NotchLockScreenTrackShimmer(event: model.trackShimmerID) }
                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
             }
         }
@@ -279,6 +308,7 @@ struct NotchLockScreenPlayer: View {
                 .padding(.bottom, 14)
             Text(playback.track.title ?? text.mediaNowPlaying)
                 .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(NotchNeonPalette.blue)
                 .lineLimit(1)
             if let artist = playback.track.artist ?? playback.track.album {
                 Text(artist)
@@ -287,7 +317,7 @@ struct NotchLockScreenPlayer: View {
                     .lineLimit(1)
                     .padding(.top, 2)
             }
-            NotchMusicTimeline(playback: playback, service: music, tint: accent)
+            NotchMusicTimeline(playback: playback, service: music, tint: accent, trackThickness: 2)
                 .padding(.top, 16)
             transport(playback)
         }
@@ -303,6 +333,7 @@ struct NotchLockScreenPlayer: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(playback.track.title ?? text.mediaNowPlaying)
                         .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(NotchNeonPalette.blue)
                     if let artist = playback.track.artist ?? playback.track.album {
                         Text(artist).font(.system(size: 13, weight: .medium)).foregroundStyle(NotchNeonPalette.purple)
                     }
@@ -310,7 +341,7 @@ struct NotchLockScreenPlayer: View {
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            NotchMusicTimeline(playback: playback, service: music, tint: accent)
+            NotchMusicTimeline(playback: playback, service: music, tint: accent, trackThickness: 2)
                 .padding(.top, 12)
             transport(playback)
         }
@@ -326,9 +357,9 @@ struct NotchLockScreenPlayer: View {
                 .id(identity)
                 .transition(.opacity)
         }
+            .overlay { NotchLockScreenTrackShimmer(event: model.trackShimmerID) }
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.19, style: .continuous))
             .animation(.easeInOut(duration: reduceMotion ? 0.15 : 0.4), value: identity)
-            .shadow(color: NotchNeonPalette.purple.opacity(0.3), radius: size * 0.16, x: -5, y: 2)
-            .shadow(color: NotchNeonPalette.blue.opacity(0.25), radius: size * 0.16, x: 5, y: 2)
             .scaleEffect(playback.isPlaying || reduceMotion ? 1 : 0.92)
             .animation(reduceMotion ? nil : .smooth(duration: 0.35), value: playback.isPlaying)
     }
@@ -336,14 +367,14 @@ struct NotchLockScreenPlayer: View {
     /// The player's own buttons, never a permission prompt: a request made
     /// here would open behind the lock screen, where no one can answer it.
     private func transport(_ playback: NotchPlayback) -> some View {
-        HStack(spacing: 46) {
+        HStack(spacing: 28) {
             if !music.lacksTrackSkipping(.previous) {
-                button("backward.fill", size: 22, title: text.mediaPrevious, command: .previous, playback: playback)
+                button("backward.end.fill", size: 17, title: text.mediaPrevious, command: .previous, playback: playback)
             }
-            button((requestedPlaying ?? playback.isPlaying) ? "pause.fill" : "play.fill", size: 30,
+            button((requestedPlaying ?? playback.isPlaying) ? "pause.fill" : "play.fill", size: 22,
                    title: text.mediaPlayPause, command: .toggle, playback: playback)
             if !music.lacksTrackSkipping(.next) {
-                button("forward.fill", size: 22, title: text.mediaNext, command: .next, playback: playback)
+                button("forward.end.fill", size: 17, title: text.mediaNext, command: .next, playback: playback)
             }
         }
         .frame(height: 46)
@@ -359,31 +390,20 @@ struct NotchLockScreenPlayer: View {
                playback.canSendCommandsDirectly { requestedPlaying = !playing }
         } label: {
             Image(systemName: symbol)
-                .font(.system(size: size, weight: .semibold))
-                .foregroundStyle(.white)
+                .font(.system(size: size, weight: .medium))
+                .foregroundStyle(command == .toggle ? accent : Color.white.opacity(0.85))
                 .contentTransition(.symbolEffect(.replace))
                 .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: symbol)
                 .frame(width: 48, height: 44)
-                .background {
-                    if command == .toggle {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(NotchLockScreenSurface.light.opacity((requestedPlaying ?? playback.isPlaying) ? 0.26 : 0.10))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .strokeBorder(NotchLockScreenSurface.light.opacity(0.4), lineWidth: 0.75)
-                            }
-                    }
-                }
-                .contentShape(RoundedRectangle(cornerRadius: 14))
+                .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .buttonStyle(NotchButtonStyle(cornerRadius: 14))
+        .buttonStyle(NotchButtonStyle(cornerRadius: 8))
         .disabled(!music.canPerform(command))
         .accessibilityLabel(title)
     }
 }
 
-/// The new track's light passes over the card once; seeking and transport
-/// remain the only interactive content underneath it.
+/// The new track's light crosses only its cover, leaving the wallpaper clear.
 private struct NotchLockScreenTrackShimmer: View {
     let event: UUID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -392,19 +412,15 @@ private struct NotchLockScreenTrackShimmer: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+            let shape = RoundedRectangle(cornerRadius: proxy.size.width * 0.19, style: .continuous)
             if reduceMotion {
-                shape.strokeBorder(NotchLockScreenSurface.light, lineWidth: 1.5)
+                shape.fill(NotchLockScreenSurface.light.opacity(0.08))
             } else {
                 let width = proxy.size.width * 0.3
                 LinearGradient(colors: [.clear, NotchNeonPalette.purple.opacity(0.18),
                                         NotchNeonPalette.blue.opacity(0.14), .clear],
                                startPoint: .leading, endPoint: .trailing)
                     .frame(width: width)
-                    .overlay(alignment: .bottom) {
-                        Capsule().fill(NotchLockScreenSurface.light)
-                            .frame(height: 1.5).padding(.bottom, 1)
-                    }
                     .offset(x: -width + progress * (proxy.size.width + width))
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
                     .clipShape(shape)
@@ -437,7 +453,6 @@ private extension View {
             .padding(.horizontal, 26)
             .padding(.vertical, 20)
             .frame(width: NotchLockScreenLayout.paneWidth)
-            .modifier(NotchLockScreenSurface(cornerRadius: 28))
             .fixedSize(horizontal: false, vertical: true)
     }
 }

@@ -116,6 +116,8 @@ enum NotchSectionPagingTests {
     class State {
         var running = true, suspended = false, expanded = true, showingSections = true, trackingMenu = false
         var gesturesEnabled = true, heldDrag = false
+        var showingQuickCapture = false
+        var gesture = NotchGestureSupport()
         var captureControls: Bool?
         var panel: Panel? = Panel()
         var windowHost: Host? = Host()
@@ -186,6 +188,14 @@ enum NotchSectionPagingTests {
                      "the swipe tail and its momentum never toggle Home back or scroll the new gallery")
         suite.expect(service.handleScroll(swipe(service, x: 0, y: -24)) && service.movedRows == 1,
                      "a new vertical gesture scrolls Home normally after navigation")
+        let capture = Service()
+        capture.showingSections = false
+        capture.showingQuickCapture = true
+        for delta in [(45.0, 0.0), (-45.0, 0.0), (0.0, -45.0)] {
+            suite.expect(!capture.handleScroll(swipe(capture, x: delta.0, y: delta.1))
+                         && capture.homeOpenings == 0 && capture.gestureCalls == 0 && capture.expanded,
+                         "quick capture keeps thumbnail/editor scrolling instead of consuming navigation gestures")
+        }
         // Replay the short sequence recorded from the user's trackpad, including
         // its small vertical drift. Previously this direction never navigated.
         let sampled = Service()

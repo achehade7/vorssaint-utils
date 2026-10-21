@@ -25,12 +25,18 @@ def declaration(marker, text=source):
 
 handlers = "\n".join(declaration(marker) for marker in [
     "    private func powerChanged()", "    private func stopPower()", "    private func setChargingSignal(",
+    "    private func setLowBatterySignal(",
+    "    private func setFullChargeSignal(",
 ])
 charging = declaration('enum NotchChargingSignal', (repo / 'Sources/Vorssaint/UI/Notch/NotchNeonEdge.swift').read_text())
+battery = declaration('enum NotchBatterySignal', (repo / 'Sources/Vorssaint/UI/Notch/NotchBatteryPulse.swift').read_text())
+full_charge = declaration('enum NotchFullChargeSignal', (repo / 'Sources/Vorssaint/UI/Notch/NotchFullChargeEdge.swift').read_text())
 swift = r'''
 import Foundation
 import CoreGraphics
 CHARGING_PROFILE
+BATTERY_PROFILE
+FULL_CHARGE_PROFILE
 struct PowerReading {
     var chargePercent: Int? = 42
     var externalConnected = false, isCharging = false
@@ -69,9 +75,15 @@ func CFRunLoopGetMain() -> Int { 0 }
 func CFRunLoopRemoveSource(_ loop: Int, _ source: Int, _ mode: RunLoopMode) { }
 func CFRunLoopSourceInvalidate(_ source: Int) { }
 final class Service {
-    var running = true, suspended = false, acceptsSystemFeedback = true
+    var running = true, suspended = false, acceptsSystemFeedback = true, displayIsFullscreen = false
     var power = PowerReading(), powerSampler: Sampler? = Sampler(), powerSource: Int? = 1
     var neonChargeAt: Date?
+    var neonFullChargeAt: Date?
+    var fullChargeWork: DispatchWorkItem?
+    var neonLowBatteryAt: Date?
+    var lowBatteryWork: DispatchWorkItem?
+    var criticalPublications = 0
+    func publishCriticalBattery() { criticalPublications += 1 }
     var chargingWork: DispatchWorkItem?
     var surfaceSize = CGSize(width: 285, height: 32)
     func refreshPresentation() {}
@@ -115,19 +127,71 @@ expect(connected.neonChargeAt == nil && connected.powerSampler == nil && connect
 let full = Service()
 full.power = PowerReading(chargePercent: 99, externalConnected: true, isCharging: true)
 full.sample(percent: 100, charging: false)
-expect(full.shown.last?.title == "charged" && full.neonChargeAt == nil,
-       "reaching full charge retains its notice without pretending the cable was just plugged in")
-expect(full.reactions == [.celebrate], "full charge retains its celebration")
+expect(full.neonFullChargeAt != nil && full.shown.isEmpty && full.neonChargeAt == nil,
+       "real full-charge crossing starts the signature without text or plug-in animation")
+expect(full.reactions.isEmpty, "full charge leaves agent marks and the companion undisturbed")
+let fullDate = full.neonFullChargeAt
+full.sample(percent: 100, charging: true)
+full.sample(percent: 100, charging: false)
+expect(full.neonFullChargeAt == fullDate && full.shown.isEmpty,
+       "repeated100 or charging-status changes cannot replay completion")
+let oldFull = full.fullChargeWork
+full.sample(percent: 99, charging: true)
+expect(full.neonFullChargeAt == nil && oldFull?.isCancelled == true,
+       "leaving full charge cancels its short signature")
+full.sample(percent: 100, charging: false)
+let newFull = full.neonFullChargeAt
+oldFull?.perform()
+expect(full.neonFullChargeAt == newFull, "stale completion expiry cannot erase a newer genuine crossing")
+full.fullChargeWork?.perform()
+expect(full.neonFullChargeAt == nil && full.fullChargeWork == nil, "completion expiry retracts idle wings")
+full.power = PowerReading(chargePercent: 99, externalConnected: true, isCharging: true)
+full.sample(percent: 100, charging: false)
+let stoppedFull = full.fullChargeWork
+full.stopPower()
+expect(full.neonFullChargeAt == nil && stoppedFull?.isCancelled == true,
+       "sleep and teardown clear completion without replay")
+let alreadyFull = Service()
+alreadyFull.power = PowerReading(chargePercent: 100, externalConnected: true, isCharging: false)
+alreadyFull.sample(percent: 100, charging: false)
+expect(alreadyFull.neonFullChargeAt == nil && alreadyFull.shown.isEmpty,
+       "startup or wake baseline at100 is silent")
+let pluggedFull = Service()
+pluggedFull.sample(percent: 100, charging: false)
+expect(pluggedFull.neonFullChargeAt == nil && pluggedFull.neonChargeAt != nil,
+       "plugging in already-full uses only the ordinary charging arrival")
+for accepts in [true, false] {
+    let suppressedFull = Service()
+    suppressedFull.acceptsSystemFeedback = accepts
+    NotchSupport.batteryRoute = !accepts
+    suppressedFull.power = PowerReading(chargePercent: 99, externalConnected: true, isCharging: true)
+    suppressedFull.sample(percent: 100, charging: false)
+    expect(suppressedFull.neonFullChargeAt == nil && suppressedFull.shown.isEmpty,
+           "quiet and disabled battery routes suppress full-charge signature")
+    suppressedFull.acceptsSystemFeedback = true; NotchSupport.batteryRoute = true
+    suppressedFull.sample(percent: 100, charging: false)
+    expect(suppressedFull.neonFullChargeAt == nil, "reenabling never replays completion reached while suppressed")
+}
+let unpluggedFull = Service()
+unpluggedFull.power = PowerReading(chargePercent: 99, externalConnected: true, isCharging: true)
+unpluggedFull.sample(percent: 100, charging: false)
+unpluggedFull.sample(percent: 100, plugged: false, charging: false)
+expect(unpluggedFull.neonFullChargeAt == nil && unpluggedFull.fullChargeWork == nil,
+       "unplug immediately cancels completion")
+expect(!NotchFullChargeSignal.crossed(before: nil, next: 100, wasExternal: true, external: true)
+       && !NotchFullChargeSignal.crossed(before: -1, next: 100, wasExternal: true, external: true)
+       && !NotchFullChargeSignal.crossed(before: 99, next: 100, wasExternal: true, external: false),
+       "unknown and invalid baselines or battery operation never announce full charge")
 let low = Service()
 low.power.chargePercent = 21
 low.sample(percent: 20, plugged: false, charging: false)
-expect(low.shown.last?.title == "low" && low.neonChargeAt == nil,
-       "low battery crossing retains its notice")
-expect(low.reactions == [.yawn], "low battery retains its reaction")
+expect(low.shown.isEmpty && low.neonChargeAt == nil && low.neonLowBatteryAt == nil,
+       "twenty percent leaves the persistent orange warning to SketchyBar")
+expect(low.reactions.isEmpty, "the bar warning does not interrupt agents with a mascot reaction")
 let lowConnected = Service()
 lowConnected.power.chargePercent = 21
 lowConnected.sample(percent: 20)
-expect(lowConnected.shown.last?.title == "low", "a simultaneous low-battery crossing remains visible")
+expect(lowConnected.shown.isEmpty && lowConnected.neonChargeAt != nil, "plugging in at twenty percent keeps only green feedback")
 for charging in [true, false] {
     let held = Service()
     held.sample(charging: charging)
@@ -174,8 +238,89 @@ lifecycle.sample(plugged: false, charging: false)
 lifecycle.sample()
 lifecycle.stopPower()
 expect(lifecycle.chargingWork == nil, "stopping power monitoring cancels the outstanding expiry")
+let critical = Service()
+critical.power.chargePercent = 11
+critical.sample(percent: 10, plugged: false, charging: false)
+expect(critical.neonLowBatteryAt != nil && critical.criticalPublications == 1 && critical.shown.isEmpty,
+       "ten percent sends one synchronized red pulse without replacing live content")
+let criticalDate = critical.neonLowBatteryAt
+let staleCritical = critical.lowBatteryWork
+critical.sample(percent: 9, plugged: false, charging: false)
+expect(critical.neonLowBatteryAt == criticalDate && critical.criticalPublications == 1,
+       "falling further below ten does not repeat the heartbeat")
+critical.sample(percent: 9)
+expect(critical.neonLowBatteryAt == nil && critical.lowBatteryWork == nil && critical.neonChargeAt != nil,
+       "plugging in replaces the red pulse with green immediately")
+critical.sample(percent: 11, plugged: false, charging: false)
+critical.sample(percent: 10, plugged: false, charging: false)
+let newerCritical = critical.neonLowBatteryAt
+staleCritical?.perform()
+expect(critical.neonLowBatteryAt == newerCritical, "an obsolete red expiry cannot erase a new threshold crossing")
+critical.lowBatteryWork?.perform()
+expect(critical.neonLowBatteryAt == nil && critical.lowBatteryWork == nil,
+       "red heartbeat expires and removes its temporary wings")
+for suppressed in [true, false] {
+    let muted = Service()
+    muted.power.chargePercent = 11
+    muted.acceptsSystemFeedback = !suppressed
+    NotchSupport.batteryRoute = suppressed
+    muted.sample(percent: 10, plugged: false, charging: false)
+    expect(muted.neonLowBatteryAt == nil && muted.criticalPublications == 0,
+           "quiet mode and disabled battery route do not pulse either surface")
+}
+NotchSupport.batteryRoute = true
+expect(!NotchBatterySignal.crossedCritical(before: nil, next: 9, externalConnected: false),
+       "missing baseline cannot invent a threshold crossing")
+expect(!NotchBatterySignal.crossedCritical(before: 11, next: nil, externalConnected: false),
+       "missing next percentage is ignored")
+expect(!NotchBatterySignal.crossedCritical(before: 11, next: -1, externalConnected: false),
+       "invalid percentages are ignored")
+expect(!NotchBatterySignal.crossedCritical(before: 11, next: 10, externalConnected: true),
+       "a charging battery does not warn at ten percent")
+expect(NotchBatterySignal.crossedCritical(before: 25, next: 8, externalConnected: false),
+       "a reading that skips ten still warns")
+for reduced in [false, true] {
+    expect(NotchBatterySignal.opacity(at: -0.1, reduceMotion: reduced) == 0
+           && NotchBatterySignal.opacity(at: NotchBatterySignal.duration, reduceMotion: reduced) == 0,
+           "the finite pulse has no residual pixels outside its lifetime")
+}
+expect(NotchBatterySignal.opacity(at: 0.55, reduceMotion: false) > 0.99
+       && NotchBatterySignal.opacity(at: 1.85, reduceMotion: false) > 0.99
+       && NotchBatterySignal.opacity(at: 1.2, reduceMotion: false) == 0,
+       "two soft peaks match the bar's 0.55 and 1.85 second beats")
+expect(NotchBatterySignal.opacity(at: 0.55, reduceMotion: true)
+       == NotchBatterySignal.opacity(at: 1.85, reduceMotion: true),
+       "Reduce Motion holds steady red instead of beating")
+critical.sample(percent: 11, plugged: false, charging: false)
+critical.sample(percent: 10, plugged: false, charging: false)
+critical.stopPower()
+expect(critical.neonLowBatteryAt == nil && critical.lowBatteryWork == nil,
+       "stopping battery feedback cancels its finite work")
+for age in [-0.1, 1.6, 1.8, 3.2] {
+    expect(NotchChargingSignal.opacity(at: age, fullscreen: true) == 0,
+           "fullscreen bolt and streaks have no light outside their shared lifetime")
+}
+expect(NotchChargingSignal.opacity(at: 1.2, fullscreen: true) > 0
+       && NotchChargingSignal.opacity(at: 1.5, fullscreen: true) < NotchChargingSignal.opacity(at: 1.2, fullscreen: true),
+       "fullscreen feedback eases out together before its endpoint")
+expect(NotchChargingSignal.opacity(at: 1.8) > 0,
+       "desktop and lock-screen charging retain their longer signature")
+let desktopExpiry = Service(), fullscreenExpiry = Service(), switchedExpiry = Service()
+fullscreenExpiry.displayIsFullscreen = true
+for service in [desktopExpiry, fullscreenExpiry, switchedExpiry] { service.sample() }
+let originalDate = switchedExpiry.neonChargeAt
+switchedExpiry.displayIsFullscreen = true
+switchedExpiry.setChargingSignal(at: originalDate)
+expect(switchedExpiry.neonChargeAt == originalDate, "entering fullscreen never restarts the effect")
+RunLoop.main.run(until: Date().addingTimeInterval(1.8))
+expect(fullscreenExpiry.neonChargeAt == nil && fullscreenExpiry.chargingWork == nil,
+       "fullscreen temporary wings retire with the streaks, without the old extra hold")
+expect(switchedExpiry.neonChargeAt == nil && switchedExpiry.chargingWork == nil,
+       "entering fullscreen reschedules the original effect's shorter deadline")
+expect(desktopExpiry.neonChargeAt != nil, "desktop feedback retains its full duration")
+for service in [desktopExpiry, fullscreenExpiry, switchedExpiry] { service.stopPower() }
 print("PASS: \(checks) charging feedback checks")
-'''.replace("HANDLERS", handlers).replace("CHARGING_PROFILE", charging)
+'''.replace("HANDLERS", handlers).replace("CHARGING_PROFILE", charging).replace("BATTERY_PROFILE", battery).replace("FULL_CHARGE_PROFILE", full_charge)
 with tempfile.TemporaryDirectory(prefix="notch-charging-feedback-") as directory:
     path = Path(directory)
     (path / "main.swift").write_text(swift)

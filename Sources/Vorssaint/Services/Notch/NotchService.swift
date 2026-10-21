@@ -34,14 +34,19 @@ struct NotchNotice: Equatable {
     /// The sides this notice takes beside a camera, as its strip draws them.
     func wings(in geometry: NotchGeometry) -> NotchNoticeWings {
         geometry.noticeWings(preferredWings(
-            wrapsMessage: NotchNotificationBannerLayout.messageLines(stripHeight: geometry.stripHeight) > 1))
+            wrapsMessage: NotchNotificationBannerLayout.messageLines(stripHeight: geometry.stripHeight) > 1,
+            artworkSide: geometry.compactMusicArtworkSide))
     }
 
-    func preferredWings(wrapsMessage: Bool) -> NotchNoticeWings {
+    func preferredWings(wrapsMessage: Bool, artworkSide: CGFloat = 26) -> NotchNoticeWings {
         if let notification {
             let fitted = NotchNotificationBannerLayout.wings(for: notification, wrapsMessage: wrapsMessage)
             return NotchNoticeWings(leading: max(minimumWings.leading, fitted.leading),
                                     trailing: max(minimumWings.trailing, fitted.trailing))
+        }
+        if event == .track {
+            return NotchNoticeWings(leading: artworkSide + NotchNotificationBannerLayout.inset + cameraGap,
+                                    trailing: NotchLayout.compactMusicBarsWidth + NotchNotificationBannerLayout.inset + cameraGap)
         }
         let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         let leading = ((level == nil ? title : detail) as NSString).size(withAttributes: [.font: font]).width
@@ -117,10 +122,13 @@ final class NotchService: ObservableObject {
     /// True when macOS refused the island's own shortcut, so Settings can say so.
     @Published private(set) var shortcutRegistrationFailed = false
     private let hotkey = QuickToolHotkey(id: 81)
+    private let quickCaptureHotkey = QuickToolHotkey(id: 82)
     @Published private(set) var peeking = false
     @Published private(set) var dragPlaceholder = false
     @Published private(set) var choosingFileDropDestination = false
     @Published private(set) var targetsMediaDrop = false
+    @Published private(set) var fileDropPoint: CGPoint?
+    private var fileDropActive = false
     @Published private(set) var selectedMetric: MetricDetailKind?
     @Published private(set) var captureControls: ScreenCaptureSelectionOptions?
     @Published private(set) var captureControlsCollapsed = false
@@ -136,9 +144,19 @@ final class NotchService: ObservableObject {
     @Published private(set) var modules: [NotchModule] = []
     @Published private(set) var quietMode = false
     @Published private(set) var neonWakeAt: Date?
+    @Published private(set) var neonUnlockAt: Date?
+    private var unlockHandoffWork: DispatchWorkItem?
     @Published private(set) var neonChargeAt: Date?
     private var chargingWork: DispatchWorkItem?
+    @Published private(set) var neonFullChargeAt: Date?
+    private var fullChargeWork: DispatchWorkItem?
+    @Published private(set) var neonLowBatteryAt: Date?
+    private var lowBatteryWork: DispatchWorkItem?
+    @Published private(set) var displayArrival: NotchDisplayArrival?
+    private var displayArrivalWork: DispatchWorkItem?
+    private var displayConnections = NotchDisplayConnectionTracker()
     @Published private(set) var neonCopyAt: Date?
+    @Published private(set) var neonMeetingAt: Date?
     @Published private(set) var nightPalette: Double = 0
     @Published private(set) var routingFileDrag = false
     @Published private(set) var dragTargetWorkspace: String?
@@ -302,8 +320,6 @@ final class NotchService: ObservableObject {
     private var followsPointer = false
     /// Every other display shows a copy of the closed island.
     private var showsOnAllDisplays = false
-    /// A capsule names a song only for a moment as it starts.
-    @Published private(set) var capsuleMusicTitleShown = false
     /// The part of the closed music strip under the pointer, as the strip reports it.
     @Published private(set) var musicStripPointer: NotchMusicStripPart?
     /// The pointer rested on the strip's cover, so the strip names the song
@@ -415,9 +431,10 @@ final class NotchService: ObservableObject {
     }
     /// The Command Bar open inside the island, in place of its pages.
     @Published private(set) var showingCommandBar = false
+    @Published private(set) var showingQuickCapture = false
+    @Published private(set) var quickCaptureFeedback: (began: Date, success: Bool)?
+    private var quickCaptureFeedbackWork: DispatchWorkItem?
     @Published private var commandBarHeight: CGFloat?
-    private var musicTitleWork: DispatchWorkItem?
-    private static let musicTitleDuration: TimeInterval = 4
     private var mirrors: [CGDirectDisplayID: NotchMirror] = [:]
     /// Displays showing a full-screen Space, read as Spaces change.
     private var fullscreenDisplays: Set<CGDirectDisplayID> = []
@@ -429,6 +446,7 @@ final class NotchService: ObservableObject {
 
     private init() {
         hotkey.onPress = { [weak self] in self?.toggleFromShortcut() }
+        quickCaptureHotkey.onPress = { [weak self] in self?.openQuickCapture() }
     }
 
     private var hiddenUntilHover: Bool {
@@ -962,7 +980,7 @@ final class NotchService: ObservableObject {
         // The Command Bar keeps the island black, as its drop is: it changes
         // height with every keystroke, and the glass is drawn a frame behind
         // the shape, which showed rows outside it for that frame.
-        (expanded && !showingCommandBar) || peeking || dragPlaceholder || noticeExpanded
+        (expanded && !showingCommandBar && !showingQuickCapture) || peeking || dragPlaceholder || noticeExpanded
             || (captureControls != nil && !captureControlsCollapsed)
     }
 
@@ -974,10 +992,12 @@ final class NotchService: ObservableObject {
             capturesAudio: captureControls?.selectedTool.capturesAudio == true)
     }
 
-    /// An idle physical camera has no drawable pixels. Give a fullscreen
-    /// plug-in signal temporary side wings, without displacing live activities.
-    var fullscreenChargingWingWidth: CGFloat {
-        guard displayIsFullscreen, acceptsSystemFeedback, neonChargeAt != nil, geometry.isNotched,
+    /// An idle physical camera has no drawable pixels. Give short feedback
+    /// temporary side wings, without displacing live activities.
+    var feedbackWingWidth: CGFloat {
+        guard (displayIsFullscreen && neonChargeAt != nil) || neonFullChargeAt != nil || neonLowBatteryAt != nil
+                || displayArrival != nil || neonUnlockAt != nil || quickCaptureFeedback != nil,
+              acceptsSystemFeedback, geometry.isNotched,
               !expanded, !peeking, !showsAeroSpace, !dragPlaceholder, captureControls == nil,
               notice == nil, departingNotice == nil, departingMusic == nil, lingeringMusic == nil,
               compactActivity == nil, idleContent == .none, !mascotShows(on: geometry) else { return 0 }
@@ -994,7 +1014,7 @@ final class NotchService: ObservableObject {
             }
             return captureControlsLayout.size
         }
-        if expanded { return showingCommandBar ? commandBarSurfaceSize : expandedSize }
+        if expanded { return showingQuickCapture ? quickCaptureSurfaceSize : showingCommandBar ? commandBarSurfaceSize : expandedSize }
         if dragPlaceholder { return CGSize(width: geometry.peek.width, height: geometry.safeContentTop + 66) }
         if let notice {
             guard noticeExpanded else { return geometry.noticeSize(wings: notice.wings(in: geometry)) }
@@ -1014,8 +1034,8 @@ final class NotchService: ObservableObject {
                                           reach: named.map { ($0.leading - $0.trailing) / 2 } ?? 0)
                 : resting
         }
-        let resting = fullscreenChargingWingWidth > 0
-            ? geometry.noticeSize(wingWidth: fullscreenChargingWingWidth)
+        let resting = feedbackWingWidth > 0
+            ? geometry.noticeSize(wingWidth: feedbackWingWidth)
             : geometry.restingSize(showsContent: idleContent != .none || mascotShows(on: geometry))
         return hoverEmphasized ? NotchHoverEmphasis.size(from: resting, geometry: geometry) : resting
     }
@@ -1028,6 +1048,11 @@ final class NotchService: ObservableObject {
         if showsAeroSpace { return geometry.noticeShift(aeroSpaceWings) }
         if let notice { return noticeExpanded ? 0 : geometry.noticeShift(notice.wings(in: geometry)) }
         return namedMusicWings.map { ($0.trailing - $0.leading) / 2 } ?? 0
+    }
+
+    var quickCaptureSurfaceSize: CGSize {
+        CGSize(width: min(geometry.screen.width - 24, max(geometry.cameraWidth + 80, 440)),
+               height: geometry.safeContentTop + 232 + NotchLayout.bottomInset)
     }
 
     /// The open island around the Command Bar: the bar's width within the
@@ -1067,6 +1092,10 @@ final class NotchService: ObservableObject {
     /// A notice's own capsule, which it keeps while the island closes around it.
     func capsuleNoticeSurface(_ notice: NotchNotice) -> CGSize {
         let layout = NotchCapsuleLayout.self
+        if notice.event == .track {
+            return layout.surface(content: geometry.compactMusicArtworkSide + layout.groupSpacing + NotchLayout.compactMusicBarsWidth,
+                                  maximum: layout.Maximum.notice, geometry: geometry)
+        }
         guard let content = notice.notification else {
             return layout.surface(content: layout.noticeContent(title: notice.title, detail: notice.detail,
                                                                 level: notice.level != nil),
@@ -1088,9 +1117,9 @@ final class NotchService: ObservableObject {
     /// on the island's display unless `geometry` is another display's.
     private func capsuleStripSize(for activity: NotchCompactActivity, companion: NotchCompactActivity?,
                                   geometry: NotchGeometry? = nil) -> CGSize {
-        // Only the island's own capsule is under the pointer. Its copies name a song as it starts.
+        // Only a deliberate hover on this capsule names the song.
         let ownDisplay = geometry == nil
-        let named = capsuleMusicTitleShown || ownDisplay && musicStripNamesSong
+        let named = ownDisplay && musicStripNamesSong
         let geometry = geometry ?? self.geometry
         let layout = NotchCapsuleLayout.self
         let language = L10n.shared.language
@@ -1185,6 +1214,7 @@ final class NotchService: ObservableObject {
         guard NotchSupport.isEnabled() else { stop(); return }
         if !running {
             running = true
+            NotchQuickCaptureService.shared.start()
             installObservers()
         }
         syncShortcut()
@@ -1208,6 +1238,7 @@ final class NotchService: ObservableObject {
         // Checked before any service starts, so each preference change while
         // the lid is closed does not start and stop them all again.
         guard screenIndex(in: NSScreen.screens) != nil else { withdrawFromMissingScreen(); return }
+        if windowHost == nil { displayConnections.reset(currentDisplayFrames) }
         let aeroSpace = NotchAeroSpaceService.shared
         aeroSpace.onChange = { [weak self] in
             guard let self, self.running, !self.suspended else { return }
@@ -1291,6 +1322,10 @@ final class NotchService: ObservableObject {
         let failed = !hotkey.sync(enabled: NotchSupport.holdsShortcut() && !ShortcutCapture.isCapturing,
                                   shortcut: shortcut, storageKey: DefaultsKey.notchShortcut)
         if failed != shortcutRegistrationFailed { shortcutRegistrationFailed = failed }
+        _ = quickCaptureHotkey.sync(enabled: NotchSupport.isEnabled() && !ShortcutCapture.isCapturing
+            && UserDefaults.standard.bool(forKey: DefaultsKey.notchQuickCaptureShortcutEnabled),
+            shortcut: GlobalShortcut.saved(for: DefaultsKey.notchQuickCaptureShortcut, fallback: .quickCaptureDefault),
+            storageKey: DefaultsKey.notchQuickCaptureShortcut)
     }
 
     private func refreshModules() {
@@ -1308,6 +1343,8 @@ final class NotchService: ObservableObject {
     func stop(restoreCapture: Bool = true) {
         preferenceSyncWork?.cancel(); preferenceSyncWork = nil
         hotkey.unregister()
+        quickCaptureHotkey.unregister()
+        NotchQuickCaptureService.shared.stop()
         if shortcutRegistrationFailed { shortcutRegistrationFailed = false }
         NotchLyricsService.shared.stop()
         NotchFileToolsService.shared.stop()
@@ -1334,10 +1371,18 @@ final class NotchService: ObservableObject {
     }
 
     private func tearDownPresentation() {
+        neonMeetingAt = nil
+        showingQuickCapture = false
+        quickCaptureFeedbackWork?.cancel(); quickCaptureFeedbackWork = nil
+        quickCaptureFeedback = nil
+        NotchQuickCaptureService.shared.cancelSelection()
+        clearUnlockHandoff()
         NotchScreenshotInbox.shared.stop()
         NotchAeroSpaceService.shared.onChange = nil
         NotchAeroSpaceService.shared.stop()
         screenRefreshWork?.cancel(); screenRefreshWork = nil
+        displayArrivalWork?.cancel(); displayArrivalWork = nil
+        displayArrival = nil
         nextMascotVisitWork?.cancel(); nextMascotVisitWork = nil
         mascotVisitWork?.cancel(); mascotVisitWork = nil
         mascotStepBackWork?.cancel(); mascotStepBackWork = nil
@@ -1413,8 +1458,6 @@ final class NotchService: ObservableObject {
         removeHoverExitMonitors()
         removePointerMonitors()
         releaseMonitor()
-        musicTitleWork?.cancel(); musicTitleWork = nil
-        capsuleMusicTitleShown = false
         closeMirrors()
         windowHost?.close()
         windowHost = nil
@@ -1471,7 +1514,7 @@ final class NotchService: ObservableObject {
     }
 
     func open(_ module: NotchModule? = nil, pinned: Bool = false, takeFocus: Bool = true,
-              appPanel: Bool = false, metric: MetricDetailKind? = nil, feedback: Bool = true, sections: Bool = false) {
+              appPanel: Bool = false, metric: MetricDetailKind? = nil, feedback: Bool = true, sections: Bool = false, quickCapture: Bool = false) {
         guard NotchSupport.isEnabled(), !suspended else { return }
         // The capture controls cover the open page and hold collapsing off, so
         // an island opened now would wait behind them and open by itself once
@@ -1481,7 +1524,7 @@ final class NotchService: ObservableObject {
         else { refreshModules() }
         guard let panel else { return }
         let reopening = reopeningDestination
-        let useReopeningSurface = module == nil && !expanded && !appPanel && !sections && metric == nil
+        let useReopeningSurface = module == nil && !expanded && !appPanel && !sections && metric == nil && !quickCapture
         let destination = module.flatMap { modules.contains($0) ? $0 : nil } ?? reopening.module
         let appPanel = appPanel || (useReopeningSurface && reopening.appPanel)
         let sections = sections || (useReopeningSurface && reopening.sections)
@@ -1495,6 +1538,7 @@ final class NotchService: ObservableObject {
         let closesCommandBar = showingCommandBar
         let changesPresentation = !expanded || selected != destination || closesCommandBar
             || showingAppPanel != appPanel || selectedMetric != metric || showingSections != sections
+            || showingQuickCapture != quickCapture
         if changesPresentation, destination == .tools, !appPanel, !sections, metric == nil {
             QuickLauncherService.shared.prepareForPresentation()
         }
@@ -1516,6 +1560,7 @@ final class NotchService: ObservableObject {
         if !expanded { removeHoverExitMonitors() }
         mutatePresentation(transitionContent: changesPresentation ? (expanded ? .replace : .reveal) : .none) {
             showingCommandBar = false
+            showingQuickCapture = quickCapture
             showingAppPanel = appPanel
             showingSections = sections
             if selected != destination { selected = destination }
@@ -1554,6 +1599,7 @@ final class NotchService: ObservableObject {
             showingAppPanel = false
             showingSections = false
             showingCommandBar = false
+            showingQuickCapture = false
             sectionQuery = ""
             highlightedSection = nil
             sectionRow = 0
@@ -1564,6 +1610,35 @@ final class NotchService: ObservableObject {
         removeEventMonitors()
         syncVisibleConsumers()
         closeCapture?()
+    }
+
+    func openQuickCapture() {
+        guard acceptsUserInteraction, captureControls == nil, !heldDrag,
+              !NotchQuickCaptureService.shared.isSelecting else { return }
+        open(pinned: true, quickCapture: true)
+    }
+
+    func signalQuickCapture(success: Bool) {
+        guard acceptsSystemFeedback else { return }
+        quickCaptureFeedbackWork?.cancel()
+        quickCaptureFeedback = (Date(), success)
+        refreshPresentation()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.quickCaptureFeedback = nil
+            self.quickCaptureFeedbackWork = nil
+            self.refreshPresentation()
+        }
+        quickCaptureFeedbackWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.85, execute: work)
+    }
+
+    /// SketchyBar already owns the calendar read and one-shot start timer.
+    /// Never revive a queued signal on unlock, quiet restore or fullscreen exit.
+    func signalMeetingStarted(at date: Date) {
+        guard acceptsSystemFeedback, !displayIsFullscreen, captureControls == nil,
+              (0..<2).contains(Date().timeIntervalSince(date)) else { return }
+        neonMeetingAt = date
     }
 
     func toggle() { expanded ? collapse() : open() }
@@ -2054,6 +2129,7 @@ final class NotchService: ObservableObject {
     /// once nothing lies behind.
     private func stepBack() {
         guard captureControls == nil, !heldDrag else { return }
+        if showingQuickCapture { NotchQuickCaptureService.shared.cancel(); return }
         if showingAppPanel || selectedMetric != nil {
             if detailHasPage { goBack() } else { collapse() }
         } else if let close = pageLayers[selected] {
@@ -2067,7 +2143,8 @@ final class NotchService: ObservableObject {
     /// A top-level page returns to Home; Home itself stays put.
     private func swipeBack() {
         guard expanded, captureControls == nil, !heldDrag, !showingSections else { return }
-        if showingCommandBar {
+        if showingQuickCapture { collapse() }
+        else if showingCommandBar {
             open(selected)
         } else if showingAppPanel || selectedMetric != nil {
             goBack()
@@ -2163,6 +2240,7 @@ final class NotchService: ObservableObject {
         // the island's keys while the controls are up.
         let closesCommandBar = showingCommandBar
         showingCommandBar = false
+        showingQuickCapture = false
         expanded = false
         showingSections = false
         peeking = false
@@ -2360,7 +2438,9 @@ final class NotchService: ObservableObject {
     }
 
     func beginFileDrop(_ pasteboard: NSPasteboard) {
-        guard canAcceptFileDrop else { return }
+        guard canAcceptFileDrop else { endFileDrop(); return }
+        fileDropActive = true
+        fileDropPoint = nil
         routingFileDrag = NotchAeroSpaceService.shared.state.current != nil && pasteboard.types?.contains(.fileURL) == true
         choosingFileDropDestination = NotchFileToolsService.shared.mediaDropContent(for: pasteboard) != nil
         targetsMediaDrop = false
@@ -2369,6 +2449,11 @@ final class NotchService: ObservableObject {
 
     @discardableResult
     func updateFileDrop(at point: CGPoint) -> Bool {
+        guard fileDropActive, canAcceptFileDrop, point.x.isFinite, point.y.isFinite else {
+            endFileDrop()
+            return false
+        }
+        if fileDropPoint != point { fileDropPoint = point }
         let workspace = routingFileDrag ? NotchAeroSpaceState.workspaces.first { workspaceDropFrames[$0]?.contains(point) == true } : nil
         if workspace != dragTargetWorkspace {
             workspaceDragWork?.cancel()
@@ -2390,7 +2475,14 @@ final class NotchService: ObservableObject {
         return !targeted || NotchFileToolsService.shared.canAcceptMediaDrop
     }
 
+    func fileDropEmphasis(in frame: CGRect, available: Bool = true, reach: CGFloat = 90) -> Double {
+        NotchDropMagnet.strength(at: fileDropPoint, in: frame, reach: reach,
+                                available: available && fileDropActive && canAcceptFileDrop)
+    }
+
     func endFileDrop() {
+        fileDropActive = false
+        fileDropPoint = nil
         workspaceDragWork?.cancel(); workspaceDragWork = nil
         dragTargetWorkspace = nil
         routingFileDrag = false
@@ -2580,7 +2672,7 @@ final class NotchService: ObservableObject {
         let text = L10n.shared.s
         return show(NotchNotice(event: .microphone, title: "",
                                 detail: muted ? text.micMutedHUD : text.micUnmutedHUD,
-                                symbol: muted ? "mic.slash.fill" : "mic.fill", mascot: muted ? .hush : .perk))
+                                symbol: muted ? "mic.slash.fill" : "mic.fill"))
     }
 
     /// A partial result is confirmed by the floating panel alone, so the
@@ -2664,7 +2756,7 @@ final class NotchService: ObservableObject {
 
     func isCaptureVisible(id: UUID) -> Bool {
         acceptsSystemFeedback && expanded && selected == .captures
-            && !showingAppPanel && !showingSections && !showingCommandBar && selectedMetric == nil
+            && !showingAppPanel && !showingSections && !showingCommandBar && !showingQuickCapture && selectedMetric == nil
             && captureControls == nil && captureID == id && captureContent != nil
     }
 
@@ -2761,7 +2853,7 @@ final class NotchService: ObservableObject {
 
     func refreshPresentation(animated: Bool = true, transitionContent: NotchContentTransition = .none) {
         if quietMode {
-            windowHost?.hide(animated: false)
+            windowHost?.hide(animated: animated)
             closeMirrors()
             return
         }
@@ -2852,7 +2944,7 @@ final class NotchService: ObservableObject {
         presented.surfaceShift = surfaceShift
         windowHost?.present(size: size, geometry: presented, animated: animated,
                             transitionContent: contentTransition,
-                            quickAccess: expanded && captureControls == nil && !showingCommandBar && !access.buttons.isEmpty
+                            quickAccess: expanded && captureControls == nil && !showingCommandBar && !showingQuickCapture && !access.buttons.isEmpty
                                 ? access : nil,
                             revealFromHidden: !hiddenInFullscreen && captureControls == nil
                                 && UserDefaults.standard.bool(forKey: DefaultsKey.notchHideUntilHover)
@@ -3003,25 +3095,6 @@ final class NotchService: ObservableObject {
         invalidateMenuSpace()
         syncVisibleConsumers()
         refreshPresentation(animated: false)
-    }
-
-    /// A new song's title shows in the capsule for a few seconds, then the
-    /// capsule keeps only the cover and the bars.
-    private func nameCapsuleSong() {
-        // The song held for the next one's notice is the one that ended; the
-        // next song is named once the notice lets it go.
-        guard heldMusic == nil else { return }
-        musicTitleWork?.cancel()
-        capsuleMusicTitleShown = true
-        refreshCapsuleMusic()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.musicTitleWork = nil
-            self.capsuleMusicTitleShown = false
-            self.refreshCapsuleMusic()
-        }
-        musicTitleWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.musicTitleDuration, execute: work)
     }
 
     /// A capsule is as wide as what it shows of the song, here or on another display.
@@ -3464,6 +3537,28 @@ final class NotchService: ObservableObject {
         readMenuSpace()
     }
 
+    private var currentDisplayFrames: [CGDirectDisplayID: CGRect] {
+        Dictionary(uniqueKeysWithValues: NSScreen.screens.compactMap { screen in
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+            return (number.uint32Value, screen.frame)
+        })
+    }
+
+    private func setDisplayArrival(_ arrival: NotchDisplayArrival?) {
+        let previousSize = surfaceSize
+        displayArrivalWork?.cancel(); displayArrivalWork = nil
+        displayArrival = arrival
+        if let arrival {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.displayArrival == arrival else { return }
+                self.setDisplayArrival(nil)
+            }
+            displayArrivalWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + NotchDisplayArrivalSignal.duration, execute: work)
+        }
+        if surfaceSize != previousSize { refreshPresentation() }
+    }
+
     private func screenParametersDidChange() {
         guard running, !suspended else { return }
         screenRefreshWork?.cancel()
@@ -3471,8 +3566,13 @@ final class NotchService: ObservableObject {
             guard let self else { return }
             self.screenRefreshWork = nil
             guard self.running, !self.suspended else { return }
+            let sourceID = self.displayID
+            let direction = self.displayConnections.update(self.currentDisplayFrames, sourceID: sourceID)
             self.invalidateMenuSpace()
             self.syncWithPreferences()
+            if let direction, self.displayID == sourceID, self.acceptsSystemFeedback {
+                self.setDisplayArrival(NotchDisplayArrival(began: Date(), direction: direction))
+            }
         }
         screenRefreshWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
@@ -3648,7 +3748,10 @@ final class NotchService: ObservableObject {
             on: displayID, separateSpaces: NSScreen.screensHaveSeparateSpaces) == true
         // Keep the surface visible when preferred, but leave fullscreen content
         // free of the neon's glow. Updates arrive from Space/app events.
-        if displayIsFullscreen != fullscreen { displayIsFullscreen = fullscreen }
+        if displayIsFullscreen != fullscreen {
+            displayIsFullscreen = fullscreen
+            if let date = neonChargeAt { setChargingSignal(at: date) }
+        }
         let hidden = UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen) && fullscreen
         guard hidden != hiddenInFullscreen else { return }
         hiddenInFullscreen = hidden
@@ -3675,14 +3778,14 @@ final class NotchService: ObservableObject {
         // The neon follows full screen even when the surface stays visible.
         guard running, !suspended else { return }
         let wasHidden = hiddenInFullscreen
-        let hadChargingWings = fullscreenChargingWingWidth > 0
+        let hadChargingWings = feedbackWingWidth > 0
         updateScreen()
         // Each copy follows full screen on its own display.
         updateFullscreenDisplays()
         syncMirrors()
         // An unchanged state must not cut short a transition on screen, such
         // as the island closing after a click in another app.
-        guard hiddenInFullscreen != wasHidden || (fullscreenChargingWingWidth > 0) != hadChargingWings else { return }
+        guard hiddenInFullscreen != wasHidden || (feedbackWingWidth > 0) != hadChargingWings else { return }
         syncVisibleConsumers()
         refreshPresentation(animated: false)
     }
@@ -3751,6 +3854,11 @@ final class NotchService: ObservableObject {
             self?.nightPalette = min(1, max(0, value))
         }
         observers.append((distributed, paletteObserver))
+        let meetingObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.meetingStarted"), object: nil, queue: .main) { [weak self] note in
+            guard let timestamp = note.userInfo?["at"] as? Double, timestamp.isFinite else { return }
+            self?.signalMeetingStarted(at: Date(timeIntervalSince1970: timestamp))
+        }
+        observers.append((distributed, meetingObserver))
         let terminalObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.terminal"), object: nil, queue: .main) { [weak self] note in
             guard let self, let status = note.userInfo?["status"] as? Int,
                   let seconds = note.userInfo?["seconds"] as? Int, seconds >= 10,
@@ -3825,6 +3933,7 @@ final class NotchService: ObservableObject {
         let timerCouldRun = session.canRunTimer
         let wasLocked = session.locked
         change(&session)
+        let handsOffUnlock = wasLocked && !session.locked && NotchLockScreenService.shared.isShowing
         // An unlock is someone at the Mac, even when the display's wake is
         // announced after it.
         if session.locked != wasLocked, session.locked ? session.hearsLockChange : session.onConsole,
@@ -3838,7 +3947,7 @@ final class NotchService: ObservableObject {
         if couldPresent != session.canPresent {
             if session.canPresent {
                 syncWithPreferences()
-                playNeonWake()
+                if !handsOffUnlock { playNeonWake() }
             } else {
                 let cancel = captureControlsCancel
                 endCaptureControls()
@@ -3865,19 +3974,47 @@ final class NotchService: ObservableObject {
 
     func toggleQuietMode() {
         quietMode.toggle()
+        neonMeetingAt = nil
+        clearUnlockHandoff()
+        setFullChargeSignal(at: nil)
         collapse()
-        refreshPresentation(animated: false)
-        publishQuietMode()
+        refreshPresentation(animated: true)
+        publishQuietMode(initial: false)
+        NotchLockScreenService.shared.sync(session)
     }
 
-    private func publishQuietMode() {
+    private func publishQuietMode(initial: Bool = true) {
         let command = Process()
         command.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/sketchybar")
-        command.arguments = ["--trigger", "island_quiet", "STATE=\(quietMode ? 1 : 0)"]
+        command.arguments = ["--trigger", "island_quiet", "STATE=\(quietMode ? 1 : 0)",
+                             "INITIAL=\(initial ? 1 : 0)",
+                             "REDUCE_MOTION=\(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 0)"]
         command.standardInput = FileHandle.nullDevice
         command.standardOutput = FileHandle.nullDevice
         command.standardError = FileHandle.nullDevice
         try? command.run()
+    }
+
+    /// Called after the returning island is built, so both halves share their
+    /// first visible frame even when rebuilding takes longer than the effect.
+    func playUnlockHandoff(at began: Date) {
+        guard session.canPresent, acceptsSystemFeedback else { return }
+        clearUnlockHandoff()
+        neonUnlockAt = began
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.neonUnlockAt == began else { return }
+            self.clearUnlockHandoff()
+            self.refreshPresentation(animated: true)
+        }
+        unlockHandoffWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + NotchUnlockHandoffSignal.duration, execute: work)
+        refreshPresentation(animated: true)
+    }
+
+    private func clearUnlockHandoff() {
+        unlockHandoffWork?.cancel()
+        unlockHandoffWork = nil
+        neonUnlockAt = nil
     }
 
     /// One sequence per return to an unlocked, awake session.
@@ -3922,7 +4059,7 @@ final class NotchService: ObservableObject {
             if event.type == .keyDown, event.window === self.panel, event.keyCode == 53,
                (self.panel?.firstResponder as? NSTextView)?.hasMarkedText() == true { return event }
             // The Command Bar inside the island reads its own keys, Escape included.
-            if event.type == .keyDown, event.window === self.panel, self.showingCommandBar { return event }
+            if event.type == .keyDown, event.window === self.panel, (self.showingCommandBar || self.showingQuickCapture) { return event }
             if event.type == .keyDown, event.window === self.panel, self.captureControls == nil {
                 let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
                 if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "k" {
@@ -4013,10 +4150,16 @@ final class NotchService: ObservableObject {
         }
     }
 
-    /// The gallery steps its rows from the wheel; every other scroll over the
-    /// island is a gesture candidate.
+    /// The gallery steps rows; quick capture keeps native scrolling. Other
+    /// surfaces can interpret navigation gestures.
     private func handleScroll(_ event: NSEvent) -> Bool {
-        handleBackScroll(event) || handleRewindScroll(event) || handleSectionScroll(event) || handleGesture(event)
+        // The capture editor and screenshot strip keep their native scrolling.
+        if showingQuickCapture {
+            backGesture = NotchGestureSupport()
+            gesture = NotchGestureSupport()
+            return false
+        }
+        return handleBackScroll(event) || handleRewindScroll(event) || handleSectionScroll(event) || handleGesture(event)
     }
 
     /// A rightward two-finger swipe steps back one level. This runs
@@ -4126,7 +4269,7 @@ final class NotchService: ObservableObject {
         let interaction = NotchGestureSupport.nativeInteraction(at: panel.contentView?.hitTest(event.locationInWindow))
         let musicSurface = modules.contains(.music)
             && (compactMusicIsVisible || (expanded && selected == .music && !showingAppPanel && !showingSections
-                                          && !showingCommandBar))
+                                          && !showingCommandBar && !showingQuickCapture))
         let vertical = NotchGestureSupport.allowsVertical(expanded: expanded, inHeader: inHeader,
                                                           musicSurface: musicSurface,
                                                           control: interaction.control, scroll: interaction.scroll)
@@ -4226,13 +4369,6 @@ final class NotchService: ObservableObject {
             music.$playback.map { $0?.isPlaying == true }
                 .removeDuplicates().dropFirst().filter { $0 }.receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in self?.mascotHearsMusic() }
-                .store(in: &subscriptions)
-            // A capsule names each new song for a moment: the song playing,
-            // or the next one once the notice releases the song it held.
-            music.$playback.map { $0?.track.title }.removeDuplicates().map { _ in () }
-                .merge(with: $heldMusic.map { $0?.playback.track.title }.removeDuplicates().map { _ in () })
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] in self?.nameCapsuleSong() }
                 .store(in: &subscriptions)
         }
         if NotchSupport.routes(.track) {
@@ -4532,6 +4668,10 @@ final class NotchService: ObservableObject {
     private func stopPower() {
         chargingWork?.cancel(); chargingWork = nil
         neonChargeAt = nil
+        fullChargeWork?.cancel(); fullChargeWork = nil
+        neonFullChargeAt = nil
+        lowBatteryWork?.cancel(); lowBatteryWork = nil
+        neonLowBatteryAt = nil
         if let source = powerSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
             CFRunLoopSourceInvalidate(source)
@@ -4541,7 +4681,6 @@ final class NotchService: ObservableObject {
     }
 
     private func setChargingSignal(at date: Date?) {
-        guard neonChargeAt != date else { return }
         let previousSize = surfaceSize
         chargingWork?.cancel(); chargingWork = nil
         neonChargeAt = date
@@ -4552,9 +4691,52 @@ final class NotchService: ObservableObject {
             }
             chargingWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + max(0,
-                NotchChargingSignal.duration - Date().timeIntervalSince(date)), execute: work)
+                NotchChargingSignal.lifetime(fullscreen: displayIsFullscreen) - Date().timeIntervalSince(date)), execute: work)
         }
         if surfaceSize != previousSize { refreshPresentation() }
+    }
+
+    private func setLowBatterySignal(at date: Date?) {
+        guard neonLowBatteryAt != date else { return }
+        let previousSize = surfaceSize
+        lowBatteryWork?.cancel(); lowBatteryWork = nil
+        neonLowBatteryAt = date
+        if let date {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.neonLowBatteryAt == date else { return }
+                self.setLowBatterySignal(at: nil)
+            }
+            lowBatteryWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + NotchBatterySignal.duration, execute: work)
+        }
+        if surfaceSize != previousSize { refreshPresentation() }
+    }
+
+    private func setFullChargeSignal(at date: Date?) {
+        guard neonFullChargeAt != date else { return }
+        let previousSize = surfaceSize
+        fullChargeWork?.cancel(); fullChargeWork = nil
+        neonFullChargeAt = date
+        if let date {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.neonFullChargeAt == date else { return }
+                self.setFullChargeSignal(at: nil)
+            }
+            fullChargeWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + NotchFullChargeSignal.duration, execute: work)
+        }
+        if surfaceSize != previousSize { refreshPresentation() }
+    }
+
+    private func publishCriticalBattery() {
+        let command = Process()
+        command.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/sketchybar")
+        command.arguments = ["--trigger", "island_battery_critical", "PERCENT=\(power.chargePercent ?? 10)",
+            "REDUCE_MOTION=\(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 0)"]
+        command.standardInput = FileHandle.nullDevice
+        command.standardOutput = FileHandle.nullDevice
+        command.standardError = FileHandle.nullDevice
+        try? command.run()
     }
 
     private func powerChanged() {
@@ -4563,27 +4745,36 @@ final class NotchService: ObservableObject {
         let next = sampler.sample()
         power = next
         let pluggedIn = !before.externalConnected && next.externalConnected
+        if !next.externalConnected || next.chargePercent != 100 || !acceptsSystemFeedback || !NotchSupport.routes(.battery) {
+            setFullChargeSignal(at: nil)
+        }
+        let fullyCharged = NotchFullChargeSignal.crossed(before: before.chargePercent, next: next.chargePercent,
+                                                        wasExternal: before.externalConnected, external: next.externalConnected)
+        if fullyCharged, acceptsSystemFeedback, NotchSupport.routes(.battery) {
+            setChargingSignal(at: nil)
+            setFullChargeSignal(at: Date())
+        }
         if !next.externalConnected { setChargingSignal(at: nil) }
         if pluggedIn, acceptsSystemFeedback, NotchSupport.routes(.battery) {
             setChargingSignal(at: Date())
         }
-        let low = (next.chargePercent ?? 100) <= 20 && (before.chargePercent ?? 0) > 20
-        // The green edge and bolt acknowledge the cable without replacing
-        // the agent clocks or the music strip with a white charging banner.
-        if pluggedIn, !low { return }
-        guard before.externalConnected != next.externalConnected || low
-                || (before.isCharging && !next.isCharging && next.chargePercent == 100) else { return }
+        if next.externalConnected || (next.chargePercent ?? 0) > NotchBatterySignal.criticalLevel {
+            setLowBatterySignal(at: nil)
+        }
+        if NotchBatterySignal.crossedCritical(before: before.chargePercent, next: next.chargePercent,
+                                              externalConnected: next.externalConnected),
+           acceptsSystemFeedback, NotchSupport.routes(.battery) {
+            setLowBatterySignal(at: Date())
+            publishCriticalBattery()
+        }
+        // SketchyBar keeps the persistent orange/red warning. At ten percent
+        // both surfaces pulse together once, without interrupting live content.
+        if pluggedIn { return }
+        guard before.externalConnected != next.externalConnected else { return }
         let text = FeatureStrings.notch(L10n.shared.language)
-        let title = low ? text.lowBattery : next.externalConnected
-            ? (next.isCharging ? text.charging : next.chargePercent == 100
-                ? text.charged : L10n.shared.s.powerPluggedIn) : text.onBattery
-        let charged = next.externalConnected && before.isCharging && !next.isCharging && next.chargePercent == 100
-        let reaction = NotchMascotSupport.powerReaction(pluggedIn: pluggedIn, charged: charged, low: low)
-        show(NotchNotice(event: .battery, title: title,
+        show(NotchNotice(event: .battery, title: text.onBattery,
                          detail: next.chargePercent.map { "\($0)%" } ?? "",
-                         symbol: next.externalConnected ? "battery.100percent.bolt" : "battery.25percent",
-                         mascot: reaction))
-        if let reaction { reactMascot(reaction) }
+                         symbol: "battery.25percent"))
     }
 
     private func syncVisibleConsumers() {
@@ -4597,17 +4788,17 @@ final class NotchService: ObservableObject {
             releaseMonitor()
             return
         }
-        if !NotchCameraSupport.canPresent(expanded: expanded && !showingSections && !showingCommandBar, selected: selected,
+        if !NotchCameraSupport.canPresent(expanded: expanded && !showingSections && !showingCommandBar && !showingQuickCapture, selected: selected,
             appPanel: showingAppPanel, captureControls: captureControls != nil) {
             CameraPreviewService.shared.hideEmbedded()
         }
         let musicWanted = modules.contains(.music) && ((expanded && (selected == .music || (selected == .controls && NotchSupport.controls().contains(.music)))
-            && !showingAppPanel && !showingSections && !showingCommandBar)
+            && !showingAppPanel && !showingSections && !showingCommandBar && !showingQuickCapture)
             || ((!hiddenUntilHover || NotchSupport.hiddenShowsActivity())
                 && (NotchSupport.watchesMusicActivity() || NotchSupport.routes(.track))))
         if musicWanted { NotchMusicService.shared.start() } else { NotchMusicService.shared.stop() }
         let needs = expanded && selected == .system && selectedMetric == nil && modules.contains(.system) && !showingAppPanel
-            && !showingSections && !showingCommandBar
+            && !showingSections && !showingCommandBar && !showingQuickCapture
         var detailNeeds = expanded && !showingSections ? selectedMetric?.monitorNeeds ?? .none : .none
         if needs, AppFeature.monitorDisk.isAvailable { detailNeeds.disk = true }
         if needs, AppFeature.fanControl.isAvailable { detailNeeds.fanSpeed = true }
@@ -4963,6 +5154,7 @@ extension NotchService {
         if !expanded { removeHoverExitMonitors() }
         mutatePresentation(transitionContent: expanded ? .replace : .reveal) {
             showingCommandBar = true
+            showingQuickCapture = false
             showingAppPanel = false
             showingSections = false
             selectedMetric = nil

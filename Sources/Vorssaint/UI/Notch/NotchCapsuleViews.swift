@@ -72,6 +72,7 @@ struct NotchCapsuleNoticeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var tint: Color {
+        if let cue = NotchDeviceFeedback(notice) { return cue.tint }
         switch notice.event {
         // A warning reads as one in any agent's color; other AI notices wear it.
         case .agents: return notice.symbol.hasPrefix("exclamationmark") ? .orange : notice.agent?.tint ?? .white
@@ -84,12 +85,18 @@ struct NotchCapsuleNoticeView: View {
         NotchCapsuleRow(size: size, geometry: geometry) {
             if let content = notice.notification {
                 banner(content)
+            } else if notice.event == .track {
+                HStack(spacing: CapsuleLayout.groupSpacing) {
+                    NotchCapsuleTrackArtwork(side: geometry.compactMusicArtworkSide)
+                    NotchTrackEqualizer(height: geometry.compactMusicBarHeight)
+                }
             } else if let level = notice.level {
                 levelRow(level)
             } else {
                 messageRow
             }
         }
+        .modifier(NotchDeviceNoticeEffect(notice: notice))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(notice.accessibilityText)
     }
@@ -128,9 +135,11 @@ struct NotchCapsuleNoticeView: View {
             mark
             // A timer's notice keeps the orange its strip wears.
             Text(notice.title).capsuleTitle().layoutPriority(1)
-                .foregroundStyle(notice.event == .timer ? Color.orange : .white)
+                .foregroundStyle(NotchDeviceFeedback(notice)?.tint ?? (notice.event == .timer ? Color.orange : .white))
             if !notice.detail.isEmpty {
-                Text(notice.detail).capsuleDetail()
+                Text(notice.detail)
+                    .font(Font(CapsuleLayout.detailFont as CTFont)).lineLimit(1)
+                    .foregroundStyle(NotchDeviceFeedback(notice)?.tint.opacity(0.8) ?? .white.opacity(0.62))
                     .truncationMode(notice.event == .accessory ? .middle : .tail)
                     .padding(.leading, CapsuleLayout.groupSpacing - CapsuleLayout.spacing)
             }
@@ -149,9 +158,6 @@ struct NotchCapsuleNoticeView: View {
                 .frame(width: CapsuleLayout.symbolWidth, height: side)
         } else if notice.event == .agents, let agent = notice.agent, notice.symbol == agent.symbol {
             NotchAgentMark(provider: agent, size: CapsuleLayout.symbolSize).frame(width: CapsuleLayout.symbolWidth)
-        } else if notice.event == .track {
-            NotchCapsuleTrackArtwork(side: min(CapsuleLayout.symbolWidth, CapsuleLayout.artworkSide(geometry)))
-                .frame(width: CapsuleLayout.symbolWidth)
         } else {
             NotchCapsuleSymbol(name: notice.symbol, tint: tint)
         }
@@ -277,10 +283,9 @@ struct NotchCapsuleMusicStrip: View {
 
     var body: some View {
         let side = CapsuleLayout.artworkSide(geometry)
-        // A song is named as it starts and while the pointer rests on its
-        // cover, and a strip on its way out leaves as it was. Otherwise the
-        // cover and bars say enough.
-        let named = service.capsuleMusicTitleShown || (live ? service.musicStripNamesSong : snapshot?.namesSong == true)
+        // A deliberate hover names the song; an automatic track change keeps
+        // the cover alone. A strip on its way out leaves as it was.
+        let named = live ? service.musicStripNamesSong : snapshot?.namesSong == true
         NotchCapsuleRow(size: size ?? CapsuleLayout.musicSurface(title: named ? title : nil, geometry: geometry),
                         geometry: geometry, leading: 0, trailing: 0) {
             HStack(spacing: 0) {

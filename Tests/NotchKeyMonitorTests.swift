@@ -79,6 +79,7 @@ enum NotchKeyMonitorTests {
         var showingAppPanel = false
         var showingSections = false
         var showingCommandBar = false
+        var showingQuickCapture = false
         var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1470, height: 956),
                                      safeAreaTop: 32, cameraWidth: 180)
         var fullWidthRow = false
@@ -157,6 +158,13 @@ enum NotchKeyMonitorTests {
         suite.expect(NSEvent.handler?(escape) != nil && NSEvent.handler?(commandK) != nil && actions.isEmpty,
                      "the island hands Escape and its shortcuts to the Command Bar open inside it")
         service.showingCommandBar = false
+        service.showingQuickCapture = true
+        actions = []
+        let enter = NSEvent(window: service.panel, keyCode: 36, modifierFlags: [], charactersIgnoringModifiers: "\r")
+        suite.expect(NSEvent.handler?(escape) != nil && NSEvent.handler?(enter) != nil
+                     && NSEvent.handler?(commandK) != nil && actions.isEmpty,
+                     "capture owns typing, Enter and Escape without invoking hidden page shortcuts")
+        service.showingQuickCapture = false
         actions = []
         suite.expect(NSEvent.handler?(escape) == nil && actions == ["stepBack"],
                      "without the bar, Escape steps back through the island again")

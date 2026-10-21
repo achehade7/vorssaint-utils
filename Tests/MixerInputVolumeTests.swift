@@ -840,6 +840,104 @@ enum MixerInputVolumeContract {
         check(
             HAL.levels[HAL.key(10, 1)] == 0.8 && HAL.levels[HAL.key(10, 2)] == 0.4,
             "a device with channel levels only keeps their balance through a gain mute")
+        // Decorative microphone feedback follows only completed, announced
+        // requests. A reconnect, restore or partial sweep must not look like
+        // a fresh successful mute/unmute.
+        HAL.reset()
+        HAL.mute[10] = 0
+        var confirmed: [Bool] = []
+        var confirmation = MicMuteService.shared.confirmedChanges.sink { confirmed.append($0) }
+        check(confirmed.isEmpty, "subscribing to microphone confirmations does not replay initial state")
+        MicMuteService.shared.setMuted(true)
+        check(confirmed.isEmpty, "requesting mute does not confirm before the hardware sweep")
+        MicMuteService.shared.halQueue.run()
+        check(HAL.mute[10] == 1 && confirmed.isEmpty,
+              "the HAL write alone does not emit success before its result is published")
+        DispatchQueue.drain()
+        check(confirmed == [true] && MicMuteService.shared.isMuted,
+              "one successful user mute publishes one true confirmation")
+        HAL.devices = [10, 20]
+        HAL.mute[20] = 0
+        MicMuteService.shared.reapplyIfNeeded()
+        DispatchQueue.drain()
+        check(HAL.mute[20] == 1 && confirmed == [true],
+              "a new microphone is silently muted without replaying the user feedback")
+        MicMuteService.shared.syncWithPreferences()
+        DispatchQueue.drain()
+        check(confirmed == [true], "preference refresh does not announce an existing mute again")
+        MicMuteService.shared.setMuted(false)
+        DispatchQueue.drain()
+        check(confirmed == [true, false] && HAL.mute[10] == 0 && HAL.mute[20] == 0,
+              "successful complete unmute publishes one false confirmation")
+        confirmation.cancel()
+
+        HAL.reset()
+        HAL.devices = [10, 20]
+        HAL.mute[10] = 0
+        HAL.mute[20] = 0
+        HAL.running = [20]
+        HAL.writeFails.insert(HAL.key(20, 0, kAudioDevicePropertyMute))
+        confirmed = []
+        confirmation = MicMuteService.shared.confirmedChanges.sink { confirmed.append($0) }
+        MicMuteService.shared.setMuted(true)
+        DispatchQueue.drain()
+        check(HAL.mute[10] == 1 && HAL.mute[20] == 0 && confirmed.isEmpty,
+              "partial mute cannot emit a misleading successful mute pulse")
+        HAL.writeFails = []
+        MicMuteService.shared.setMuted(true)
+        DispatchQueue.drain()
+        check(HAL.mute[20] == 1 && confirmed == [true],
+              "a complete retry announces mute once the remaining live microphone is silenced")
+        HAL.writeFails.insert(HAL.key(20, 0, kAudioDevicePropertyMute))
+        MicMuteService.shared.setMuted(false)
+        DispatchQueue.drain()
+        check(HAL.mute[10] == 0 && HAL.mute[20] == 1 && confirmed == [true],
+              "partial unmute cannot emit a misleading successful unmute pulse")
+        HAL.writeFails = []
+        MicMuteService.shared.reapplyIfNeeded()
+        DispatchQueue.drain()
+        check(HAL.mute[20] == 0 && confirmed == [true],
+              "silently releasing an outstanding microphone claim does not announce a user gesture")
+        confirmation.cancel()
+
+        HAL.reset()
+        HAL.mute[10] = 0
+        HAL.writeFails.insert(HAL.key(10, 0, kAudioDevicePropertyMute))
+        HAL.running = [10]
+        confirmed = []
+        confirmation = MicMuteService.shared.confirmedChanges.sink { confirmed.append($0) }
+        MicMuteService.shared.setMuted(true)
+        DispatchQueue.drain()
+        check(!MicMuteService.shared.isMuted && confirmed.isEmpty,
+              "a wholly failed mute emits no success confirmation")
+        confirmation.cancel()
+
+        HAL.reset()
+        HAL.mute[10] = 0
+        confirmed = []
+        confirmation = MicMuteService.shared.confirmedChanges.sink { confirmed.append($0) }
+        MicMuteService.shared.setMuted(true)
+        MicMuteService.shared.setMuted(false)
+        DispatchQueue.drain()
+        check(HAL.mute[10] == 0 && confirmed == [false],
+              "a superseded mute result cannot flash before the latest unmute confirmation")
+        confirmation.cancel()
+
+        HAL.reset()
+        HAL.mute[10] = 0
+        UserDefaults.standard.set(true, forKey: DefaultsKey.micMuteActive)
+        MicMuteService.shared = MicMuteService()
+        confirmed = []
+        confirmation = MicMuteService.shared.confirmedChanges.sink { confirmed.append($0) }
+        MicMuteService.shared.syncWithPreferences()
+        DispatchQueue.drain()
+        check(HAL.mute[10] == 1 && MicMuteService.shared.isMuted && confirmed.isEmpty,
+              "restoring a persisted mute does not replay a user success pulse at launch")
+        MicMuteService.shared.unmuteForTeardown()
+        check(HAL.mute[10] == 0 && confirmed.isEmpty,
+              "teardown restores microphone access without emitting interactive feedback")
+        confirmation.cancel()
+
         // What a version without saved channel levels leaves behind: the main
         // level and both channels at zero, with only the main level saved.
         HAL.reset()

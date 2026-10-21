@@ -108,9 +108,6 @@ enum NotchHoverTests {
         var musicStripRequest: Bool?
         var musicStripHeldSong: NotchPlaybackContext?
         var musicStripHeldMusic: NotchCompactMusicSnapshot?
-        var musicTitleWork: DispatchWorkItem?
-        var capsuleMusicTitleShown = false
-        static let musicTitleDuration: TimeInterval = 4
         var musicNamingWork: DispatchWorkItem?
         var musicRequestWork: DispatchWorkItem?
         var musicStripFitsInPlace = false
@@ -1162,15 +1159,11 @@ enum NotchHoverTests {
         let fallback = FeatureStrings.radialMenu(L10n.shared.language).mediaNowPlaying
         expect(service.capsuleStripSize(for: .music, companion: nil, geometry: copy) == size(nil, geometry: copy),
                "another display's capsule ignores the pointer's request to name the song")
-        service.capsuleMusicTitleShown = true
-        expect(service.capsuleStripSize(for: .music, companion: nil, geometry: copy) == size(fallback, geometry: copy),
-               "a copy naming a new reading uses its own geometry and live title, never the pointer's held song")
         service.heldMusic = NotchCompactMusicSnapshot(title: "Previous song")
         expect(service.capsuleStripSize(for: .music, companion: nil) == size("Previous song")
-               && service.capsuleStripSize(for: .music, companion: nil, geometry: copy) == size("Previous song", geometry: copy),
-               "a song held for its notice takes precedence on both the island and its copies")
+               && service.capsuleStripSize(for: .music, companion: nil, geometry: copy) == size(nil, geometry: copy),
+               "a held song names the intentionally hovered island while its unattended copies stay compact")
         service.heldMusic = nil
-        service.capsuleMusicTitleShown = false
 
         music.playback = reading("Next", context: NotchPlaybackContext(pid: 42, revision: UUID()))
         service.endMusicStripSong(music.playback)
@@ -1494,29 +1487,25 @@ enum NotchHoverTests {
                && !crowded.musicStripAnswers(.cover) && !crowded.musicStripAnswers(.bars),
                "a capsule without wings leaves its strip to the preview that opens over it")
 
-        // A capsule names a new song for a moment. Only a rest on its cover
-        // keeps it named after that, as at any other time.
+        // Automatic track changes stay artwork-only. Deliberately resting
+        // on the cover still requests the song's name.
         let starting = strip(false, capsule: true)
         starting.hover(true)
-        starting.nameCapsuleSong()
-        expect(starting.capsuleMusicTitleShown && starting.musicTitleWork != nil, "precondition: a new song is named")
         DispatchQueue.main.advance(4.01)
-        expect(!starting.capsuleMusicTitleShown && !starting.musicStripNamed && starting.musicTitleWork == nil,
-               "a pointer elsewhere on the capsule lets the name go after its moment")
+        expect(!starting.musicStripNamesSong && !starting.musicStripNamed,
+               "a pointer elsewhere on the capsule never requests the track name")
         let resting = strip(false, capsule: true)
         resting.hover(true)
-        resting.nameCapsuleSong()
         resting.hoverMusicStrip(.cover, entered: true)
         DispatchQueue.main.advance(4.01)
-        expect(!resting.capsuleMusicTitleShown && resting.musicStripNamesSong,
-               "a pointer resting on the cover keeps the song named when its moment ends")
+        expect(resting.musicStripNamesSong,
+               "a pointer resting on the cover still names the song deliberately")
         leave(resting)
         expect(!resting.musicStripNamed, "leaving takes the name back")
         let unattended = strip(false, capsule: true)
-        unattended.nameCapsuleSong()
         DispatchQueue.main.advance(4.01)
-        expect(!unattended.capsuleMusicTitleShown && !unattended.musicStripNamed,
-               "with no pointer on it, the capsule lets the name go after its moment")
+        expect(!unattended.musicStripNamesSong && !unattended.musicStripNamed,
+               "with no pointer on it, the capsule never reveals the song name")
 
         // The song a skip held goes back to the live one, which a named strip fits.
         let releasing = strip(true)

@@ -14,6 +14,7 @@ struct NotchNoticeView: View {
 
     private var wings: NotchNoticeWings { notice.wings(in: geometry) }
     private var tint: Color {
+        if let cue = NotchDeviceFeedback(notice) { return cue.tint }
         switch notice.event {
         // A warning reads as one in any agent's color; other AI notices wear it.
         case .agents: return notice.symbol.hasPrefix("exclamationmark") ? .orange : notice.agent?.tint ?? .white
@@ -23,7 +24,10 @@ struct NotchNoticeView: View {
         }
     }
     /// The words of a timer's notice share its orange too.
-    private var textTint: Color { notice.event == .timer ? .orange : .white }
+    private var textTint: Color {
+        if let cue = NotchDeviceFeedback(notice) { return cue.tint }
+        return notice.event == .timer ? .orange : .white
+    }
     /// With the companion on, it stands in for the symbol, and reacts unless
     /// its reactions are off.
     private var companionReaction: NotchMascotReaction? {
@@ -54,6 +58,7 @@ struct NotchNoticeView: View {
         // Keyed on the notice's own widths, so a display change does not ease it.
         .animation(reduceMotion ? nil : .spring(duration: NotchMotion.steadyWidth.duration, bounce: 0),
                    value: notice.preferredWings)
+        .modifier(NotchDeviceNoticeEffect(notice: notice, clearsCamera: true))
         .transaction { $0.disablesAnimations = false }
         // Another kind of notice is drawn anew at its place, as the island
         // springs to it, rather than easing out of the last one's layout.
@@ -71,6 +76,9 @@ struct NotchNoticeView: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+        } else if notice.event == .track {
+            NotchTrackArtwork(size: geometry.compactMusicArtworkSide)
+                .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             HStack(spacing: 8) {
                 Group {
@@ -92,8 +100,6 @@ struct NotchNoticeView: View {
                             .animation(nil, value: hidesMascot)
                     } else if notice.event == .agents, let agent = notice.agent, notice.symbol == agent.symbol {
                         NotchAgentMark(provider: agent, size: 13)
-                    } else if notice.event == .track {
-                        NotchTrackArtwork(size: min(18, geometry.stripHeight - 6))
                     } else {
                         Image(systemName: notice.symbol)
                             .font(.system(size: 14, weight: .medium))
@@ -106,7 +112,7 @@ struct NotchNoticeView: View {
                     .foregroundStyle(textTint)
                     .monospacedDigit()
                     .lineLimit(1)
-                    .truncationMode(notice.event == .track ? .tail : .middle)
+                    .truncationMode(.middle)
                     .contentTransition(.numericText())
             }
             .frame(maxWidth: .infinity, alignment: notice.readsFromEnds ? .leading : .trailing)
@@ -123,6 +129,9 @@ struct NotchNoticeView: View {
                 .font(Font(NotchNotificationBannerLayout.messageFont as CTFont))
                 .foregroundStyle(.white.opacity(0.85))
                 .lineLimit(NotchNotificationBannerLayout.messageLines(stripHeight: geometry.stripHeight))
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        } else if notice.event == .track {
+            NotchTrackEqualizer(height: geometry.compactMusicBarHeight)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         } else if let level = notice.level {
             NotchMeter(value: level, height: 5, tint: tint)
@@ -145,6 +154,19 @@ private struct NotchTrackArtwork: View {
     let size: CGFloat
 
     var body: some View { NotchArtwork(image: music.artwork, size: size, source: music.playback?.track) }
+}
+
+/// Shares the cover's notice lifetime, so no music decoration lingers afterward.
+struct NotchTrackEqualizer: View {
+    @ObservedObject private var music = NotchMusicService.shared
+    let height: CGFloat
+
+    var body: some View {
+        NotchEqualizerBars(isPlaying: music.playback?.isPlaying == true,
+                           bars: NotchLayout.compactMusicBarCount,
+                           barWidth: NotchLayout.compactMusicBarWidth, height: height,
+                           tint: NotchNeonPalette.blue)
+    }
 }
 
 /// Level feedback occupies the header while the current page stays usable.

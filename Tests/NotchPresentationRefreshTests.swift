@@ -197,6 +197,7 @@ enum NotchPresentationRefreshContract {
         var showingSections = false
         var showingAppPanel = false
         var showingCommandBar = false
+        var showingQuickCapture = false
         var commandBarClosings = 0
         func commandBarDidClose() { commandBarClosings += 1 }
         func flushMascotReaction() {}
@@ -438,8 +439,11 @@ enum NotchPresentationRefreshContract {
         let quiet = Service()
         quiet.quietMode = true
         quiet.refreshPresentation()
-        suite.expect(quiet.windowHost?.hideAnimations == [false] && quiet.mirrorClosures == 1,
-                     "quiet refresh hides the real presentation path and closes its mirrors")
+        suite.expect(quiet.windowHost?.hideAnimations == [true] && quiet.mirrorClosures == 1,
+                     "quiet refresh contracts the real presentation path and closes its mirrors")
+        quiet.refreshPresentation(animated: false)
+        suite.expect(quiet.windowHost?.hideAnimations == [true, false],
+                     "explicit immediate refresh still hides quiet presentation without motion")
         quiet.quietMode = false
         quiet.refreshPresentation(animated: false)
         suite.expect(quiet.windowHost?.panel.isVisible == true,

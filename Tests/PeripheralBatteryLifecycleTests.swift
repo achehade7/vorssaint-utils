@@ -23,6 +23,7 @@ enum PeripheralBatteryLifecycleTests {
 
     static func run(_ suite: TestSuite) {
         freshness(suite)
+        connectionReadings(suite)
         cachedSources(suite)
         refreshHandoff(suite)
         cancellation(suite)
@@ -66,6 +67,37 @@ enum PeripheralBatteryLifecycleTests {
         _ = freshHigh.consume(sample(35, at: 10), observedAfter: 10)
         suite.expect(freshHigh.consume(sample(19, at: 20), observedAfter: 19).count == 1,
                "sleep preserves a genuinely established high baseline too")
+    }
+
+    private static func connectionReadings(_ suite: TestSuite) {
+        var state = NotchAccessoryBatteryState()
+        let current = sample(64, at: 20)
+        _ = state.consume(current, observedAfter: 10)
+        suite.expect(!state.isFresh(current.devices[0], in: current, observedAfter: 10)
+               && NotchAccessorySupport.connectionBattery(named: "Keyboard", in: current,
+                    observedAfter: 10, now: 30) == 64,
+               "a consumed recent sample can still truthfully accompany a connection")
+        suite.expect(NotchAccessorySupport.connectionBattery(named: "Other", in: current,
+                    observedAfter: 10, now: 30) == nil,
+               "a connection cannot borrow another device's battery")
+        suite.expect(NotchAccessorySupport.connectionBattery(named: "Keyboard", in: current,
+                    observedAfter: 21, now: 30) == nil,
+               "a connection omits pre-activation readings")
+        suite.expect(NotchAccessorySupport.connectionBattery(named: "Keyboard", in: current,
+                    observedAfter: 10, now: 321) == nil,
+               "a connection omits a reading older than the Bluetooth cache window")
+        suite.expect(NotchAccessorySupport.connectionBattery(named: "Keyboard", in: current,
+                    observedAfter: 10, now: 19) == nil,
+               "a future timestamp cannot label a connection")
+        suite.expect(NotchAccessorySupport.connectionBattery(named: "Keyboard", in: sample(101, at: 20),
+                    observedAfter: 10, now: 30) == nil,
+               "a connection omits invalid percentages")
+        suite.expect(NotchAccessorySupport.connectionBattery(named: "Keyboard", in: sample(50, at: .nan),
+                    observedAfter: 10, now: 30) == nil,
+               "a connection omits an invalid observation time")
+        suite.expect(NotchAccessorySupport.connectionBattery(named: "Keyboard",
+                    in: PeripheralBatterySample(devices: [device(50)]), observedAfter: 10, now: 30) == nil,
+               "a connection omits an undated percentage")
     }
 
     private static func cachedSources(_ suite: TestSuite) {

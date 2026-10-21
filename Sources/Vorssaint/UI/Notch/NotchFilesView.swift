@@ -82,6 +82,11 @@ struct NotchFilesView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay {
+            if !choosesDropDestination {
+                NotchDropMagnetOverlay(service: service, cornerRadius: 20)
+            }
+        }
         // The shelf's hint and its actions sit in the island's top row, so the
         // tiles take the whole page; a running archive shows its progress there.
         .notchBand(leading: {
@@ -134,6 +139,9 @@ struct NotchFilesView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 20)
                 .strokeBorder(.white.opacity(selected ? 0.7 : 0.2), lineWidth: selected ? 1.5 : 0.75)
+        }
+        .overlay {
+            NotchDropMagnetOverlay(service: service, available: available, cornerRadius: 20)
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? .isSelected : [])

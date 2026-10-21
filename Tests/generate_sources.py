@@ -900,7 +900,7 @@ def main():
           + declaration(notch, "    func toggleQuietMode()")
           + declaration(notch, "    var acceptsUserInteraction: Bool {")
           + declaration(notch, "    var acceptsSystemFeedback: Bool {")
-          + declaration(notch, "    var fullscreenChargingWingWidth:")
+          + declaration(notch, "    var feedbackWingWidth:")
           + declaration(notch, "    private func updateFullscreenVisibility(").replace("private func", "func", 1)
           + declaration(notch, "    private func fullscreenEnvironmentDidChange()").replace("private func", "func", 1)
           + "}\nfinal class PreciseVolumeRollerService: VolumeState {\n"
@@ -1030,7 +1030,7 @@ def main():
               "    private func holdEndingTrack(", "    func musicStripAnswers(", "    func hoverMusicStrip(",
               "    private func endMusicStripHover(", "    var musicStripShowsControl:",
               "    private var musicStripCanToggle:", "    func activateMusicStrip(", "    private func endMusicStripRequest(",
-              "    var musicStripNamesSong:", "    private func fitNamedMusicStrip(", "    private func nameCapsuleSong(",
+              "    var musicStripNamesSong:", "    private func fitNamedMusicStrip(",
               "    private func endMusicStripSong(", "    private func musicStripHolds(",
               "    func musicStripStandIn("])
           .replace("NotchSupport.routes(notice.event)", "routesNotices")
@@ -1045,7 +1045,7 @@ def main():
         "    private func musicStripHolds(", "    var compactActivity:",
         "    var compactActivityGeometry:", "    private func compactGeometry(", "    var compactActivities:",
         "    var compactCompanion:",
-        "    var fullscreenChargingWingWidth:", "    var surfaceSize:", "    var surfaceShift:", "    func collapse(",
+        "    var feedbackWingWidth:", "    var surfaceSize:", "    var surfaceShift:", "    func collapse(",
         "    private func detachCaptureIfClosingOnCollapse(", "    func endCaptureControls(",
         "    private func syncVisibleConsumers(", "    private func releaseMonitor("])
     for call in ["NotchSupport.controls", "NotchSupport.watchesMusicActivity", "NotchSupport.idleContent",
@@ -1080,6 +1080,7 @@ def main():
     write("NotchScreenRefresh.swift", "import Foundation\n\nextension NotchScreenRefreshContract {\nfinal class Service: State {\n"
           + declaration(notch, "    private func schedulePreferenceSync()").replace("private func", "func", 1)
           + declaration(notch, "    private func screenParametersDidChange()").replace("private func", "func", 1)
+          + declaration(notch, "    private func setDisplayArrival(").replace("private func", "func", 1)
           + declaration(notch, "    private func invalidateMenuSpace(").replace("private func", "func", 1)
           + declaration(notch, "    private func applicationDidActivate()").replace("private func", "func", 1)
           + declaration(notch, "    private func stopMenuSpaceMonitoring()")
@@ -1263,9 +1264,12 @@ def main():
               .replace("NotchLockScreenSupport.playsSounds()", "NotchLockScreenSupport.playsSounds(in: ReviewDefaults.current)")
           # The press handler the initializer installs, run on demand.
           + declaration(notch, "    private init() {").replace("    private init()", "    func installHotkey()", 1)
+          + declaration(notch, "    func openQuickCapture()")
           + declaration(notch, "    func toggleFromShortcut()") + toggle[0]
           + declaration(notch, "    private func syncShortcut()").replace("private func", "func", 1)
               .replace("NotchSupport.holdsShortcut()", "NotchSupport.holdsShortcut(in: ReviewDefaults.current)")
+              .replace("NotchSupport.isEnabled()", "NotchSupport.isEnabled(in: ReviewDefaults.current)")
+              .replace("UserDefaults.standard", "ReviewDefaults.current!")
           + "}\n}\n")
     write("ShelfDropRouting.swift", "import AppKit\n\nextension ShelfDropRoutingContract {\n"
           + declaration(canvas, "struct NotchFileDropActions {")
@@ -1613,7 +1617,7 @@ def main():
           + "final class NotchService {\nstatic var shared = NotchService()\n"
           + "var presentationWindow: NSPanel? = NSPanel()\nvar acceptsSystemFeedback = true\n"
           + "var expanded = true\nvar selected = NotchModule.captures\nvar showingAppPanel = false\n"
-          + "var showingSections = false\nvar showingCommandBar = false\nvar selectedMetric: Int?\nvar captureControls: Int?\n"
+          + "var showingSections = false\nvar showingCommandBar = false\nvar showingQuickCapture = false\nvar selectedMetric: Int?\nvar captureControls: Int?\n"
           + "var captureID: UUID?\nvar captureContent: Bool? = true\n"
           + declaration("Sources/Vorssaint/Services/Notch/NotchService.swift", "    func isCaptureVisible(")
           + "}\nfinal class Preview {\n"

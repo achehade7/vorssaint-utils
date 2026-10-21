@@ -66,6 +66,11 @@ enum NotchMusicVisibilityTests {
         var hiddenInFullscreen = false
         var displayIsFullscreen = false, acceptsSystemFeedback = true
         var neonChargeAt: Date?
+        var neonFullChargeAt: Date?
+        var neonUnlockAt: Date?
+        var quickCaptureFeedback: Bool?
+        var neonLowBatteryAt: Date?
+        var displayArrival: Bool?
         var departingNotice: Bool?, departingMusic: Bool?, lingeringMusic: Bool?
         var running = true
         var suspended = false
@@ -74,7 +79,9 @@ enum NotchMusicVisibilityTests {
         var showingAppPanel = false
         var showingSections = false
         var showingCommandBar = false
+        var showingQuickCapture = false
         var commandBarClosings = 0
+        var quickCaptureSurfaceSize = CGSize(width: 440, height: 150)
         var commandBarSurfaceSize = CGSize(width: 616, height: 132)
         var mascotVisible = false
         func mascotShows(on geometry: NotchGeometry) -> Bool {
@@ -186,6 +193,18 @@ enum NotchMusicVisibilityTests {
         charging.displayIsFullscreen = false
         charging.neonChargeAt = Date()
         suite.expect(charging.surfaceSize == chargingBare, "ordinary desktop idle dimensions remain unchanged")
+
+        charging.neonChargeAt = nil
+        charging.neonLowBatteryAt = Date()
+        suite.expect(charging.surfaceSize.width == chargingBare.width + 80
+                     && charging.surfaceSize.height == chargingBare.height,
+                     "critical battery side wings are visible without lowering the idle island")
+        charging.neonLowBatteryAt = nil
+        charging.displayArrival = true
+        suite.expect(charging.surfaceSize.width == chargingBare.width + 80,
+                     "display connection feedback can clear the physical camera")
+        charging.displayArrival = nil
+        suite.expect(charging.surfaceSize == chargingBare, "finite feedback returns the exact idle footprint")
 
         let devices = Service()
         devices.modules = [.system]

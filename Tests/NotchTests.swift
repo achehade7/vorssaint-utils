@@ -1017,6 +1017,32 @@ enum NotchTests {
         let size = narrow.noticeSize(wingWidth: long.preferredWingWidth)
         suite.expect(size.width <= narrow.screen.width - 24 && size.height == narrow.menuBarHeight,
                "long device names cannot push a notice past a narrow display")
+        let song = NotchNotice(event: .track, title: "Artist", detail: "Song", symbol: "music.note")
+        let longSong = NotchNotice(event: .track, title: String(repeating: "Long artist ", count: 100),
+                                   detail: String(repeating: "Long song ", count: 100), symbol: "music.note")
+        for physical in [false, true] {
+            for height: CGFloat in [16, 24, 32, 40, 64] {
+                let geometry = NotchGeometry(screen: screen, safeAreaTop: physical ? height : 0,
+                                             cameraWidth: physical ? 180 : 0, menuBarHeight: height)
+                let wings = song.wings(in: geometry)
+                suite.expect(wings == longSong.wings(in: geometry)
+                             && wings.trailing - song.inset(wing: wings.trailing) - song.cameraGap >= NotchLayout.compactMusicBarsWidth,
+                             "automatic music notices fit artwork and equalizer, with no text-sized wings")
+                suite.expect(wings.leading - song.inset(wing: wings.leading) - song.cameraGap
+                             >= geometry.compactMusicArtworkSide,
+                             "the new-track artwork fits its leading wing at the existing compact artwork size")
+                var shifted = geometry
+                shifted.surfaceShift = geometry.noticeShift(wings)
+                let frame = shifted.frame(for: geometry.noticeSize(wings: wings))
+                suite.expect(screen.contains(frame)
+                             && abs(frame.minX + wings.leading - (screen.midX - geometry.cameraWidth / 2)) < 0.001,
+                             "the compact music notice preserves the physical camera clearance and screen bounds")
+            }
+        }
+        suite.expect(longSong.accessibilityText == longSong.title + ", " + longSong.detail,
+                     "compact music notices keep their complete track metadata for accessibility")
+        suite.expect(NotchEvent.track.duration == 3 && NotchEvent.track.priority == 0,
+                     "artwork and equalizer feedback share its brief duration and low interruption priority")
         notificationBannerContracts(suite, screen: screen)
     }
 

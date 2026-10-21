@@ -221,6 +221,8 @@ struct GlobalShortcut: Equatable, Hashable {
     static let scratchpadDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_N),
                                                   modifiers: [.control, .option, .command])
     // I for island, on the same free control-option-command layer.
+    static let quickCaptureDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_O),
+                                                     modifiers: [.control, .option, .command])
     static let notchDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_I),
                                              modifiers: [.control, .option, .command])
     // L for library (S already belongs to the sound output switcher), on the

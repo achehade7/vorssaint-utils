@@ -64,6 +64,7 @@ enum NotchDestinationContract {
     enum BrightnessService { static var shared = Brightness() }
     final class LockScreen {
         var syncs: [NotchSessionState] = []
+        var isShowing = false
         var sounds: [Bool] = []
         var onSync: (() -> Void)?
         func sync(_ session: NotchSessionState) { syncs.append(session); onSync?() }
@@ -84,6 +85,9 @@ enum NotchDestinationContract {
             return !(enabled && refuses)
         }
     }
+    enum NotchQuickCaptureService { static let shared = Capture()
+        final class Capture { var isSelecting = false; func cancel() {} }
+    }
     enum ShortcutCapture { static var isCapturing = false }
 
     class State {
@@ -103,6 +107,7 @@ enum NotchDestinationContract {
         var showingAppPanel = false
         var showingSections = false
         var showingCommandBar = false
+        var showingQuickCapture = false
         var commandBarClosings = 0
         func commandBarDidClose() { commandBarClosings += 1 }
         var sectionQuery = ""
@@ -135,6 +140,7 @@ enum NotchDestinationContract {
         func provideHapticFeedback() {}
         func endCaptureControls() {}
         let hotkey = Hotkey()
+        let quickCaptureHotkey = Hotkey()
         var shortcutFailureWrites = 0
         var shortcutRegistrationFailed = false { didSet { shortcutFailureWrites += 1 } }
         var captureControlsExpansions = 0
@@ -170,6 +176,32 @@ enum NotchDestinationContract {
         focus.collapse()
         focus.open(.controls, takeFocus: false)
         suite.expect(!focus.showsKeyboardFocus, "hover opening starts without an automatic focus indicator")
+        let capture = Service()
+        capture.openQuickCapture()
+        suite.expect(capture.expanded && capture.showingQuickCapture && capture.pinned
+                     && capture.panel?.acceptsKeyFocus == true && !capture.showingSections,
+                     "quick capture opens a focused pinned field instead of the remembered Home page")
+        capture.open(.controls)
+        suite.expect(!capture.showingQuickCapture, "opening another page removes the capture field")
+        capture.acceptsUserInteraction = false
+        capture.openQuickCapture()
+        suite.expect(!capture.showingQuickCapture, "capture cannot open while interaction is suspended")
+        capture.acceptsUserInteraction = true
+        capture.captureControls = NSObject()
+        capture.openQuickCapture()
+        suite.expect(!capture.showingQuickCapture, "capture does not replace an active screenshot editor")
+        capture.captureControls = nil
+        NotchQuickCaptureService.shared.isSelecting = true
+        capture.openQuickCapture()
+        suite.expect(!capture.showingQuickCapture, "capture hotkey cannot cover an active region selection")
+        NotchQuickCaptureService.shared.isSelecting = false
+        defaults.set(true, forKey: DefaultsKey.notchQuickCaptureShortcutEnabled)
+        capture.syncShortcut()
+        suite.expect(capture.quickCaptureHotkey.requests.last == true, "capture hotkey registers while island runs")
+        ShortcutCapture.isCapturing = true
+        capture.syncShortcut()
+        suite.expect(capture.quickCaptureHotkey.requests.last == false, "capture hotkey yields to shortcut recording")
+        ShortcutCapture.isCapturing = false
         scratchpadContracts(defaults: defaults, suite: suite)
         reopeningContracts(defaults: defaults, suite: suite)
         countdownContracts(defaults: defaults, suite: suite)
@@ -808,7 +840,11 @@ enum NotchDestinationContract {
         service.updateSession { $0.locked = true }
         suite.expect(order == ["sync after 1 teardowns, 0 returns"] && lockScreen.syncs.last?.showsLockScreen == true,
                      "the lock screen takes over after the island has stopped its own sources")
+        lockScreen.isShowing = true
         service.updateSession { $0.locked = false }
+        suite.expect(service.neonWakes == 0,
+                     "a visible lock island hands off without also starting the unrelated wake pulse")
+        lockScreen.isShowing = false
         // The first sync is the scene leaving: canPresent tells it to stop
         // none of the sources the island is about to take back.
         suite.expect(order == ["sync after 1 teardowns, 0 returns", "sync after 1 teardowns, 0 returns",

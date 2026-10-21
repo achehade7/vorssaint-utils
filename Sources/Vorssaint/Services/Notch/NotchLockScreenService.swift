@@ -32,12 +32,22 @@ final class NotchLockScreenService {
     private var space: NotchOverlaySpace?
     private var playbackSubscription: AnyCancellable?
     private var trackSubscription: AnyCancellable?
+    private var accessorySubscription: AnyCancellable?
+    private var microphoneSubscription: AnyCancellable?
+    private var batteryPercent: Int?
+    private var batteryExternal: Bool?
+    private var fullChargeWork: DispatchWorkItem?
+    private var lowBatteryWork: DispatchWorkItem?
+    private var deviceFeedbackWork: DispatchWorkItem?
+    private var displayArrivalWork: DispatchWorkItem?
+    private var displayConnections = NotchDisplayConnectionTracker()
     private var powerSource: CFRunLoopSource?
     private var chargeArrival = NotchLockScreenChargeArrival()
     private var screenObserver: NSObjectProtocol?
     private var padlockWork: DispatchWorkItem?
     private var shownFrames = Frames()
     private var wasLocked = false
+    private var unlockHandoffGeneration = 0
 
     private init() {}
 
@@ -47,10 +57,11 @@ final class NotchLockScreenService {
         let locking = session.locked && !wasLocked
         wasLocked = session.locked
         if !session.locked { model.playedWhileLocked = false }
-        if session.showsLockScreen, NotchLockScreenSupport.isEnabled() {
+        if session.showsLockScreen, NotchLockScreenSupport.isEnabled(), !NotchService.shared.quietMode {
             // Locked at the Mac, the padlock is seen closing; back from a
             // dark display it is simply closed.
             show(closingPadlock: locking)
+            syncFeedbackSources()
         } else {
             // Unlocked, the island owns the sources again; otherwise nothing
             // shows them until the lock screen returns.
@@ -102,6 +113,8 @@ final class NotchLockScreenService {
     private func show(closingPadlock: Bool) {
         guard space == nil,
               let space = NotchOverlaySpace(absoluteLevel: NotchLockScreenSupport.spaceLevel) else { return }
+        unlockHandoffGeneration += 1
+        model.unlockHandoffAt = nil
         let frames = Self.frames()
         // Settled before any view reads it, so a padlock about to close is
         // drawn open from its first frame.
@@ -171,15 +184,151 @@ final class NotchLockScreenService {
                 }
         }
         startPower()
+        syncFeedbackSources()
+        displayConnections.reset(currentDisplayFrames)
         if closingPadlock { model.lockRippleID = UUID() }
         // A display attached or rearranged while locked moves the clock, the
         // login controls and the camera; the scene and the padlock follow.
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-                guard let self, self.space != nil, Self.frames() != self.shownFrames else { return }
-                self.hide(unlocking: false, stopsSources: false)
-                self.show(closingPadlock: false)
+                guard let self, self.space != nil else { return }
+                let source = NSScreen.screens.first { $0.frame == NotchService.shared.geometry.screen }?.notchDisplayID
+                    ?? CGMainDisplayID()
+                let direction = self.displayConnections.update(self.currentDisplayFrames, sourceID: source)
+                if Self.frames() != self.shownFrames {
+                    self.hide(unlocking: false, stopsSources: false)
+                    self.show(closingPadlock: false)
+                }
+                if let direction { self.showDisplayArrival(direction) }
             }
+    }
+
+    private var currentDisplayFrames: [CGDirectDisplayID: CGRect] {
+        Dictionary(NSScreen.screens.map { ($0.notchDisplayID, $0.frame) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    private var acceptsFeedback: Bool {
+        space != nil && island != nil && !NotchService.shared.quietMode && NotchLockScreenSupport.isEnabled()
+    }
+
+    private func syncFeedbackSources() {
+        if acceptsFeedback, NotchSupport.routes(.accessory) {
+            if accessorySubscription == nil {
+                accessorySubscription = NotchAccessoryService.shared.lockScreenArrivals
+                    .receive(on: DispatchQueue.main).sink { [weak self] arrival in self?.accessoryArrived(arrival) }
+            }
+            NotchAccessoryService.shared.startLockScreenMonitoring()
+        } else {
+            accessorySubscription = nil
+            NotchAccessoryService.shared.stopLockScreenMonitoring()
+        }
+        if acceptsFeedback, NotchSupport.routes(.microphone) {
+            if microphoneSubscription == nil {
+                microphoneSubscription = MicMuteService.shared.confirmedChanges
+                    .receive(on: DispatchQueue.main).sink { [weak self] muted in self?.microphoneChanged(muted) }
+            }
+        } else { microphoneSubscription = nil }
+        if !acceptsFeedback {
+            clearFeedback()
+        } else {
+            if !NotchSupport.routes(.battery) { clearLowBattery(); clearFullCharge() }
+            if let device = model.deviceFeedback, !NotchSupport.routes(device.notice.event) {
+                deviceFeedbackWork?.cancel(); deviceFeedbackWork = nil
+                model.deviceFeedback = nil
+            }
+        }
+        if !acceptsFeedback || !NotchSupport.routes(.battery) {
+            model.chargingArrivalID = nil
+            model.chargingPercent = nil
+        }
+    }
+
+    private func accessoryArrived(_ arrival: NotchAccessoryArrival) {
+        guard acceptsFeedback, NotchSupport.routes(.accessory) else { return }
+        let notice = NotchNotice(event: .accessory, title: arrival.percent.map { "\($0)%" } ?? "", detail: "",
+                                 symbol: arrival.symbol, audioHandoff: true)
+        guard NotchDeviceFeedback(notice) == .headphones else { return }
+        showDeviceFeedback(notice)
+    }
+
+    private func microphoneChanged(_ muted: Bool) {
+        guard acceptsFeedback, NotchSupport.routes(.microphone) else { return }
+        showDeviceFeedback(NotchNotice(event: .microphone, title: "", detail: "",
+                                       symbol: muted ? "mic.slash.fill" : "mic.fill"))
+    }
+
+    private func showDeviceFeedback(_ notice: NotchNotice) {
+        deviceFeedbackWork?.cancel()
+        let feedback = NotchLockScreenModel.DeviceFeedback(notice: notice)
+        model.deviceFeedback = feedback
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.model.deviceFeedback?.id == feedback.id else { return }
+            self.model.deviceFeedback = nil
+            self.deviceFeedbackWork = nil
+        }
+        deviceFeedbackWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + notice.event.duration, execute: work)
+    }
+
+    private func showDisplayArrival(_ direction: NotchDisplayConnectionDirection) {
+        guard acceptsFeedback else { return }
+        displayArrivalWork?.cancel()
+        let arrival = NotchDisplayArrival(began: Date(), direction: direction)
+        model.displayArrival = arrival
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.model.displayArrival == arrival else { return }
+            self.model.displayArrival = nil
+            self.displayArrivalWork = nil
+        }
+        displayArrivalWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + NotchDisplayArrivalSignal.duration, execute: work)
+    }
+
+    private func showLowBattery() {
+        guard acceptsFeedback, NotchSupport.routes(.battery) else { return }
+        clearLowBattery()
+        let began = Date()
+        model.lowBatteryAt = began
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.model.lowBatteryAt == began else { return }
+            self.clearLowBattery()
+        }
+        lowBatteryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + NotchBatterySignal.duration, execute: work)
+    }
+
+    private func clearLowBattery() {
+        lowBatteryWork?.cancel(); lowBatteryWork = nil
+        model.lowBatteryAt = nil
+    }
+
+    private func showFullCharge() {
+        guard acceptsFeedback, NotchSupport.routes(.battery) else { return }
+        clearFullCharge()
+        model.chargingArrivalID = nil
+        model.chargingPercent = nil
+        let began = Date()
+        model.fullChargeAt = began
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.model.fullChargeAt == began else { return }
+            self.clearFullCharge()
+        }
+        fullChargeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + NotchFullChargeSignal.duration, execute: work)
+    }
+
+    private func clearFullCharge() {
+        fullChargeWork?.cancel(); fullChargeWork = nil
+        model.fullChargeAt = nil
+    }
+
+    private func clearFeedback() {
+        clearLowBattery()
+        clearFullCharge()
+        deviceFeedbackWork?.cancel(); deviceFeedbackWork = nil
+        displayArrivalWork?.cancel(); displayArrivalWork = nil
+        model.deviceFeedback = nil
+        model.displayArrival = nil
     }
 
     private func startSources(_ gates: NotchLockScreenModel.Gates) {
@@ -197,6 +346,8 @@ final class NotchLockScreenService {
         // Take a silent baseline after each appearance. Connecting while the
         // display was asleep must not play an arrival when it wakes.
         chargeArrival = NotchLockScreenChargeArrival()
+        batteryPercent = nil
+        batteryExternal = nil
         powerChanged()
         let callback: IOPowerSourceCallbackType = { context in
             guard let context else { return }
@@ -211,19 +362,40 @@ final class NotchLockScreenService {
     private func powerChanged() {
         guard space != nil else { return }
         let reading = SystemInfo.batterySnapshot()
+        let next = reading?.percent
+        let external = reading?.isOnExternalPower == true
+        if !external || next != 100 || !acceptsFeedback || !NotchSupport.routes(.battery) { clearFullCharge() }
+        if NotchFullChargeSignal.crossed(before: batteryPercent, next: next,
+                                         wasExternal: batteryExternal == true, external: external) {
+            showFullCharge()
+        }
+        if reading?.isOnBattery == true,
+           NotchBatterySignal.crossedCritical(before: batteryPercent, next: next,
+                                              externalConnected: reading?.isOnExternalPower == true) {
+            showLowBattery()
+        }
+        batteryPercent = next
+        batteryExternal = external ? true : reading?.isOnBattery == true ? false : nil
+        if reading?.isOnExternalPower == true || (next.map { $0 > NotchBatterySignal.criticalLevel } ?? false) {
+            clearLowBattery()
+        }
         let percent = chargeArrival.update(onBattery: reading?.isOnBattery == true,
                                            onExternalPower: reading?.isOnExternalPower == true,
                                            percent: reading?.percent)
-        if let percent {
+        if let percent, acceptsFeedback, NotchSupport.routes(.battery) {
             model.chargingPercent = percent
             model.chargingArrivalID = UUID()
-        } else if reading?.isOnBattery == true {
+        } else if reading?.isOnBattery == true || !acceptsFeedback || !NotchSupport.routes(.battery) {
             model.chargingArrivalID = nil
             model.chargingPercent = nil
         }
     }
 
     private func hide(unlocking: Bool, stopsSources: Bool) {
+        if !unlocking {
+            unlockHandoffGeneration += 1
+            model.unlockHandoffAt = nil
+        }
         if stopsSources, !scene.isEmpty {
             NotchMusicService.shared.stop()
             NotchDownloadService.shared.stop()
@@ -232,6 +404,13 @@ final class NotchLockScreenService {
         }
         playbackSubscription = nil
         trackSubscription = nil
+        accessorySubscription = nil
+        microphoneSubscription = nil
+        NotchAccessoryService.shared.stopLockScreenMonitoring()
+        clearFeedback()
+        batteryPercent = nil
+        batteryExternal = nil
+        displayConnections.reset([:])
         if let powerSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), powerSource, .commonModes)
             CFRunLoopSourceInvalidate(powerSource)
@@ -264,10 +443,26 @@ final class NotchLockScreenService {
         scene.forEach { Self.fadeOut($0, after: 0, completion: finished) }
         if let island {
             model.padlockOpen = true
-            // The island comes back on this turn and holds the main thread, so
-            // the padlock is first seen opening once that is done. Its time
-            // starts there, or the island would fade while the padlock opens.
-            DispatchQueue.main.async { Self.fadeOut(island, after: 0.55, completion: finished) }
+            unlockHandoffGeneration += 1
+            let generation = unlockHandoffGeneration
+            // Start both halves after the desktop's rebuild, at the same time
+            // the lock view can first draw. A second lock/sleep cancels it.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.unlockHandoffGeneration == generation else {
+                    island.orderOut(nil)
+                    finished()
+                    return
+                }
+                if !NotchService.shared.quietMode {
+                    let began = Date()
+                    self.model.unlockHandoffAt = began
+                    NotchService.shared.playUnlockHandoff(at: began)
+                }
+                Self.fadeOut(island, after: NotchUnlockHandoffSignal.contraction) { [weak self] in
+                    if self?.unlockHandoffGeneration == generation { self?.model.unlockHandoffAt = nil }
+                    finished()
+                }
+            }
         }
     }
 

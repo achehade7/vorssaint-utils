@@ -150,7 +150,7 @@ struct NotchAgentGlyph: View {
 
     var body: some View {
         NotchAgentGlyphBridge(provider: provider, size: size, animates: working && !reduceMotion)
-            // Room for the widest mark, the Claude one, drawn past its size.
+            // Keep a consistent cell so a mark's optical size does not shift its neighbours.
             .frame(width: size * 1.45 + 1, height: size * 1.45 + 1)
             .accessibilityHidden(true)
             .allowsHitTesting(false)
@@ -182,7 +182,8 @@ private struct NotchAgentGlyphBridge: NSViewRepresentable {
         switch AgentMarks.mark(for: provider) {
         case .template(let mark):
             image = mark
-            markSize = size * provider.markScale
+            // Match the round Claude mark to the visible height of the wide Codex glyph.
+            markSize = size * (provider == .claude ? 0.9 : provider.markScale)
             tint = NSColor(provider.tint)
         case .icon(let mark):
             image = mark
@@ -378,9 +379,8 @@ private extension AgentProvider {
         }
     }
 
-    /// The menu bar images keep a margin; the spark's thin rays need more
-    /// of the box than the knot to look the same size.
-    var markScale: CGFloat { self == .claude ? 1.45 : 1.2 }
+    /// Account for the padding inside the makers' monochrome images.
+    var markScale: CGFloat { self == .claude ? 1.25 : 1.2 }
 
     /// What those apps name the mark they show in the menu bar.
     var menuBarImageNames: [String] {

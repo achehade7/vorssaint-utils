@@ -28,14 +28,18 @@ enum NotchNeonPalette {
 
 /// A bounded plug-in signal, independent of notifications and agent completions.
 enum NotchChargingSignal {
-    static let duration: TimeInterval = 3.2
+    static let duration: TimeInterval = 2.2
+    static let fullscreenDuration: TimeInterval = 1.6
     static let travelDuration: TimeInterval = 0.52
     static let echoDelay: TimeInterval = 0.13
     static let sweepDuration = travelDuration * 2 + echoDelay
     static let riseDuration: TimeInterval = 0.12
     static let fadeDuration: TimeInterval = 0.7
 
-    static func opacity(at age: TimeInterval) -> Double {
+    static func lifetime(fullscreen: Bool) -> TimeInterval { fullscreen ? fullscreenDuration : duration }
+
+    static func opacity(at age: TimeInterval, fullscreen: Bool = false) -> Double {
+        let duration = lifetime(fullscreen: fullscreen)
         guard age >= 0, age < duration else { return 0 }
         let rise = min(1, age / riseDuration)
         let fade = min(1, (duration - age) / fadeDuration)
@@ -104,13 +108,12 @@ struct NotchNeonEdge: View, Animatable {
     var surfaceSize: CGSize
     var contour: Path? = nil
     var pointerX: CGFloat?
-    @ObservedObject private var music = NotchMusicService.shared
     @ObservedObject private var timer = NotchTimerService.shared
     @ObservedObject private var agents = AgentUsageService.shared
     @ObservedObject private var downloads = NotchDownloadService.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private enum Signature: Equatable {
-        case agent, agentFinished(AgentProvider), message, wake, clipboard, handoff, terminalSuccess, terminalFailure
+        case agent, agentFinished(AgentProvider), message, meeting, wake, clipboard, handoff, terminalSuccess, terminalFailure
 
         var completionProvider: AgentProvider? {
             if case .agentFinished(let provider) = self { return provider }
@@ -136,34 +139,23 @@ struct NotchNeonEdge: View, Animatable {
         return signature == .wake || signature == .clipboard ? 0.9 : 1.2
     }
     private var working: Bool { !agents.snapshot.live.isEmpty }
-    private var playing: Bool { music.playback?.isPlaying == true }
     private var animated: Bool { signalAt != nil || workspaceAt != nil }
     private var showsTimerFuse: Bool {
         service.hasTimerActivity && !timer.session.countsUp && timer.session.duration > 0
             && (timer.session.isRunning || timer.session.isPaused)
     }
-    private var showsMusicProgress: Bool {
-        guard !working, !animated, playing, service.modules.contains(.music),
-              service.compactActivity == .music, !service.expanded, !service.peeking,
-              !service.dragPlaceholder, service.notice == nil, service.departingNotice == nil,
-              service.captureControls == nil, !service.fullscreenCompact,
-              !service.showsAeroSpace, !service.showsAeroSpaceBadge, !service.showsCompactActivityPicker,
-              let playback = music.playback else { return false }
-        return playback.hasPosition && playback.duration.isFinite && playback.duration > 0
-    }
     private var progressAdvancing: Bool {
-        (showsTimerFuse && timer.session.isRunning) || (showsMusicProgress && playing)
+        showsTimerFuse && timer.session.isRunning
     }
 
     var body: some View {
         Group {
-            if (animated && !reduceMotion) || chargeAt != nil {
+            if (animated && !reduceMotion) || chargeAt != nil || service.neonFullChargeAt != nil || service.displayArrival != nil {
                 TimelineView(.animation(minimumInterval: chargeAt != nil ? 1.0 / 60 : 1.0 / 24)) { context in
                     edge(at: context.date)
                 }
             } else if progressAdvancing {
-                // Countdown/progress uses the existing clocks, at one update
-                // per second. A paused or preempted player adds no ticking.
+                // Only an active countdown needs a once-per-second progress clock.
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     edge(at: context.date)
                 }
@@ -190,6 +182,9 @@ struct NotchNeonEdge: View, Animatable {
         }
         .onChange(of: service.neonChargeAt, initial: true) { _, date in
             charge(at: date)
+        }
+        .onChange(of: service.neonMeetingAt, initial: true) { _, date in
+            if let date, (0..<1.2).contains(Date().timeIntervalSince(date)) { signal(.meeting, at: date) }
         }
         .onChange(of: service.neonCopyAt) { _, date in
             if let date { signal(.clipboard, at: date) }
@@ -247,10 +242,16 @@ struct NotchNeonEdge: View, Animatable {
         let age = signalAt.map { max(0, date.timeIntervalSince($0)) }
         let workspace = age == nil ? workspaceAt.map { max(0, date.timeIntervalSince($0)) } : nil
         let workspaceName = NotchAeroSpaceService.shared.state.current
-        let idle = !working && !playing && age == nil && workspace == nil
+        let idle = !working && age == nil && workspace == nil
         let completion = age != nil ? signature.completionProvider : nil
-        let steadyTint = working ? blue : playing ? music.artworkTint?.color ?? purple : purple
+        let steadyTint = working ? blue : purple
+        // Meeting cyan (#7DDCE8) lifts to white at the pulse peak, then fades.
+        let meetingWhite = reduceMotion ? 0 : min(1, max(0, (age ?? 0) / 0.6))
+        let meetingTint = Color(red: (125 + 130 * meetingWhite) / 255,
+                                green: (220 + 35 * meetingWhite) / 255,
+                                blue: (232 + 23 * meetingWhite) / 255)
         let tint = completion?.tint ?? (age != nil ? (signature == .clipboard ? Color.white
+                : signature == .meeting ? meetingTint
                 : signature == .agent || signature == .terminalSuccess ? blue
                 : signature == .terminalFailure ? Color(red: 0.95, green: 0.35, blue: 0.77) : purple)
             : workspace != nil ? NotchNeonPalette.workspace(workspaceName)
@@ -287,7 +288,7 @@ struct NotchNeonEdge: View, Animatable {
         ]
         let pulseOpacity = age.map { t -> Double in
             if reduceMotion { return 0.75 }
-            if signature == .clipboard {
+            if signature == .clipboard || signature == .meeting {
                 return max(0, sin(min(1, t / signalDuration) * .pi))
             }
             if completion != nil {
@@ -324,21 +325,19 @@ struct NotchNeonEdge: View, Animatable {
                     shape.stroke(base, lineWidth: 4).blur(radius: 4).offset(y: 1).opacity(0.5)
                     shape.stroke(base, lineWidth: 1.3)
                 }
-                .opacity(working || playing ? 0.65 : 0.22)
+                .opacity(working ? 0.65 : 0.22)
             }
-            if !showsMusicProgress {
-                ZStack {
-                    shape.stroke(light, lineWidth: 4).blur(radius: 4).offset(y: 1).opacity(0.5)
-                    shape.stroke(light, lineWidth: 1.3)
-                }
-                .mask {
-                    Rectangle().frame(width: age != nil && signature == .wake && !reduceMotion
-                        ? surfaceSize.width * min(1, (age ?? 0) / 0.6) : surfaceSize.width)
-                }
-                .opacity(pulseOpacity
-                    ?? workspaceOpacity
-                    ?? (idle ? 0.22 : 0.65))
+            ZStack {
+                shape.stroke(light, lineWidth: 4).blur(radius: 4).offset(y: 1).opacity(0.5)
+                shape.stroke(light, lineWidth: 1.3)
             }
+            .mask {
+                Rectangle().frame(width: age != nil && signature == .wake && !reduceMotion
+                    ? surfaceSize.width * min(1, (age ?? 0) / 0.6) : surfaceSize.width)
+            }
+            .opacity(pulseOpacity
+                ?? workspaceOpacity
+                ?? (idle ? 0.22 : 0.65))
             if showsTimerFuse {
                 let remaining = min(1, max(0, timer.session.reading(at: timer.now) / timer.session.duration))
                 shape.stroke(NotchNeonPalette.amber, lineWidth: 1.5)
@@ -346,20 +345,6 @@ struct NotchNeonEdge: View, Animatable {
                         Rectangle().frame(width: surfaceSize.width * remaining)
                     }
                     .opacity(completion != nil ? 0.2 : timer.session.isPaused ? 0.5 : 0.95)
-            }
-            if showsMusicProgress, let playback = music.playback {
-                let remaining = min(1, max(0, 1 - playback.position(at: date) / playback.duration))
-                let progressLight = LinearGradient(colors: [purple, blue],
-                                                   startPoint: .leading, endPoint: .trailing)
-                ZStack {
-                    shape.stroke(progressLight, lineWidth: 4).blur(radius: 4).offset(y: 1).opacity(0.5)
-                    shape.stroke(progressLight, lineWidth: 1.3)
-                }
-                    .mask(alignment: .leading) {
-                        Rectangle().frame(width: surfaceSize.width * remaining)
-                    }
-                    .opacity(0.9)
-                    .transition(.opacity.animation(reduceMotion ? nil : .easeOut(duration: 0.18)))
             }
             if let item = downloads.items.first(where: { !$0.completed && $0.active }) {
                 // Unknown totals get a faint activity line, never a made-up percentage.
@@ -372,16 +357,25 @@ struct NotchNeonEdge: View, Animatable {
                                         center: UnitPoint(x: pointerX ?? lastPointerX, y: 1),
                                         startRadius: 0, endRadius: 75), lineWidth: 5)
                 .blur(radius: 2)
-                .opacity(pointerX == nil || showsMusicProgress ? 0 : 0.8)
+                .opacity(pointerX == nil ? 0 : 0.8)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: pointerX == nil)
         }
         .mask(alignment: .bottom) { Rectangle().frame(height: 10) }
         .clipShape(shape)
         .overlay {
+            if let arrival = service.displayArrival {
+                NotchDisplayArrivalEdge(shape: shape, size: surfaceSize,
+                                        direction: arrival.direction, age: date.timeIntervalSince(arrival.began),
+                                        reduceMotion: reduceMotion)
+            }
             if let chargeAt {
-                // Keep the agent/music edge below the shared charging light.
+                // Keep the ordinary edge below the shared charging light.
                 NotchChargingEdge(shape: shape, size: surfaceSize,
                                   age: date.timeIntervalSince(chargeAt), reduceMotion: reduceMotion)
+            }
+            if let began = service.neonFullChargeAt {
+                NotchFullChargeEdge(shape: shape, size: surfaceSize, age: date.timeIntervalSince(began),
+                                    fullscreen: false, reduceMotion: reduceMotion)
             }
         }
     }
@@ -400,7 +394,9 @@ struct NotchNeonView: View {
         let resting = bounds.offsetBy(dx: offset.x, dy: offset.y)
         let frame = motion.workspaceDeparting ? resting : motion.workspaceSurfaceFrame ?? resting
         ZStack(alignment: .topLeading) {
-            if !frame.isNull, frame.width > 0, frame.height > 0,
+            // This separate host does not share the content's dismissal mask.
+            // Quiet mode must remove it before the outline contracts upward.
+            if !service.quietMode, !frame.isNull, frame.width > 0, frame.height > 0,
                !service.displayIsFullscreen, service.captureControls == nil {
                 NotchNeonEdge(service: service, surfaceSize: frame.size,
                               contour: motion.workspaceSurfaceFrame == nil

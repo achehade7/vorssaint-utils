@@ -3,6 +3,12 @@
 
 import Foundation
 
+/// A confirmed connection without a device name, safe for a locked display.
+struct NotchAccessoryArrival {
+    let symbol: String
+    let percent: Int?
+}
+
 enum NotchAccessorySupport {
     static let lowThreshold = 20
     static let recoveryThreshold = 25
@@ -74,6 +80,19 @@ enum NotchAccessorySupport {
         // The existing sampler coalesces the same physical accessory by name
         // when its reading moves between HID, system metadata and Bluetooth.
         device.kind.rawValue + ":" + device.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// A connection may use a recent reading already consumed by the low
+    /// battery episode tracker. Its age still comes from the actual source,
+    /// never from the snapshot being republished. Bluetooth samples refresh
+    /// every five minutes; older or pre-activation values stay undisplayed.
+    static func connectionBattery(named name: String, in sample: PeripheralBatterySample,
+                                  observedAfter activation: TimeInterval, now: TimeInterval) -> Int? {
+        sample.devices.first { device in
+            guard device.name == name, (0...100).contains(device.percent),
+                  let observedAt = sample.observedAt[device.id], observedAt.isFinite else { return false }
+            return observedAt >= activation && observedAt <= now && now - observedAt <= 300
+        }?.percent
     }
 }
 

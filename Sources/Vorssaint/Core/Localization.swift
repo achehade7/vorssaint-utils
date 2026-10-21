@@ -2626,7 +2626,7 @@ extension Strings {
         micMuteName: "Mute microphone",
         micUnmuteName: "Unmute microphone",
         micMuteCaption: "Cuts the Mac’s microphone with a click or shortcut, across every app.",
-        micMutedHUD: "Microphone muted",
+        micMutedHUD: "Mute on",
         micUnmutedHUD: "Mute off",
         micMutePartialHUD: "Some microphones could not be muted",
         micUnmutePartialHUD: "Some microphones are still muted",

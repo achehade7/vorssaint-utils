@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Vorssaint
 
 import AppKit
+import Combine
 import CoreAudio
 import Foundation
 
@@ -20,6 +21,9 @@ final class MicMuteService: ObservableObject {
 
     @Published private(set) var isMuted = false
     @Published private(set) var shortcutRegistrationFailed = false
+    /// Only a user request confirmed on every reachable input. Initial state,
+    /// silent device reapplication and partial failures produce no success cue.
+    let confirmedChanges = PassthroughSubject<Bool, Never>()
 
     private let hotkey = QuickToolHotkey(id: 12)
     private var installedListeners: [AudioObjectPropertySelector] = []
@@ -245,6 +249,7 @@ final class MicMuteService: ObservableObject {
                               message: muted ? L10n.shared.s.micMutePartialHUD : L10n.shared.s.micUnmutePartialHUD)
             return
         }
+        confirmedChanges.send(muted)
         // With Dynamic Island on, the switch reports there like the volume,
         // and the companion hushes or perks up, in its notice or where it is.
         let shownInIsland = NotchService.shared.showMicrophone(muted: muted)

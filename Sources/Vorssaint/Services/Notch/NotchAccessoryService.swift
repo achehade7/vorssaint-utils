@@ -9,12 +9,14 @@ import IOBluetooth
 /// notifications report an actual connection, independently of missing readings.
 final class NotchAccessoryService: NSObject {
     static let shared = NotchAccessoryService()
+    let lockScreenArrivals = PassthroughSubject<NotchAccessoryArrival, Never>()
     private var subscription: AnyCancellable?
     private var connectNotification: IOBluetoothUserNotification?
     private var disconnectNotifications: [String: IOBluetoothUserNotification] = [:]
     private var batteryState = NotchAccessoryBatteryState()
     private var connectionState = NotchAccessoryConnectionState()
     private var active = false
+    private var lockOnly = false
     private var activationTime: TimeInterval = 0
     private var generation = UUID()
     private var pending: [(notice: NotchNotice, device: String, expiresAt: Date)] = []
@@ -23,6 +25,7 @@ final class NotchAccessoryService: NSObject {
 
     func syncWithPreferences() {
         guard NotchAccessorySupport.isEnabled() else { stop(); return }
+        if lockOnly { suspend() }
         guard !active else { return }
         active = true
         activationTime = ProcessInfo.processInfo.systemUptime
@@ -59,6 +62,27 @@ final class NotchAccessoryService: NSObject {
         SystemMonitor.shared.setNotchAccessoryMonitoring(true)
     }
 
+    /// The awake lock scene needs only actual connection callbacks. Battery
+    /// telemetry remains the existing monitor's last, age-checked reading;
+    /// no sampler or periodic work is started for this scene.
+    func startLockScreenMonitoring() {
+        guard NotchAccessorySupport.isEnabled(), !active else { return }
+        active = true
+        lockOnly = true
+        activationTime = ProcessInfo.processInfo.systemUptime
+        generation = UUID()
+        let devices = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] ?? [])
+            .filter { $0.isConnected() }
+        connectionState.establishBaseline(Set(devices.compactMap { $0.addressString }))
+        devices.forEach(observeDisconnect)
+        connectNotification = IOBluetoothDevice.register(forConnectNotifications: self,
+            selector: #selector(deviceConnected(_:device:)))
+    }
+
+    func stopLockScreenMonitoring() {
+        if lockOnly { suspend() }
+    }
+
     func stop() {
         batteryState = NotchAccessoryBatteryState()
         connectionState = NotchAccessoryConnectionState()
@@ -75,7 +99,8 @@ final class NotchAccessoryService: NSObject {
         disconnectNotifications.removeAll()
         noticeWork?.cancel(); noticeWork = nil
         pending.removeAll()
-        SystemMonitor.shared.setNotchAccessoryMonitoring(false)
+        if !lockOnly { SystemMonitor.shared.setNotchAccessoryMonitoring(false) }
+        lockOnly = false
     }
 
     private func observeDisconnect(_ device: IOBluetoothDevice) {
@@ -86,7 +111,8 @@ final class NotchAccessoryService: NSObject {
 
     @objc private func deviceConnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.active, NotchAccessorySupport.isEnabled(), device.isConnected(),
+            guard let self, self.active, self.connectNotification === notification,
+                  NotchAccessorySupport.isEnabled(), device.isConnected(),
                   NotchAccessorySupport.announcesConnection(majorClass: UInt32(device.deviceClassMajor)),
                   let id = device.addressString, self.connectionState.connected(id) else { return }
             self.observeDisconnect(device)
@@ -95,12 +121,17 @@ final class NotchAccessoryService: NSObject {
             // The status stays short beside its icon, so the name gets a
             // whole wing to itself before it has to be shortened.
             let sample = SystemMonitor.shared.snapshot.peripheralBatterySample
-            let battery = sample.devices.first { $0.name == name &&
-                self.batteryState.isFresh($0, in: sample, observedAfter: self.activationTime) }
-            let status = battery.map { text.connected + " · \($0.percent)%" } ?? text.connected
+            let battery = NotchAccessorySupport.connectionBattery(named: name, in: sample,
+                observedAfter: self.lockOnly ? 0 : self.activationTime, now: ProcessInfo.processInfo.systemUptime)
+            let symbol = NotchAccessorySupport.symbol(name: name, majorClass: UInt32(device.deviceClassMajor),
+                                                      minorClass: UInt32(device.deviceClassMinor))
+            if self.lockOnly {
+                self.lockScreenArrivals.send(NotchAccessoryArrival(symbol: symbol, percent: battery))
+                return
+            }
+            let status = battery.map { text.connected + " · \($0)%" } ?? text.connected
             self.enqueue(NotchNotice(event: .accessory, title: status, detail: name,
-                symbol: NotchAccessorySupport.symbol(name: name, majorClass: UInt32(device.deviceClassMajor),
-                                                     minorClass: UInt32(device.deviceClassMinor)),
+                symbol: symbol,
                 audioHandoff: NotchAccessorySupport.isAudioConnection(name: name,
                     majorClass: UInt32(device.deviceClassMajor), minorClass: UInt32(device.deviceClassMinor))),
                          device: name)
@@ -109,7 +140,8 @@ final class NotchAccessoryService: NSObject {
 
     @objc private func deviceDisconnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.active, !device.isConnected(), let id = device.addressString else { return }
+            guard let self, self.active, !device.isConnected(), let id = device.addressString,
+                  self.disconnectNotifications[id] === notification else { return }
             self.connectionState.disconnected(id)
             if let name = device.name { self.pending.removeAll { $0.device == name } }
             self.disconnectNotifications.removeValue(forKey: id)?.unregister()

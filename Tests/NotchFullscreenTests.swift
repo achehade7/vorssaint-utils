@@ -40,6 +40,11 @@ enum NotchFullscreenTests {
     }
     static func AXIsProcessTrusted() -> Bool { true }
     enum NotchService { static var shared = Service() }
+    final class NotchLockScreenService {
+        static let shared = NotchLockScreenService()
+        var syncs = 0
+        func sync(_ session: NotchSessionState) { syncs += 1 }
+    }
     class VolumeState {
         var running = false
         func start() { running = true }
@@ -52,12 +57,22 @@ enum NotchFullscreenTests {
         static func topology() -> Topology? { reads += 1; return value }
     }
     class State {
+        var session = NotchSessionState()
         var quietMode = false
         var quietPublications = 0
-        func publishQuietMode() { quietPublications += 1 }
+        func publishQuietMode(initial: Bool = true) { quietPublications += 1 }
+        func clearUnlockHandoff() { neonUnlockAt = nil }
+        func setFullChargeSignal(at date: Date?) { neonFullChargeAt = date }
         var running = true, suspended = false, hiddenInFullscreen = false, displayIsFullscreen = false
         var hoverEmphasized = false
         var neonChargeAt: Date?
+        func setChargingSignal(at date: Date?) { neonChargeAt = date }
+        var neonFullChargeAt: Date?
+        var neonUnlockAt: Date?
+        var neonMeetingAt: Date?
+        var quickCaptureFeedback: Bool?
+        var neonLowBatteryAt: Date?
+        var displayArrival: Bool?
         var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1512, height: 982),
                                      safeAreaTop: 32, cameraWidth: 185, compactSideRoom: 200)
         var expanded = false, peeking = false, showsAeroSpace = false, mascotVisible = false
@@ -93,14 +108,22 @@ enum NotchFullscreenTests {
             PreciseVolumeRollerService.shared.stop()
         }
         let quiet = Service()
+        quiet.neonUnlockAt = Date()
+        quiet.neonFullChargeAt = Date()
+        quiet.neonMeetingAt = Date()
+        let lockSyncs = NotchLockScreenService.shared.syncs
         quiet.toggleQuietMode()
         suite.expect(quiet.quietMode && !quiet.acceptsUserInteraction && !quiet.acceptsSystemFeedback,
                      "quiet mode blocks both hover interaction and automatic notices")
+        suite.expect(quiet.neonUnlockAt == nil && quiet.neonFullChargeAt == nil && quiet.neonMeetingAt == nil,
+                     "quiet cancels unlock, full-charge and meeting signatures before hiding")
         suite.expect(quiet.collapses == 1 && quiet.refreshes == 1 && quiet.quietPublications == 1 && quiet.running,
                      "quiet mode publishes its state and hides presentation without stopping the service")
         quiet.toggleQuietMode()
         suite.expect(!quiet.quietMode && quiet.acceptsUserInteraction && quiet.acceptsSystemFeedback && quiet.quietPublications == 2,
                      "a second toggle restores interaction and publishes the restored state")
+        suite.expect(NotchLockScreenService.shared.syncs == lockSyncs + 2,
+                     "quiet-mode changes also reconcile active lock-screen feedback")
         let topology = Topology(displays: [
             .init(displayID: 1, spaces: [10, 11], fullscreenSpaces: [11], currentSpace: 10),
             .init(displayID: 2, spaces: [20, 21], fullscreenSpaces: [21], currentSpace: 21)
@@ -191,26 +214,41 @@ enum NotchFullscreenTests {
         charging.displayIsFullscreen = true
         charging.notice = nil
         charging.dragPlaceholder = false
-        suite.expect(charging.fullscreenChargingWingWidth == 0,
+        suite.expect(charging.feedbackWingWidth == 0,
                      "idle fullscreen has no added wings until a cable connects")
         charging.neonChargeAt = Date()
-        let wing = charging.fullscreenChargingWingWidth
+        let wing = charging.feedbackWingWidth
         suite.expect(wing == 40 && charging.geometry.noticeSize(wingWidth: wing).height == charging.geometry.stripHeight,
                      "idle fullscreen charging exposes two usable wings beside the real camera without adding height")
         for activity in [NotchCompactActivity.agents, .music, .timer] {
             charging.compactActivity = activity
-            suite.expect(charging.fullscreenChargingWingWidth == 0,
+            suite.expect(charging.feedbackWingWidth == 0,
                          "charging does not resize or displace a live activity")
         }
         charging.compactActivity = nil
         charging.expanded = true
-        suite.expect(charging.fullscreenChargingWingWidth == 0, "an open island does not request temporary compact wings")
+        suite.expect(charging.feedbackWingWidth == 0, "an open island does not request temporary compact wings")
         charging.expanded = false
         charging.displayIsFullscreen = false
-        suite.expect(charging.fullscreenChargingWingWidth == 0, "ordinary desktop charging keeps the established layout")
+        suite.expect(charging.feedbackWingWidth == 0, "ordinary desktop charging keeps the established layout")
         charging.displayIsFullscreen = true
         charging.neonChargeAt = nil
-        suite.expect(charging.fullscreenChargingWingWidth == 0, "expiry or unplugging removes the temporary wings")
+        suite.expect(charging.feedbackWingWidth == 0, "expiry or unplugging removes the temporary wings")
+        charging.neonLowBatteryAt = Date()
+        suite.expect(charging.feedbackWingWidth == 40,
+                     "critical battery has drawable side wings when fullscreen is otherwise idle")
+        charging.displayIsFullscreen = false
+        suite.expect(charging.feedbackWingWidth == 40,
+                     "critical battery also has drawable wings on the desktop")
+        charging.neonLowBatteryAt = nil
+        charging.displayArrival = true
+        suite.expect(charging.feedbackWingWidth == 40,
+                     "a new display can signal from an otherwise bare camera")
+        charging.displayIsFullscreen = true
+        suite.expect(charging.feedbackWingWidth == 40,
+                     "fullscreen display arrival has side room without a lower neon")
+        charging.quietMode = true
+        suite.expect(charging.feedbackWingWidth == 0, "quiet mode grants no temporary feedback wings")
         volumeLifecycleChecks(topology, suite)
     }
 
