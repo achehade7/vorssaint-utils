@@ -30,6 +30,14 @@ final class MeetingNoteDraft: ObservableObject {
         return true
     }
 
+    func findExisting(completion: @escaping (Result<URL?, Error>) -> Void) {
+        let store = store, input = input, topic = topic
+        io.async {
+            let result = Result { try store.existing(input, topic: topic) }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
     func save(allowed: Bool, completion: @escaping (MeetingNoteStore.Prepared?) -> Void) {
         guard !saving, !cancelled else { return }
         guard allowed else { failed = true; completion(nil); return }

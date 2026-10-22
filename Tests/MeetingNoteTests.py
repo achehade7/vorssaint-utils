@@ -79,6 +79,8 @@ try expect(MeetingNoteStore.purpose(input) == "14:00–14:30, A.C., A.B.", "Purp
 let unsafe = MeetingNoteStore.topic("../../Anwar / Andreas: \"check\" <x> | ? * [y] #test private@example.com +49 123 456789 https://example.com/private", people: people)
 try expect(!unsafe.contains("/") && !unsafe.contains(":") && !unsafe.hasPrefix(".") && !unsafe.contains("@") && !unsafe.contains("123"), "safe filename strips paths and contact data")
 try expect(MeetingNoteStore.topic(String(repeating: "é", count: 200), people: []).utf8.count <= 160, "length bounded in bytes")
+try expect(try store.existing(input, topic: topic) == nil, "read-only lookup reports missing")
+try expect(try fm.contentsOfDirectory(atPath: root.appendingPathComponent("meetings").path).isEmpty, "missing lookup writes nothing")
 let firstPreparation = try store.prepare(input, topic: topic)
 try expect(firstPreparation.created, "new note reports created")
 let note = firstPreparation.file
@@ -99,10 +101,12 @@ try expect(try Data(contentsOf: note) == before, "existing note never overwritte
 let renamed = root.appendingPathComponent("meetings/Already curated.md")
 try fm.moveItem(at: note, to: renamed)
 try expect(try store.prepare(input, topic: topic).file == renamed, "same calendar_event reused without rename")
+try expect(try store.existing(input, topic: "Different topic") == renamed, "read-only lookup finds renamed event note")
 let clash = root.appendingPathComponent("meetings/2026-10-22 Different topic.md")
 try "existing unrelated note".write(to: clash, atomically: true, encoding: .utf8)
 try expect(try store.prepare(input, topic: "Different topic").file == renamed, "event lookup precedes date/topic collision")
 let other = MeetingNoteInput(identity: "event-2", title: "Different topic", start: start, end: start.addingTimeInterval(60), people: [])
+try expect(try store.existing(other, topic: "different TOPIC") == clash, "read-only fallback matches case-insensitive date/topic")
 try expect(try store.prepare(other, topic: "Different topic").file == clash, "date/topic fallback reuses existing note")
 try expect(try String(contentsOf: clash, encoding: .utf8) == "existing unrelated note", "fallback never edits existing file")
 for value in ["plain-id", "'single-id'", "\"double-id\""] {
@@ -191,8 +195,15 @@ let noKeyFile = try store.prepare(noKey, topic: noKey.title).file
 try expect(try MeetingNoteStore.eventID(in: String(contentsOf: noKeyFile, encoding: .utf8)) == nil, "no private identifier is written as fallback")
 try expect(try store.prepare(noKey, topic: noKey.title).file == noKeyFile, "missing external ID still deduplicates by date/topic")
 try expect(try store.prepare(noKey, topic: "Another topic").file != noKeyFile, "blank calendar_event never matches an unrelated note")
+// Read-only lookup never follows a matching note symlink or creates its destination.
+let symlinkInput = MeetingNoteInput(identity: nil, title: "Symlink", start: start, end: start, people: [])
+let symlink = root.appendingPathComponent("meetings/2026-10-22 Symlink.md")
+try fm.createSymbolicLink(at: symlink, withDestinationURL: renamed)
+do { _ = try store.existing(symlinkInput, topic: symlinkInput.title); fatalError("must reject symlink") } catch { checks += 1 }
+try fm.removeItem(at: symlink)
 // Template failure cannot publish a partial file.
 try "broken template".write(to: root.appendingPathComponent("templates/Meeting.md"), atomically: true, encoding: .utf8)
+try expect(try store.existing(input, topic: topic) == renamed, "opening an existing note does not require a valid template")
 let invalid = MeetingNoteInput(identity: "bad-template", title: "New topic", start: start, end: start, people: [])
 do { _ = try store.prepare(invalid, topic: invalid.title).file; fatalError("must reject invalid template") } catch { checks += 1 }
 try expect(!fm.fileExists(atPath: root.appendingPathComponent("meetings/2026-10-22 New topic.md").path), "template failure creates no note")

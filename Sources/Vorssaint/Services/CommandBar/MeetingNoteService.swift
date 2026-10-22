@@ -42,6 +42,11 @@ final class MeetingNoteService: ObservableObject {
         let draft = MeetingNoteDraft(input: .init(identity: event.noteEventKey, title: event.title,
                                                   start: event.start, end: event.end, people: people), store: .personal)
         self.draft = draft
+        if joining { showPreview(event, draft: draft, joining: true) }
+        else { openOrAsk(event, draft: draft) }
+    }
+
+    private func showPreview(_ event: NotchCalendarEvent, draft: MeetingNoteDraft, joining: Bool) {
         let panel = MeetingNotePanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 250),
                                      styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false
@@ -62,6 +67,25 @@ final class MeetingNoteService: ObservableObject {
     private func allowed(_ event: NotchCalendarEvent, joining: Bool) -> Bool {
         NotchCalendarSupport.isEnabled() && event.end > Date() && (!joining || event.meetingURL != nil)
             && EKEventStore.authorizationStatus(for: .event) == .fullAccess
+    }
+
+    private func openOrAsk(_ event: NotchCalendarEvent, draft: MeetingNoteDraft) {
+        draft.findExisting { [weak self] result in
+            guard let self, self.draft === draft, !draft.cancelled else { return }
+            guard self.allowed(event, joining: false) else { self.close(); return }
+            switch result {
+            case .success(let file?):
+                self.close()
+                if let link = MeetingNoteStore.obsidianURL(file) { NSWorkspace.shared.open(link) }
+            case .success(nil):
+                self.showPreview(event, draft: draft, joining: false)
+            case .failure:
+                self.close()
+                _ = NotchService.shared.show(NotchNotice(event: .capture, title: "",
+                    detail: MeetingNoteStrings.readFailure(L10n.shared.language), symbol: "exclamationmark.triangle",
+                    fileURL: nil, meetingNote: true))
+            }
+        }
     }
 
     private func confirm(_ event: NotchCalendarEvent, draft: MeetingNoteDraft, joining: Bool) {
@@ -99,7 +123,8 @@ private struct MeetingNoteView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 MeetingNoteMark().frame(width: 22, height: 24)
-                Text(text.title).font(.system(size: 16, weight: .semibold))
+                Text(joining ? text.title : MeetingNoteStrings.createQuestion(L10n.shared.language))
+                    .font(.system(size: 16, weight: .semibold))
                 Spacer()
                 Text("esc").font(.caption.monospaced()).foregroundStyle(.secondary)
             }.foregroundStyle(NotchNeonPalette.purple)
@@ -118,7 +143,7 @@ private struct MeetingNoteView: View {
                 Spacer()
                 if draft.saving { ProgressView().controlSize(.small) }
                 Button(action: confirm) {
-                    Text((joining ? text.join : MeetingNoteStrings.prepareAndOpen(L10n.shared.language)) + "  ↩").font(.system(size: 12, weight: .semibold))
+                    Text((joining ? text.join : MeetingNoteStrings.createAndOpen(L10n.shared.language)) + "  ↩").font(.system(size: 12, weight: .semibold))
                         .padding(.horizontal, 12).padding(.vertical, 7)
                         .background(LinearGradient(colors: [NotchNeonPalette.purple, NotchNeonPalette.blue],
                                                    startPoint: .leading, endPoint: .trailing), in: Capsule())

@@ -136,7 +136,8 @@ struct MeetingNoteStore {
 
     struct Prepared: Equatable { let file: URL; let created: Bool }
 
-    func prepare(_ input: MeetingNoteInput, topic requestedTopic: String) throws -> Prepared {
+    /// Read-only lookup uses the same identity-first matching as confirmed creation.
+    func existing(_ input: MeetingNoteInput, topic requestedTopic: String) throws -> URL? {
         let files = FileManager.default
         let folder = vault.appendingPathComponent("meetings", isDirectory: true)
         var isDirectory: ObjCBool = false
@@ -154,10 +155,18 @@ struct MeetingNoteStore {
                 continue
             }
             if let identity = input.identity,
-               Self.eventID(in: try String(contentsOf: file, encoding: .utf8)) == identity { return Prepared(file: file, created: false) }
+               Self.eventID(in: try String(contentsOf: file, encoding: .utf8)) == identity { return file }
             if file.lastPathComponent.lowercased() == destination.lastPathComponent.lowercased() { sameTopic = file }
         }
-        if let sameTopic { return Prepared(file: sameTopic, created: false) }
+        return sameTopic
+    }
+
+    func prepare(_ input: MeetingNoteInput, topic requestedTopic: String) throws -> Prepared {
+        if let file = try existing(input, topic: requestedTopic) { return Prepared(file: file, created: false) }
+        let files = FileManager.default
+        let folder = vault.appendingPathComponent("meetings", isDirectory: true)
+        let title = Self.date(input.start, format: "yyyy-MM-dd") + " " + Self.topic(requestedTopic, people: input.people)
+        let destination = folder.appendingPathComponent(title + ".md")
         let template = vault.appendingPathComponent("templates/Meeting.md")
         guard template.resolvingSymlinksInPath().path.hasPrefix(vault.resolvingSymlinksInPath().path + "/"),
               var text = try? String(contentsOf: template, encoding: .utf8),

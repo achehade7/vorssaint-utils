@@ -28,7 +28,7 @@ final class MeetingNoteService {
     var prepared: [String] = []
     func show(_ event: NotchCalendarEvent, joining: Bool) { precondition(!joining); prepared.append(event.id) }
 }
-enum MeetingNoteStrings { static func prepareAndOpen(_ language: L10n.Language) -> String { "Prepare & open" } }
+enum MeetingNoteStrings { struct Text { let title = "Meeting note" }; static func localized(_ language: L10n.Language) -> Text { Text() } }
 enum NotchCalendarSupport {
     static var enabled = true
     static func isEnabled() -> Bool { enabled }
@@ -159,7 +159,7 @@ precondition(filtered.count == 1 && filtered[0].id == "action.note.upcoming.4", 
 let callsBefore = NSWorkspace.shared.opened.count
 precondition(MeetingNoteService.shared.prepared.isEmpty, "typing never prepares notes")
 filtered[0].run(nil)
-precondition(MeetingNoteService.shared.prepared == ["4"] && NSWorkspace.shared.opened.count == callsBefore, "note opens preparation without joining")
+precondition(MeetingNoteService.shared.prepared == ["4"] && NSWorkspace.shared.opened.count == callsBefore, "note opens the note flow without joining")
 precondition(search.noteEvent(entryID: filtered[0].id) == nil, "Cmd-Return does not turn note preparation into a call")
 EKEventStore.status = .denied
 filtered[0].run(nil)

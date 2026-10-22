@@ -22,22 +22,40 @@ struct MeetingNoteStrings {
         case .zhHK: return "無法讀取會議筆記"
         }
     }
-    static func prepareAndOpen(_ language: AppLanguage) -> String {
+    static func createQuestion(_ language: AppLanguage) -> String {
         switch language {
-        case .enUS: return "Prepare & open"
-        case .ptBR: return "Preparar e abrir"
-        case .tr: return "Hazırla ve aç"
+        case .enUS: return "Create meeting note?"
+        case .ptBR: return "Criar nota da reunião?"
+        case .tr: return "Toplantı notu oluşturulsun mu?"
+        case .ru: return "Создать заметку встречи?"
+        case .es: return "¿Crear nota de reunión?"
+        case .sk: return "Vytvoriť poznámku zo stretnutia?"
+        case .de: return "Besprechungsnotiz erstellen?"
+        case .fr: return "Créer une note de réunion ?"
+        case .it: return "Creare una nota della riunione?"
+        case .ja: return "会議メモを作成しますか？"
+        case .ko: return "회의 메모를 만들까요?"
+        case .uk: return "Створити нотатку зустрічі?"
+        case .zhHans: return "创建会议笔记？"
+        case .zhTW, .zhHK: return "建立會議筆記？"
+        }
+    }
+    static func createAndOpen(_ language: AppLanguage) -> String {
+        switch language {
+        case .enUS: return "Create & open"
+        case .ptBR: return "Criar e abrir"
+        case .tr: return "Oluştur ve aç"
         case .ru: return "Создать и открыть"
-        case .es: return "Preparar y abrir"
-        case .sk: return "Pripraviť a otvoriť"
-        case .de: return "Vorbereiten & öffnen"
-        case .fr: return "Préparer et ouvrir"
-        case .it: return "Prepara e apri"
-        case .ja: return "準備して開く"
-        case .ko: return "준비하고 열기"
-        case .uk: return "Підготувати й відкрити"
-        case .zhHans: return "准备并打开"
-        case .zhTW, .zhHK: return "準備並開啟"
+        case .es: return "Crear y abrir"
+        case .sk: return "Vytvoriť a otvoriť"
+        case .de: return "Erstellen & öffnen"
+        case .fr: return "Créer et ouvrir"
+        case .it: return "Crea e apri"
+        case .ja: return "作成して開く"
+        case .ko: return "만들고 열기"
+        case .uk: return "Створити й відкрити"
+        case .zhHans: return "创建并打开"
+        case .zhTW, .zhHK: return "建立並開啟"
         }
     }
     static func localized(_ language: AppLanguage) -> Self {

@@ -79,7 +79,7 @@ final class CommandBarMeetingSearch {
             }
             return CommandBarEntry(id: (noteFilter == nil ? "action.meet." : "action.note.upcoming.") + event.id,
                                     title: event.title.isEmpty ? strings.untitled : event.title,
-                                    subtitle: relative + " · " + start + " · " + (noteFilter == nil ? (event.meetingURL?.host ?? "") : MeetingNoteStrings.prepareAndOpen(L10n.shared.language)),
+                                    subtitle: relative + " · " + start + " · " + (noteFilter == nil ? (event.meetingURL?.host ?? "") : MeetingNoteStrings.localized(L10n.shared.language).title),
                                     icon: .symbol(noteFilter == nil ? "video" : "doc.text"), countsUsage: false, run: { _ in
                 guard NotchCalendarSupport.isEnabled(), event.end > Date(),
                       EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
