@@ -316,6 +316,8 @@ final class NotchService: ObservableObject {
     private var ownInputSourceID: String?
     private var notchNeedsMonitor = false
     private var menuSpaceTimer: Timer?
+    private var appFullscreenTimer: Timer?
+    private var appFullscreenDisplays: Set<CGDirectDisplayID> = []
     private var menuSpaceReading = false
     private var menuSpaceGeneration = 0
     private var menuBarMeasurements = NotchMenuBarMeasurements()
@@ -1279,6 +1281,7 @@ final class NotchService: ObservableObject {
         showsOnAllDisplays = displayPreference == .all
         updateFullscreenDisplays()
         updateScreen()
+        syncAppFullscreenMonitoring()
         syncPointerFollowing()
         syncGestures()
         NotchTimerService.shared.syncWithPreferences()
@@ -1404,6 +1407,7 @@ final class NotchService: ObservableObject {
         screenRefreshWork?.cancel(); screenRefreshWork = nil
         displayArrivalWork?.cancel(); displayArrivalWork = nil
         displayArrival = nil
+        stopAppFullscreenMonitoring()
         nextMascotVisitWork?.cancel(); nextMascotVisitWork = nil
         mascotVisitWork?.cancel(); mascotVisitWork = nil
         mascotStepBackWork?.cancel(); mascotStepBackWork = nil
@@ -3448,11 +3452,13 @@ final class NotchService: ObservableObject {
     /// Only the copies ask which displays are in full screen, and only when
     /// the island hides there; the island asks for its own display.
     private func updateFullscreenDisplays() {
-        guard showsOnAllDisplays, UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen),
-              let topology = SpaceWindowBridge.topology() else { fullscreenDisplays = []; return }
+        guard showsOnAllDisplays, UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen)
+        else { fullscreenDisplays = []; return }
+        let covered = NotchAppFullscreen.coveredDisplays()
+        guard let topology = SpaceWindowBridge.topology() else { fullscreenDisplays = covered; return }
         let separate = NSScreen.screensHaveSeparateSpaces
         fullscreenDisplays = Set(NSScreen.screens.map(\.notchDisplayID).filter {
-            topology.isFullscreen(on: $0, separateSpaces: separate)
+            topology.isFullscreen(on: $0, separateSpaces: separate) || covered.contains($0)
         })
     }
 
@@ -3814,7 +3820,9 @@ final class NotchService: ObservableObject {
             displayIsFullscreen = fullscreen
             if let date = neonChargeAt { setChargingSignal(at: date) }
         }
-        let hidden = UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen) && fullscreen
+        // A game's own full screen leaves the desktop Space in place.
+        let hidden = UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen)
+            && (fullscreen || NotchAppFullscreen.coveredDisplays().contains(displayID))
         guard hidden != hiddenInFullscreen else { return }
         hiddenInFullscreen = hidden
         if hidden {
@@ -3850,6 +3858,37 @@ final class NotchService: ObservableObject {
         guard hiddenInFullscreen != wasHidden || (feedbackWingWidth > 0) != hadChargingWings else { return }
         syncVisibleConsumers()
         refreshPresentation(animated: false)
+    }
+
+    /// A game can enter or leave its own full screen while it stays
+    /// frontmost, with no Space or app change to announce it. A light poll
+    /// follows that only while the island hides in full screen.
+    private func syncAppFullscreenMonitoring() {
+        guard running, !suspended, UserDefaults.standard.bool(forKey: DefaultsKey.notchHideInFullscreen) else {
+            stopAppFullscreenMonitoring()
+            return
+        }
+        appFullscreenDisplays = NotchAppFullscreen.coveredDisplays()
+        guard appFullscreenTimer == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.readAppFullscreen() }
+        timer.tolerance = 0.3
+        appFullscreenTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func stopAppFullscreenMonitoring() {
+        appFullscreenTimer?.invalidate()
+        appFullscreenTimer = nil
+        appFullscreenDisplays = []
+    }
+
+    /// Only a change reevaluates the island, so a steady game costs one
+    /// window list read per second.
+    private func readAppFullscreen() {
+        let covered = NotchAppFullscreen.coveredDisplays()
+        guard covered != appFullscreenDisplays else { return }
+        appFullscreenDisplays = covered
+        fullscreenEnvironmentDidChange()
     }
 
     private func installObservers() {
