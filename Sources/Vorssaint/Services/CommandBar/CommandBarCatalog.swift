@@ -388,6 +388,12 @@ enum CommandBarCatalog {
                 trouble: canUseHistory ? nil
                     : .needsSetup(featureTitle: clipboard.title, page: .clipboard),
                 run: { _ in afterBeat(0.1) { ClipboardHistoryService.shared.showHistoryWindow() } }))
+            let diff = ClipboardDiffStrings.localized(language)
+            entries.append(CommandBarEntry(
+                id: "action.clipboardDiff", title: diff.title, subtitle: diff.subtitle,
+                keywords: "diff clipboard compare text", icon: .symbol("arrow.left.arrow.right"),
+                matchTitle: "diff",
+                run: { _ in afterBeat(0.1) { ClipboardDiffService.shared.show() } }))
             // Counted when the bar lists it: a copy made before confirming is kept.
             let recentIDs = ClipboardHistoryService.shared.recentEntriesSnapshot
             entries.append(CommandBarEntry(

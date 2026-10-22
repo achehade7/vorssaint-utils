@@ -86,6 +86,7 @@ enum ClipboardFeatureTests {
     }
 
     static func run(_ suite: TestSuite) {
+        ClipboardDiffTests.run(suite)
         ClipboardSensitiveTextPreferenceTests.run(suite)
         ClipboardPreviewContract.run(suite)
         ClipboardCaptureRestoreTests.run(suite)
