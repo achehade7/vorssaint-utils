@@ -531,13 +531,14 @@ final class ScreenshotService: ObservableObject {
 
     /// A history item returns to the same floating preview without repeating
     /// automatic copy or save actions that already ran when it was captured.
-    func restorePreview(_ capture: ScreenshotSelectionController.Capture, historyID: UUID? = nil) {
+    func restorePreview(_ capture: ScreenshotSelectionController.Capture, historyID: UUID? = nil,
+                        dismissInterval: TimeInterval? = ScreenshotSupport.recoveryPreviewDismissInterval) {
         preview?.close()
         presentPreview(capture,
                        defaultAction: .none,
                        initialSaved: nil,
                        completedActions: [],
-                       dismissInterval: ScreenshotSupport.recoveryPreviewDismissInterval,
+                       dismissInterval: dismissInterval,
                        latestCapture: nil,
                        historyID: historyID)
     }

@@ -14,6 +14,25 @@ import Foundation
 final class CommandBarScriptRunner {
     struct Result: Equatable {
         let text: String
+        var detail: String? = nil
+        var copyText: String?
+
+        init(text: String) { self.text = text; self.copyText = text }
+
+        /// Opt-in structured output keeps provenance visible without copying it.
+        /// Ordinary text and JSON from existing scripts remain unchanged.
+        static func decode(_ output: String) -> Result? {
+            guard let text = CommandBarLinks.resultText(output) else { return nil }
+            guard let data = text.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["vorssaintResult"] as? Int == 1,
+                  let title = object["text"] as? String, !title.isEmpty else { return Result(text: text) }
+            var result = Result(text: title)
+            result.detail = object["detail"] as? String
+            if let copy = object["copyText"] as? String { result.copyText = copy }
+            else if object["copyText"] is NSNull { result.copyText = nil }
+            return result
+        }
     }
 
     /// How long the query has to sit still before a script actually runs.
@@ -100,7 +119,7 @@ final class CommandBarScriptRunner {
         inFlight.insert(cacheKey)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let (status, output) = Shell.run(path, [argument], maxOutputBytes: 64 * 1024)
-            let text = CommandBarLinks.resultText(output)
+            let decoded = Result.decode(output)
             // The hop back happens whatever the script printed: a run that
             // ends with nothing to show still has to stop counting as one in
             // flight, or that key would never be runnable again.
@@ -109,8 +128,7 @@ final class CommandBarScriptRunner {
                 guard self.generation == runGeneration else { return }
                 self.inFlight.remove(cacheKey)
                 let whenAnswered = self.answerHandlers.removeValue(forKey: cacheKey)
-                guard let text = text ?? (status == 0 ? nil : self.failureText) else { return }
-                let result = Result(text: text)
+                guard let result = decoded ?? (status == 0 ? nil : Result(text: self.failureText)) else { return }
                 self.cache[cacheKey] = result
                 self.onResult?()
                 whenAnswered?(result)

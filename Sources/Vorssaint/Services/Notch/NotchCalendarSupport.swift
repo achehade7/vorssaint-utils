@@ -20,6 +20,7 @@ struct NotchCalendarEvent: Equatable, Identifiable, Sendable {
     let end: Date
     let allDay: Bool
     let location: String
+    var meetingURL: URL? = nil
     var color: NotchCalendarColor = .fallback
     var calendarItemIdentifier = ""
     var recurring = false
@@ -53,6 +54,23 @@ struct NotchCalendarChoice: Equatable, Identifiable, Sendable {
 }
 
 enum NotchCalendarSupport {
+    /// Only recognized HTTPS conferencing links may be joined directly.
+    static func meetingURL(url: URL?, location: String?, notes: String?) -> URL? {
+        let text = [url?.absoluteString, location, notes].compactMap { $0 }.joined(separator: "\n")
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
+        return detector.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
+            guard let url = match.url, url.scheme?.lowercased() == "https",
+                  url.user == nil, url.password == nil, let host = url.host?.lowercased(),
+                  host == "meet.google.com" || host == "zoom.us" || host.hasSuffix(".zoom.us")
+                    || host == "teams.microsoft.com" || host == "teams.live.com" else { return nil }
+            return url
+        }.first
+    }
+
+    static func nextMeeting(_ events: [NotchCalendarEvent], now: Date) -> NotchCalendarEvent? {
+        upcoming(events, now: now).first { !$0.allDay && $0.meetingURL != nil }
+    }
+
     static let countdownLeadTime: TimeInterval = 60 * 60
 
     static func monthDays(containing date: Date, calendar: Calendar = .current) -> [Date] {

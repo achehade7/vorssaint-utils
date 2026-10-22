@@ -633,6 +633,18 @@ enum CommandBarFeatureTests {
             returnOnScript(copyPath, typed: "co", saved: [copyPath], sameOpening: true)
             suite.expect(ScriptRunHost.copied == ["/tmp/notes"] && bar.hidden == 1 && runs(copyPath) == 1,
                    "a script that already answered copies the answer and closes the bar")
+            let fx = script("fx", printing: #"{"vorssaintResult":1,"text":"80.00 EUR","detail":"ECB · 2026-10-22","copyText":"80.00"}"#)
+            returnOnScript(fx, typed: "fx", saved: [fx])
+            suite.expect(ScriptRunHost.copied.isEmpty && bar.hidden == 0,
+                         "a currency result previews without copying or closing")
+            ScriptRunHost.runScript(fx)
+            suite.expect(ScriptRunHost.copied == ["80.00"] && bar.hidden == 1 && runs(fx) == 1,
+                         "Return copies only the converted number, not currency provenance")
+            let fxHelp = script("fx", printing: #"{"vorssaintResult":1,"text":"Currency conversion","detail":"Use fx 100 usd eur","copyText":null}"#)
+            returnOnScript(fxHelp, typed: "fx", saved: [fxHelp])
+            returnOnScript(fxHelp, typed: "fx", saved: [fxHelp], sameOpening: true)
+            suite.expect(ScriptRunHost.copied.isEmpty && bar.hidden == 0,
+                         "Return on currency help preserves the clipboard and open field")
             var needsInput = script("Copy Path", printing: "/tmp/notes")
             needsInput.runsWithoutArgument = false
             returnOnScript(needsInput, typed: "co", saved: [needsInput])
@@ -767,6 +779,19 @@ enum CommandBarFeatureTests {
                "one prefix remembers a few rows, and the one picked least drops out")
 
         // MARK: Finding a file from the bar
+        suite.expect(CommandBarFileSearchSupport.isRecentQuery(" ReCeNt ")
+                     && !CommandBarFileSearchSupport.isRecentQuery("recent report"),
+                     "recent is an explicit command, not a filename prefix")
+        let recentExpression = CommandBarFileSearchSupport.expression(for: "recent") ?? ""
+        suite.expect(recentExpression.contains("kMDItemLastUsedDate")
+                     && recentExpression.contains("kMDItemContentModificationDate")
+                     && recentExpression.contains("public.folder") && recentExpression.contains("*.md"),
+                     "recent asks for opened folders and opened or edited Markdown notes")
+        let opened = Date(timeIntervalSince1970: 100)
+        let edited = Date(timeIntervalSince1970: 200)
+        suite.expect(CommandBarFileSearchSupport.recentDate(lastUsed: opened, modified: edited, isFolder: false) == edited
+                     && CommandBarFileSearchSupport.recentDate(lastUsed: opened, modified: edited, isFolder: true) == opened,
+                     "note edits count as recent but build activity inside a folder does not")
         suite.expect(CommandBarFileSearchSupport.expression(for: "annual report")
                 == "kMDItemFSName == \"*annual*\"cd && kMDItemFSName == \"*report*\"cd",
                "every word has to be in the name, in any order")
@@ -1998,6 +2023,14 @@ enum CommandBarFeatureTests {
         suite.expect(CommandBarDates.evaluate("hora em londres", now: tuesday, calendar: gregorian,
                                         locale: english)?.detail.hasPrefix("London") == true,
                "a city named the way the person's language names it")
+        suite.expect(dated("tz tokyo") == dated("time in tokyo")
+                     && CommandBarDates.evaluate("tz tokyo", now: tuesday, locale: english)?.detail.contains("+07:00") == true,
+                     "tz reuses the time answer and shows Tokyo's summer offset from Berlin")
+        let winter = Date(timeIntervalSince1970: 1768478400)
+        suite.expect(CommandBarDates.evaluate("tz tokyo", now: winter, locale: english)?.detail.contains("+08:00") == true,
+                     "the Berlin comparison follows daylight saving time")
+        suite.expect(CommandBarDates.evaluate("tz kolkata", now: tuesday, locale: english)?.detail.contains("+03:30") == true,
+                     "fractional-hour zones retain their minutes")
         suite.expect(CommandBarDates.evaluate("time", now: tuesday, calendar: gregorian,
                                         locale: english) == nil,
                "a time word with nowhere to look is not an answer")
@@ -2041,6 +2074,38 @@ enum CommandBarFeatureTests {
             CommandBarLink(name: "", kind: .link, destination: "x"),
             CommandBarLink(name: "ok", kind: .link, destination: "x"),
         ])).count == 1, "a half-written shortcut never survives a round trip")
+        let jira = CommandBarLink(name: "j", kind: .link,
+                                  destination: "https://example.com/browse/{query}",
+                                  emptyQueryDestination: "https://example.com/board?filter=mine&groupBy=none")
+        suite.expect(CommandBarLinks.destination(for: jira, argument: "") == jira.emptyQueryDestination,
+                     "a bare search command opens its configured landing page")
+        let ticketDestination = CommandBarLinks.destination(for: jira, argument: "SAP-531")!
+        suite.expect(CommandBarLinks.expand(ticketDestination, kind: .link, query: "SAP-531")
+                     == "https://example.com/browse/SAP-531",
+                     "a search argument still opens the individual ticket")
+        suite.expect(CommandBarLinks.decode(CommandBarLinks.encode([jira])) == [jira],
+                     "the search landing page survives a settings round trip")
+        let oldSearch = CommandBarLink(name: "old", kind: .link, destination: "https://example.com/{query}")
+        suite.expect(CommandBarLinks.destination(for: oldSearch, argument: "") == nil,
+                     "searches without landing pages still request an argument")
+        var blankLanding = oldSearch
+        blankLanding.emptyQueryDestination = "  "
+        suite.expect(CommandBarLinks.destination(for: blankLanding, argument: "") == nil,
+                     "a blank landing page does not open an empty address")
+        let oldData = Data(#"[{"name":"j","kind":"link","destination":"https://example.com/{query}"}]"#.utf8)
+        suite.expect(CommandBarLinks.decode(oldData).first?.emptyQueryDestination == nil,
+                     "older saved links decode without a landing page")
+        typealias ScriptResult = ScriptRunHost.CommandBarScriptRunner.Result
+        let currencyResult = ScriptResult.decode(#"{"vorssaintResult":1,"text":"80.00 EUR","detail":"ECB · 2026-10-22","copyText":"80.00"}"#)
+        suite.expect(currencyResult?.text == "80.00 EUR" && currencyResult?.detail == "ECB · 2026-10-22"
+                     && currencyResult?.copyText == "80.00",
+                     "structured script output separates the amount copied from its currency and provenance")
+        let helpResult = ScriptResult.decode(#"{"vorssaintResult":1,"text":"Currency conversion","detail":"Use fx 100 usd eur","copyText":null}"#)
+        suite.expect(helpResult != nil && helpResult?.copyText == nil,
+                     "script help and errors cannot replace the user's clipboard")
+        suite.expect(ScriptResult.decode(" ordinary answer ")?.copyText == "ordinary answer"
+                     && ScriptResult.decode(#"{"text":"ordinary JSON"}"#)?.copyText == #"{"text":"ordinary JSON"}"#,
+                     "existing plain-text and JSON script answers retain their copying behavior")
         // MARK: The other names macOS knows an app by
         suite.expect(SpotlightNamesSupport.usableAlternateNames(["Legacy Planner", "Planner.app"],
                                                           displayName: "Planner",

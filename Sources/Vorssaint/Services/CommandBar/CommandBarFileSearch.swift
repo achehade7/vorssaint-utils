@@ -95,6 +95,7 @@ final class CommandBarFileSearch {
             guard let self else { return }
             let found = self.search(expression: expression,
                                     scopes: scopes,
+                                    recent: CommandBarFileSearchSupport.isRecentQuery(query),
                                     cancellationGeneration: runCancellationGeneration)
             let paths = CommandBarFileSearchSupport.offerable(
                 paths: found,
@@ -117,11 +118,14 @@ final class CommandBarFileSearch {
     /// The Spotlight call itself, kept inside one synchronous function so the
     /// query object never outlives it.
     private func search(expression: String,
-                        scopes: [String],
+                        scopes: [String], recent: Bool,
                         cancellationGeneration runGeneration: Int) -> [String] {
         let liveScopes = scopes.filter(Self.isSearchableDirectory)
         guard !liveScopes.isEmpty else { return [] }
-        guard let query = MDQueryCreate(kCFAllocatorDefault, expression as CFString, nil, nil)
+        let sortAttributes: CFArray? = recent
+            ? [kMDItemLastUsedDate as String, kMDItemContentModificationDate as String,
+               kMDItemContentType as String] as CFArray : nil
+        guard let query = MDQueryCreate(kCFAllocatorDefault, expression as CFString, nil, sortAttributes)
         else { return [] }
         let canStart = activeQueryLock.withLock {
             guard cancellationGeneration == runGeneration else { return false }
@@ -132,6 +136,17 @@ final class CommandBarFileSearch {
         defer {
             activeQueryLock.withLock {
                 if activeQuery?.generation == runGeneration { activeQuery = nil }
+            }
+        }
+        if recent {
+            MDQuerySetSortComparatorBlock(query) { left, right in
+                let a = CommandBarFileSearchSupport.recentDate(
+                    lastUsed: left?[0]?.takeUnretainedValue() as? Date, modified: left?[1]?.takeUnretainedValue() as? Date,
+                    isFolder: left?[2]?.takeUnretainedValue() as? String == "public.folder")
+                let b = CommandBarFileSearchSupport.recentDate(
+                    lastUsed: right?[0]?.takeUnretainedValue() as? Date, modified: right?[1]?.takeUnretainedValue() as? Date,
+                    isFolder: right?[2]?.takeUnretainedValue() as? String == "public.folder")
+                return a > b ? .compareLessThan : a < b ? .compareGreaterThan : .compareEqualTo
             }
         }
         MDQuerySetMaxCount(query, CFIndex(CommandBarFileSearchSupport.candidateLimit))
@@ -146,6 +161,7 @@ final class CommandBarFileSearch {
             guard let path = MDItemCopyAttribute(item, kMDItemPath) as? String else { continue }
             paths.append(path)
         }
+        if recent { return paths }
         // A name a person recognizes first, then the path, so two Macs with
         // the same files answer in the same order.
         return paths.sorted {

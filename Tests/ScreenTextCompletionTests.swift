@@ -58,6 +58,17 @@ enum ScreenTextCompletionTests {
         static var messages: [String] = []
         static func show(icon: String, message: String) { messages.append(message) }
     }
+    final class ScreenTextPreviewController {
+        static let shared = ScreenTextPreviewController()
+        var texts: [String] = []
+        var available = true
+        func close() {}
+        func show(text: String) -> Bool {
+            guard available else { return false }
+            texts.append(text)
+            return true
+        }
+    }
     final class QRResultController {
         static let shared = QRResultController()
         var readings: [String] = []
@@ -91,6 +102,8 @@ enum ScreenTextCompletionTests {
                                DefaultsKey.screenOCRRemoveLineBreaks: true]
         NSPasteboard.general.value = "original"
         NSPasteboard.general.changeCount = 0
+        ScreenTextPreviewController.shared.texts = []
+        ScreenTextPreviewController.shared.available = true
         QuickToolHUD.messages = []
         QRResultController.shared.readings = []
         State.outcomes = [:]
@@ -112,12 +125,22 @@ enum ScreenTextCompletionTests {
         suite.expect(NSPasteboard.general.value == "original" && State.requests.isEmpty,
                      "preview OCR does not block or copy before background recognition")
         finish()
-        suite.expect(NSPasteboard.general.value == "capture 42" && QuickToolHUD.messages == ["copied"],
+        suite.expect(NSPasteboard.general.value == "capture 42"
+                     && ScreenTextPreviewController.shared.texts == ["capture 42"]
+                     && QuickToolHUD.messages.isEmpty,
                      "an unchanged clipboard receives the recognized text and success feedback")
         suite.expect(State.requests.count == 1 && State.requests[0].image == 42
                      && !State.requests[0].qr && State.requests[0].joinLines
                      && State.requests[0].languages == ["en-US"],
                      "preview OCR uses the captured image and language/line preferences, bypassing QR")
+
+        reset()
+        ScreenTextPreviewController.shared.available = false
+        let fallback = ScreenTextService()
+        fallback.copyText(from: 43)
+        finish()
+        suite.expect(NSPasteboard.general.value == "capture 43" && QuickToolHUD.messages == ["copied"],
+                     "OCR still copies and confirms when the island cannot show a preview")
 
         reset()
         State.scaledImages[60] = 24
@@ -137,7 +160,8 @@ enum ScreenTextCompletionTests {
             if !duringRecognition { DispatchQueue.background.drain() }
             NSPasteboard.general.write("newer user copy")
             finish()
-            suite.expect(NSPasteboard.general.value == "newer user copy" && QuickToolHUD.messages.isEmpty,
+            suite.expect(NSPasteboard.general.value == "newer user copy" && QuickToolHUD.messages.isEmpty
+                         && ScreenTextPreviewController.shared.texts.isEmpty,
                          "OCR preserves a newer copy made before or after recognition finishes")
         }
 
@@ -179,7 +203,9 @@ enum ScreenTextCompletionTests {
             latest.copyText(from: 2)
             if newestFirst { DispatchQueue.background.pending.reverse() }
             finish()
-            suite.expect(NSPasteboard.general.value == "capture 2" && QuickToolHUD.messages == ["copied"],
+            suite.expect(NSPasteboard.general.value == "capture 2"
+                         && ScreenTextPreviewController.shared.texts == ["capture 2"]
+                         && QuickToolHUD.messages.isEmpty,
                          "only the latest OCR request copies, with newestFirst=\(newestFirst)")
         }
 

@@ -26,7 +26,10 @@ private actor NotchCalendarReader {
             return NotchCalendarEvent(id: identifier + ":" + String(start.timeIntervalSinceReferenceDate),
                                       title: event.title ?? "", calendar: event.calendar.title,
                                       start: start, end: end, allDay: event.isAllDay,
-                                      location: event.location ?? "", color: Self.tint(event.calendar),
+                                      location: event.location ?? "",
+                                      meetingURL: NotchCalendarSupport.meetingURL(
+                                        url: event.url, location: event.location, notes: event.notes),
+                                      color: Self.tint(event.calendar),
                                       calendarItemIdentifier: event.calendarItemIdentifier,
                                       recurring: recurring, countdownKey: countdownKey)
         }
@@ -76,6 +79,16 @@ final class NotchCalendarService: NSObject, ObservableObject {
     /// the island's reader is stopped, since the list is edited from Settings.
     func calendarChoices() async -> [NotchCalendarChoice] {
         await (reader ?? NotchCalendarReader()).calendars()
+    }
+
+    /// One current read for the command bar, independent of the month being browsed.
+    func meetingEvents(now: Date = Date()) async -> [NotchCalendarEvent] {
+        guard NotchCalendarSupport.isEnabled(),
+              EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return [] }
+        let end = Calendar.current.date(byAdding: .day, value: 7, to: now) ?? now
+        return await (reader ?? NotchCalendarReader()).read(
+            interval: DateInterval(start: now, end: end),
+            excluded: NotchCalendarSupport.excludedCalendars())
     }
 
     func isChosen(_ event: NotchCalendarEvent) -> Bool {

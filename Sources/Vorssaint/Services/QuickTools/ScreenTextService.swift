@@ -32,6 +32,7 @@ final class ScreenTextService: ObservableObject {
     }
 
     private func cancelSession() {
+        ScreenTextPreviewController.shared.close()
         recognitionGeneration += 1
     }
 
@@ -61,6 +62,7 @@ final class ScreenTextService: ObservableObject {
 
     private func recognize(_ image: CGImage, detectQRCodes: Bool) {
         guard AppFeature.screenOCR.isAvailable else { return }
+        ScreenTextPreviewController.shared.close()
         recognitionGeneration += 1
         let generation = recognitionGeneration
         let pasteboardChangeCount = NSPasteboard.general.changeCount
@@ -86,7 +88,9 @@ final class ScreenTextService: ObservableObject {
                     QRResultController.shared.show(reading: reading)
                 case .text(let text):
                     Self.copyToPasteboard(text)
-                    QuickToolHUD.show(icon: "text.viewfinder", message: strings.ocrCopied)
+                    if !ScreenTextPreviewController.shared.show(text: text) {
+                        QuickToolHUD.show(icon: "text.viewfinder", message: strings.ocrCopied)
+                    }
                 case .empty:
                     QuickToolHUD.show(icon: "text.viewfinder", message: strings.ocrNoText)
                 }

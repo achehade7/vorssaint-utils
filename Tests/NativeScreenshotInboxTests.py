@@ -18,7 +18,10 @@ struct InboxDefaults {
 }
 enum Event { case capture }
 enum NotchSupport { static func routes(_ event: Event) -> Bool { true } }
-enum ScreenshotSupport { static let recentCaptureLimit = 12 }
+enum ScreenshotSupport {
+ static let recentCaptureLimit = 12
+ static func confirmationPreviewDismissInterval() -> TimeInterval? { 3 }
+}
 class NotchService { static let shared = NotchService(); var acceptsSystemFeedback = true }
 enum ScreenshotSelectionController { struct Capture { let image: CGImage; let scale: CGFloat; let anchorRect: CGRect } }
 class RecentCaptureService {
@@ -31,7 +34,8 @@ class RecentCaptureService {
 class ScreenshotService {
  static let shared = ScreenshotService()
  var arrivals = 0
- func restorePreview(_ capture: ScreenshotSelectionController.Capture, historyID: UUID?) {
+ func restorePreview(_ capture: ScreenshotSelectionController.Capture, historyID: UUID?, dismissInterval: TimeInterval?) {
+  precondition(dismissInterval == 3)
   precondition(historyID != nil && RecentCaptureService.shared.recorded.contains(historyID!))
   arrivals += 1
  }

@@ -38,13 +38,27 @@ enum CommandBarFileSearchSupport {
     /// The query in Spotlight's own language, or nil when there is nothing
     /// worth asking. Every word has to appear in the file's name, in any
     /// order, which is what makes "annual report" find "Report annual.pdf".
+    static func isRecentQuery(_ query: String) -> Bool {
+        query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "recent"
+    }
+
     static func expression(for query: String) -> String? {
+        if isRecentQuery(query) {
+            return "(kMDItemContentType == 'public.folder' && kMDItemLastUsedDate >= $time.today(-30)) || "
+                + "(kMDItemFSName == '*.md'cd && (kMDItemLastUsedDate >= $time.today(-30) || "
+                + "kMDItemContentModificationDate >= $time.today(-30)))"
+        }
         let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
         guard !words.isEmpty,
               query.trimmingCharacters(in: .whitespaces).count >= shortestQuery
         else { return nil }
         let clauses = words.map { "kMDItemFSName == \"*\(escaped($0))*\"cd" }
         return clauses.joined(separator: " && ")
+    }
+
+    static func recentDate(lastUsed: Date?, modified: Date?, isFolder: Bool) -> Date {
+        let opened = lastUsed ?? .distantPast
+        return isFolder ? opened : max(opened, modified ?? .distantPast)
     }
 
     /// What a word has to look like inside that expression. The wildcards are

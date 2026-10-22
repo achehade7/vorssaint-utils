@@ -43,7 +43,7 @@ enum CommandBarDates {
         "까지", "까지는",
     ]
     private static let timeWords: Set<String> = [
-        "time", "hora", "horas", "hour", "uhrzeit", "uhr", "ora", "heure",
+        "tz", "time", "hora", "horas", "hour", "uhrzeit", "uhr", "ora", "heure",
         "время", "saat", "時刻", "時間", "시간", "时间", "现在",
     ]
 
@@ -70,6 +70,7 @@ enum CommandBarDates {
     /// uses. The database covers the rest on its own, so this stays a handful
     /// rather than a table to maintain.
     private static let placeAliases: [String: String] = [
+        "kolkata": "Calcutta",
         "londres": "London", "lisboa": "Lisbon", "roma": "Rome",
         "moscou": "Moscow", "moscovo": "Moscow", "москва": "Moscow",
         "nova york": "New_York", "nueva york": "New_York", "nova iorque": "New_York",
@@ -207,8 +208,14 @@ enum CommandBarDates {
         day.timeStyle = .none
         let place = zone.identifier.split(separator: "/").last
             .map { $0.replacingOccurrences(of: "_", with: " ") } ?? zone.identifier
-        return Result(formatted: time.string(from: now),
-                      detail: place + " · " + day.string(from: now))
+        var detail = place + " · " + day.string(from: now)
+        if tokens.first == "tz", let berlin = TimeZone(identifier: "Europe/Berlin") {
+            let seconds = zone.secondsFromGMT(for: now) - berlin.secondsFromGMT(for: now)
+            let difference = (seconds < 0 ? "−" : "+")
+                + String(format: "%02d:%02d", abs(seconds) / 3600, abs(seconds) % 3600 / 60)
+            detail += " · Berlin → " + place + " " + difference
+        }
+        return Result(formatted: time.string(from: now), detail: detail)
     }
 
     // MARK: - Writing and reading dates

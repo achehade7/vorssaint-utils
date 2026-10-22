@@ -35,6 +35,7 @@ provider_colors = (repo / "Sources/Vorssaint/UI/Notch/NotchAgentComponents.swift
 provider_colors = provider_colors[provider_colors.index("extension AgentProvider {"):provider_colors.index("\n}\n") + 2]
 service_source = (repo / "Sources/Vorssaint/Services/Notch/NotchService.swift").read_text()
 meeting_handler = declaration("    func signalMeetingStarted(at", service_source)
+meeting_click = declaration("        if selectedNotice.meetingReminder {", service_source)
 reminder_handler = declaration("    func signalMeetingReminder(title:", service_source)
 notice_can_present = declaration("    private var noticeCanPresent:", service_source).replace("private ", "", 1)
 notice_changed = declaration(".onChange(of: service.notice) { _, notice in")
@@ -105,6 +106,7 @@ final class MeetingService {
     var captureControls: Bool?
     var neonMeetingAt: Date?
     var lastMeetingReminderStart: Date?
+    var lastMeetingAnnouncementStart: Date?
     var notices: [NotchNotice] = []
     func show(_ notice: NotchNotice) -> Bool {
         guard canShow else { return false }
@@ -115,20 +117,42 @@ NOTICE_CAN_PRESENT
 MEETING_HANDLER
 REMINDER_HANDLER
 }
+final class NSWorkspace {
+    static let shared = NSWorkspace()
+    var opened: [URL] = []
+    func open(_ url: URL) { opened.append(url) }
+}
+final class MeetingClickHost {
+    enum Page { case calendar }
+    var dismissed = 0, calendars = 0
+    func dismissNotice() { dismissed += 1 }
+    func open(_ page: Page) { calendars += 1 }
+    func click(_ selectedNotice: NotchNotice) {
+MEETING_CLICK
+    }
+}
 enum AppLanguage: String { case enUS = "en-US" }
 struct L10n {
     static let shared = L10n()
     let language = AppLanguage.enUS
 }
 struct FeatureStrings {
-    struct CalendarText { let untitled = "Untitled event" }
+    struct CalendarText { let untitled = "Untitled event"; let ongoing = "Happening now" }
     static func notchCalendar(_ language: AppLanguage) -> CalendarText { CalendarText() }
+}
+enum NotchCalendarSupport {
+    static func meetingURL(url: URL?, location: String?, notes: String?) -> URL? {
+        guard url?.scheme == "https", url?.host == "meet.google.com" else { return nil }
+        return url
+    }
 }
 enum NotchEvent { case systemNotification, agents }
 struct NotchNotice {
     let event: NotchEvent
     let title: String, detail: String, symbol: String
     var meetingReminder = false
+    var meetingStartsNow = false
+    var meetingURL: URL? = nil
     var audioHandoff = false
     var terminalStatus: Int?
     struct Notification { var app: String }
@@ -354,13 +378,43 @@ expect(blank.notices.first?.title == "Untitled event", "blank title reuses the c
 let long = MeetingService()
 long.signalMeetingReminder(title: String(repeating: "界", count: 200), start: reminderStart, at: Date())
 expect(long.notices.first?.title.count == 160, "long Unicode titles are bounded without splitting characters")
+let starting = MeetingService()
+let startDate = Date().addingTimeInterval(-0.01)
+let joinLink = "https://meet.google.com/abc-defg-hij"
+starting.signalMeetingStarted(at: startDate, title: " Planning ", start: startDate, url: joinLink)
+expect(starting.notices.count == 1 && starting.notices[0].title == "Planning"
+       && starting.notices[0].meetingStartsNow && starting.notices[0].meetingURL?.absoluteString == joinLink,
+       "start banner preserves the exact Meet link and title")
+starting.signalMeetingStarted(at: startDate, title: "Duplicate", start: startDate, url: joinLink)
+expect(starting.notices.count == 1, "a duplicate start cannot repeat the banner")
+let linkedReminder = MeetingService()
+linkedReminder.signalMeetingReminder(title: "Planning", start: reminderStart, at: Date(), url: joinLink)
+expect(linkedReminder.notices.first?.meetingURL?.absoluteString == joinLink,
+       "ten-minute reminder also preserves the direct call link")
+for offset in [-5.0, 5.0] {
+    let late = MeetingService()
+    late.signalMeetingStarted(at: Date(), title: "Missed", start: Date().addingTimeInterval(offset), url: joinLink)
+    expect(late.notices.isEmpty, "early and missed starts do not announce")
+}
+let missingLink = MeetingService()
+missingLink.signalMeetingStarted(at: startDate, title: "No call", start: startDate, url: "https://example.com")
+expect(missingLink.notices.first?.meetingURL == nil, "unrelated event URL keeps the Calendar fallback")
+let clicks = MeetingClickHost()
+clicks.click(starting.notices[0])
+clicks.click(linkedReminder.notices[0])
+expect(NSWorkspace.shared.opened.map(\.absoluteString) == [joinLink, joinLink]
+       && clicks.dismissed == 2 && clicks.calendars == 0,
+       "both meeting banners dismiss and open Google Meet directly, not Calendar")
+clicks.click(missingLink.notices[0])
+expect(clicks.calendars == 1 && NSWorkspace.shared.opened.count == 2,
+       "only a meeting without a call link opens Calendar")
 print("PASS: \(checks) agent neon checks")
 '''
 for token, value in [("SIGNATURE", signature), ("DURATION", duration), ("SIGNAL", signal),
                      ("ELECTRIC_PROFILE", charging_signal), ("CHARGE", charge),
                      ("RECEIVE", receive), ("APPEARANCE", appearance), ("RENDERING", rendering),
                      ("PROVIDER_COLORS", provider_colors), ("PROGRESS_ADVANCING", progress_advancing),
-                     ("MEETING_HANDLER", meeting_handler), ("REMINDER_HANDLER", reminder_handler),
+                     ("MEETING_CLICK", meeting_click), ("MEETING_HANDLER", meeting_handler), ("REMINDER_HANDLER", reminder_handler),
                      ("NOTICE_CAN_PRESENT", notice_can_present), ("NOTICE_CHANGED", notice_changed)]:
     swift = swift.replace(token, value)
 

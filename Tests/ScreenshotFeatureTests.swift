@@ -977,6 +977,9 @@ enum ScreenshotFeatureTests {
         let recovery = ScreenshotSupport.QuickPreviewPresentation.shown(
             dismissInterval: ScreenshotSupport.recoveryPreviewDismissInterval)
         routeDefaults.set(true, forKey: DefaultsKey.screenshotPreviewEnabled)
+        suite.expect(ScreenshotSupport.confirmationPreviewDismissInterval(defaults: routeDefaults) == 3
+                     && routePreview(.copy, copied: true) == .shown(dismissInterval: 3),
+                     "native and app confirmations share the three-second default")
         routeDefaults.set(10, forKey: DefaultsKey.screenshotPreviewDuration)
         suite.expect(routePreview(.save, saved: true) == .shown(dismissInterval: 10)
                 && routePreview(.copy, copied: true) == .shown(dismissInterval: 10)

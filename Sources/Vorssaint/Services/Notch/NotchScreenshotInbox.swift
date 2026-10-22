@@ -74,7 +74,9 @@ final class NotchScreenshotInbox {
                         scale: scale, anchorRect: anchor)
                     let historyID = RecentCaptureService.shared.recordScreenshot(capture)
                     if path == native.last {
-                        ScreenshotService.shared.restorePreview(capture, historyID: historyID)
+                        ScreenshotService.shared.restorePreview(
+                            capture, historyID: historyID,
+                            dismissInterval: ScreenshotSupport.confirmationPreviewDismissInterval())
                     }
                 }
             }

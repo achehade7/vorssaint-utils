@@ -34,6 +34,8 @@ struct CommandBarLink: Codable, Identifiable, Equatable {
     var kind = Kind.link
     /// The destination, with placeholders still in it.
     var destination = ""
+    /// Optional landing page when a saved search is run without a query.
+    var emptyQueryDestination: String? = nil
     /// Whether the bare name is enough to run a script, with nothing after it.
     ///
     /// Off unless the person says otherwise, because a script is run when
@@ -74,6 +76,7 @@ extension CommandBarLink {
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         kind = try container.decodeIfPresent(Kind.self, forKey: .kind) ?? .link
         destination = try container.decodeIfPresent(String.self, forKey: .destination) ?? ""
+        emptyQueryDestination = try container.decodeIfPresent(String.self, forKey: .emptyQueryDestination)
         runsWithoutArgument = try container.decodeIfPresent(Bool.self,
                                                             forKey: .runsWithoutArgument) ?? false
         runsDirectly = try container.decodeIfPresent(Bool.self,
@@ -131,6 +134,15 @@ enum CommandBarLinks {
             result = result.replacingOccurrences(of: placeholder.token, with: value)
         }
         return result
+    }
+
+    /// Existing searches still ask for input unless a landing page is configured.
+    static func destination(for link: CommandBarLink, argument: String) -> String? {
+        guard link.takesQuery, argument.isEmpty else { return link.destination }
+        guard link.kind == .link,
+              let landing = link.emptyQueryDestination?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !landing.isEmpty else { return nil }
+        return landing
     }
 
     /// Where a saved place sits on the disk, for the rows that can be shown

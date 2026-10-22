@@ -281,6 +281,14 @@ enum ScreenshotSupport {
         return duration == 0 ? nil : TimeInterval(duration)
     }
 
+    static func confirmationPreviewDismissInterval(defaults: UserDefaults = .standard) -> TimeInterval? {
+        // A stored value that is not a number reads as the default duration,
+        // not as 0, which would keep every confirmation until dismissed.
+        let duration = (defaults.object(forKey: DefaultsKey.screenshotPreviewDuration) as? NSNumber)?
+            .intValue ?? defaultConfirmationPreviewDuration
+        return confirmationPreviewDismissInterval(duration)
+    }
+
     static func sharedPreviewDismissInterval(base: TimeInterval?) -> TimeInterval? {
         base == nil ? nil : 30
     }
@@ -351,11 +359,7 @@ enum ScreenshotSupport {
         guard automaticActionSucceeded(defaultAction, saved: saved, copied: copied) else {
             return .shown(dismissInterval: recoveryPreviewDismissInterval)
         }
-        // A stored value that is not a number reads as the default duration,
-        // not as 0, which would keep every confirmation until dismissed.
-        let duration = (defaults.object(forKey: DefaultsKey.screenshotPreviewDuration) as? NSNumber)?
-            .intValue ?? defaultConfirmationPreviewDuration
-        return .shown(dismissInterval: confirmationPreviewDismissInterval(duration))
+        return .shown(dismissInterval: confirmationPreviewDismissInterval(defaults: defaults))
     }
 
     /// Captures go to the shelf on their own only while the shelf is

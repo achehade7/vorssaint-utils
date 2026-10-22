@@ -1406,7 +1406,7 @@ enum CommandBarCatalog {
         // A saved search with nothing to search for puts its own name in the
         // field instead of opening an empty result page. The bar was kept open
         // for this, so there is a field to put it in.
-        if link.takesQuery, argument.isEmpty {
+        guard let destination = CommandBarLinks.destination(for: link, argument: argument) else {
             service.prefill(link.name + " ")
             return
         }
@@ -1417,8 +1417,8 @@ enum CommandBarCatalog {
         let date = DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .none)
         let selection = service.selectionWhenRun
         service.hide()
-        withClipboard(neededBy: link.destination) { copied in
-            let expanded = CommandBarLinks.expand(link.destination,
+        withClipboard(neededBy: destination) { copied in
+            let expanded = CommandBarLinks.expand(destination,
                                                   kind: link.kind,
                                                   query: argument,
                                                   clipboard: copied,
@@ -1481,7 +1481,8 @@ enum CommandBarCatalog {
             return
         }
         if let cached = service.scriptRunner.cachedResult(linkID: link.id, argument: argument) {
-            copyAnswer(cached.text)
+            guard let text = cached.copyText else { return }
+            copyAnswer(text)
             service.hide()
             return
         }
@@ -1502,7 +1503,8 @@ enum CommandBarCatalog {
             guard case .search = service.mode,
                   service.activeCategory == categoryWhenActivated,
                   service.query == queryWhenActivated else { return }
-            copyAnswer(result.text)
+            guard let text = result.copyText else { return }
+            copyAnswer(text)
             service.hide()
         }
     }
@@ -1515,11 +1517,12 @@ enum CommandBarCatalog {
         CommandBarEntry(
             id: "link.\(link.id.uuidString)",
             title: result.text,
-            subtitle: bar.copyHint,
+            subtitle: result.detail ?? bar.copyHint,
             icon: .symbol(link.kind.symbolName),
             isAnswer: true,
             countsUsage: false,
-            run: { _ in copyAnswer(result.text) })
+            keepsBarOpen: result.copyText == nil,
+            run: { _ in if let text = result.copyText { copyAnswer(text) } })
     }
 
     // MARK: - What is selected right now

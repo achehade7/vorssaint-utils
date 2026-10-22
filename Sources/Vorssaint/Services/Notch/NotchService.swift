@@ -18,7 +18,10 @@ struct NotchNotice: Equatable {
     var terminalStatus: Int? = nil
     var audioHandoff = false
     var meetingReminder = false
+    var meetingStartsNow = false
+    var meetingURL: URL? = nil
     var replayed = false
+    var duration: TimeInterval { meetingStartsNow ? 4 : replayed ? 3 : event.duration }
     /// The agent an AI notice is about, which tints its mark.
     var agent: AgentProvider? = nil
     /// With the companion on, it takes the symbol's place in the notice and
@@ -159,6 +162,7 @@ final class NotchService: ObservableObject {
     @Published private(set) var neonCopyAt: Date?
     @Published private(set) var neonMeetingAt: Date?
     private var lastMeetingReminderStart: Date?
+    private var lastMeetingAnnouncementStart: Date?
     @Published private(set) var nightPalette: Double = 0
     @Published private(set) var routingFileDrag = false
     @Published private(set) var dragTargetWorkspace: String?
@@ -1640,15 +1644,28 @@ final class NotchService: ObservableObject {
 
     /// SketchyBar already owns the calendar read and one-shot start timer.
     /// Never revive a queued signal on unlock, quiet restore or fullscreen exit.
-    func signalMeetingStarted(at date: Date) {
+    func signalMeetingStarted(at date: Date, title: String? = nil, start: Date? = nil, url: String? = nil) {
+        let now = Date()
         guard acceptsSystemFeedback, !displayIsFullscreen, captureControls == nil,
-              (0..<2).contains(Date().timeIntervalSince(date)) else { return }
-        neonMeetingAt = date
+              (0..<2).contains(now.timeIntervalSince(date)) else { return }
+        guard let title, let start else { neonMeetingAt = date; return }
+        guard noticeCanPresent, (0..<3).contains(now.timeIntervalSince(start)),
+              lastMeetingAnnouncementStart != start else { return }
+        let label = String(title.components(separatedBy: .controlCharacters).joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
+        let strings = FeatureStrings.notchCalendar(L10n.shared.language)
+        let join = NotchCalendarSupport.meetingURL(url: url.flatMap(URL.init(string:)), location: nil, notes: nil)
+        if show(NotchNotice(event: .systemNotification, title: label.isEmpty ? strings.untitled : label,
+                            detail: strings.ongoing, symbol: "calendar", meetingReminder: true,
+                            meetingStartsNow: true, meetingURL: join)) {
+            lastMeetingAnnouncementStart = start
+            neonMeetingAt = date
+        }
     }
 
     /// A single ten-minute notice from SketchyBar's existing calendar feed.
     /// Missed reminders never queue behind quiet mode, sleep or an open tool.
-    func signalMeetingReminder(title: String, start: Date, at date: Date) {
+    func signalMeetingReminder(title: String, start: Date, at date: Date, url: String? = nil) {
         let now = Date()
         guard acceptsSystemFeedback, noticeCanPresent,
               (0..<2).contains(now.timeIntervalSince(date)),
@@ -1660,7 +1677,9 @@ final class NotchService: ObservableObject {
             .locale(Locale(identifier: L10n.shared.language.rawValue)))
         if show(NotchNotice(event: .systemNotification,
                             title: label.isEmpty ? FeatureStrings.notchCalendar(L10n.shared.language).untitled : label,
-                            detail: detail, symbol: "calendar", meetingReminder: true)) {
+                            detail: detail, symbol: "calendar", meetingReminder: true,
+                            meetingURL: NotchCalendarSupport.meetingURL(
+                                url: url.flatMap(URL.init(string:)), location: nil, notes: nil))) {
             lastMeetingReminderStart = start
         }
     }
@@ -1887,7 +1906,7 @@ final class NotchService: ObservableObject {
     private func releaseNotification() {
         guard let notice, notice.notificationID != nil else { return }
         if noticeExpanded { dismissNotice() }
-        else if noticeWork == nil { scheduleNoticeDismissal(after: notice.event.duration) }
+        else if noticeWork == nil { scheduleNoticeDismissal(after: notice.duration) }
     }
 
     private func syncNoticeWithPreferences() {
@@ -2569,7 +2588,7 @@ final class NotchService: ObservableObject {
             inside = true
             holdNotification(id)
         } else {
-            scheduleNoticeDismissal(after: incoming.replayed ? 3 : incoming.event.duration)
+            scheduleNoticeDismissal(after: incoming.duration)
         }
         return true
     }
@@ -2601,7 +2620,10 @@ final class NotchService: ObservableObject {
         }
         guard notice == selectedNotice else { return }
         if selectedNotice.meetingReminder {
-            open(.calendar)
+            if let url = selectedNotice.meetingURL {
+                dismissNotice()
+                NSWorkspace.shared.open(url)
+            } else { open(.calendar) }
             return
         }
         if let id = selectedNotice.notificationID {
@@ -3884,7 +3906,10 @@ final class NotchService: ObservableObject {
         observers.append((distributed, paletteObserver))
         let meetingObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.meetingStarted"), object: nil, queue: .main) { [weak self] note in
             guard let timestamp = note.userInfo?["at"] as? Double, timestamp.isFinite else { return }
-            self?.signalMeetingStarted(at: Date(timeIntervalSince1970: timestamp))
+            let start = (note.userInfo?["start"] as? Double).flatMap { $0.isFinite ? Date(timeIntervalSince1970: $0) : nil }
+            self?.signalMeetingStarted(at: Date(timeIntervalSince1970: timestamp),
+                                       title: note.userInfo?["title"] as? String, start: start,
+                                       url: note.userInfo?["url"] as? String)
         }
         observers.append((distributed, meetingObserver))
         let reminderObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.meetingReminder"), object: nil, queue: .main) { [weak self] note in
@@ -3892,7 +3917,7 @@ final class NotchService: ObservableObject {
                   let start = note.userInfo?["start"] as? Double, start.isFinite,
                   let title = note.userInfo?["title"] as? String else { return }
             self?.signalMeetingReminder(title: title, start: Date(timeIntervalSince1970: start),
-                                        at: Date(timeIntervalSince1970: timestamp))
+                                        at: Date(timeIntervalSince1970: timestamp), url: note.userInfo?["url"] as? String)
         }
         observers.append((distributed, reminderObserver))
         let terminalObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.terminal"), object: nil, queue: .main) { [weak self] note in

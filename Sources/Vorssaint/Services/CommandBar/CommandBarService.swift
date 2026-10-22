@@ -153,6 +153,7 @@ final class CommandBarService: ObservableObject {
     private var catalog: [CommandBarEntry] = [] { didSet { foldedSections[.catalog] = nil } }
     let scriptRunner = CommandBarScriptRunner()
     let fileSearch = CommandBarFileSearch()
+    private let meetingSearch = CommandBarMeetingSearch()
     /// Which row answered which few letters, for as long as the app runs. Not
     /// stored: the bar forgets everything typed into it when it goes.
     private var queryMemory = CommandBarQueryMemory()
@@ -263,6 +264,7 @@ final class CommandBarService: ObservableObject {
         hotkey.onPress = { [weak self] in self?.toggle() }
         scriptRunner.onResult = { [weak self] in self?.refreshResults() }
         fileSearch.onResult = { [weak self] in self?.refreshResults() }
+        meetingSearch.onResult = { [weak self] in self?.refreshResults() }
     }
 
     // MARK: - Lifecycle
@@ -377,6 +379,7 @@ final class CommandBarService: ObservableObject {
     private func beginPresentation() -> UUID {
         deferredRowShortcut.cancel()
         scriptRunner.reset()
+        meetingSearch.reset()
         fileSearch.reset()
         let id = UUID()
         presentationID = id
@@ -572,6 +575,7 @@ final class CommandBarService: ObservableObject {
         }
         deferredRowShortcut.cancel()
         scriptRunner.reset()
+        meetingSearch.reset()
         fileSearch.reset()
         // Closing while listening for a combination must give every global key
         // back, or the whole app would go quiet until the next relaunch.
@@ -1177,6 +1181,7 @@ final class CommandBarService: ObservableObject {
         fileSearchPreferenceSignature = signature
         fileScopeLoadGeneration &+= 1
         let loadGeneration = fileScopeLoadGeneration
+        meetingSearch.reset()
         fileSearch.reset()
         fileScopeCache = []
         fileIgnoreCache = enabled
@@ -1487,6 +1492,7 @@ final class CommandBarService: ObservableObject {
         case .search:
             let trimmed = query.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty {
+                meetingSearch.reset()
                 let showsBrowse = CommandBarHome.showsBrowseList(
                     compact: compactMode,
                     hasCategory: activeCategory != nil,
@@ -1566,7 +1572,7 @@ final class CommandBarService: ObservableObject {
              .capturingShortcut:
             setCompactHome(false)
         }
-        let awaiting = fileSearch.isAwaiting || scriptRunner.isAwaiting
+        let awaiting = fileSearch.isAwaiting || scriptRunner.isAwaiting || meetingSearch.isAwaiting
         if awaitsAnswers != awaiting { awaitsAnswers = awaiting }
         refreshPanelLayout()
     }
@@ -1733,6 +1739,25 @@ final class CommandBarService: ObservableObject {
 
     private func searchRows(for trimmed: String) -> [CommandBarEntry] {
         let bar = FeatureStrings.commandBar(L10n.shared.language)
+        if activeCategory == nil, trimmed.lowercased() == "meet" {
+            scriptRunner.cancelPending()
+            fileSearch.cancelPending()
+            return meetingSearch.rows()
+        }
+        meetingSearch.reset()
+        if activeCategory == nil, CommandBarFileSearchSupport.isRecentQuery(trimmed) {
+            scriptRunner.cancelPending()
+            guard isEnabled(.files), !fileScopeCache.isEmpty else {
+                fileSearch.cancelPending()
+                return []
+            }
+            if let paths = fileSearch.cachedPaths(for: trimmed) {
+                fileSearch.cancelPending()
+                return CommandBarCatalog.fileEntries(Array(paths.prefix(12)), bar: bar)
+            }
+            fileSearch.schedule(query: trimmed, scopes: fileScopeCache, patterns: fileIgnoreCache)
+            return []
+        }
         // Inside a category, typing filters that category and nothing else:
         // no answer row, no caps per kind, just the ranking over one list.
         if let category = activeCategory {

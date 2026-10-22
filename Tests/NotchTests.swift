@@ -3617,6 +3617,40 @@ enum NotchTests {
         let upcoming = NotchCalendarSupport.upcoming(entries, now: now)
         suite.expect(upcoming.map(\.id) == [allDay.id, current.id, later.id, tomorrow.id],
                "calendar deduplicates occurrences, preserves ongoing and all-day events and excludes invalid or ended entries")
+        let startNotice = NotchNotice(event: .systemNotification, title: "Planning", detail: "Now",
+                                      symbol: "calendar", meetingReminder: true, meetingStartsNow: true)
+        suite.expect(startNotice.duration == 4, "meeting-start banner lasts four seconds")
+        let reminderNotice = NotchNotice(event: .systemNotification, title: "Planning", detail: "10 min",
+                                         symbol: "calendar", meetingReminder: true)
+        suite.expect(reminderNotice.duration == 3, "ten-minute meeting reminder retains its brief duration")
+        let meetURL = URL(string: "https://meet.google.com/abc-defg-hij")!
+        suite.expect(NotchCalendarSupport.meetingURL(url: nil, location: nil,
+                     notes: "Join here: https://meet.google.com/abc-defg-hij") == meetURL,
+                     "a Google Meet link is extracted from event notes")
+        suite.expect(NotchCalendarSupport.meetingURL(url: URL(string: "https://example.com"),
+                     location: "https://company.zoom.us/j/123", notes: nil)?.host == "company.zoom.us",
+                     "a normal event website does not hide its conferencing location")
+        for bad in ["http://meet.google.com/abc", "https://meet.google.com.evil.example/abc",
+                    "https://evilzoom.us/j/123", "https://name:password@meet.google.com/abc"] {
+            suite.expect(NotchCalendarSupport.meetingURL(url: URL(string: bad), location: nil, notes: nil) == nil,
+                         "a non-conferencing or credential-bearing URL cannot become a join action")
+        }
+        for host in ["teams.microsoft.com", "teams.live.com", "zoom.us"] {
+            suite.expect(NotchCalendarSupport.meetingURL(url: nil, location: "https://" + host + "/join", notes: nil)?.host == host,
+                         "supported call providers resolve from event location")
+        }
+        var linkedCurrent = current
+        linkedCurrent.meetingURL = meetURL
+        var linkedLater = later
+        linkedLater.meetingURL = meetURL
+        var linkedAllDay = allDay
+        linkedAllDay.meetingURL = meetURL
+        suite.expect(NotchCalendarSupport.nextMeeting([linkedLater, linkedAllDay, linkedCurrent], now: now) == linkedCurrent,
+                     "meet previews an ongoing call before a later call and skips all-day events")
+        suite.expect(NotchCalendarSupport.nextMeeting([linkedCurrent, linkedLater], now: now.addingTimeInterval(300)) == linkedLater,
+                     "an ended call is not offered again")
+        suite.expect(NotchCalendarSupport.nextMeeting(entries, now: now) == nil,
+                     "events without call links do not join arbitrary event pages")
         suite.expect(NotchCalendarSupport.next(entries, now: now) == current,
                "an all-day event does not conceal the current appointment")
         suite.expect(NotchCalendarSupport.next(entries, now: now.addingTimeInterval(300)) == later,
