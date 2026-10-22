@@ -1044,6 +1044,14 @@ enum NotchTests {
         suite.expect(NotchEvent.track.duration == 3 && NotchEvent.track.priority == 0,
                      "artwork and equalizer feedback share its brief duration and low interruption priority")
         notificationBannerContracts(suite, screen: screen)
+        let meeting = NotchNotice(event: .systemNotification, title: "Planning", detail: "10 min",
+                                  symbol: "calendar", meetingReminder: true)
+        suite.expect(meeting.readsFromEnds && meeting.event.duration == 3 && meeting.notification == nil,
+                     "meeting reminders use the brief title-left/time-right notice, without notification history")
+        let longMeeting = NotchNotice(event: .systemNotification, title: String(repeating: "Meeting ", count: 100),
+                                      detail: "10 min", symbol: "calendar", meetingReminder: true)
+        suite.expect(longMeeting.preferredWings.leading <= 240 && longMeeting.preferredWings.trailing <= 240,
+                     "long meeting titles retain bounded notice wings")
     }
 
     /// Mirrored banners take the width their longer side needs, as the other

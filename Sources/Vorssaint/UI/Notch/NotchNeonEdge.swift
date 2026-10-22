@@ -175,6 +175,7 @@ struct NotchNeonEdge: View, Animatable {
         .onChange(of: service.notice) { _, notice in
             guard let notice else { return }
             if notice.audioHandoff { signal(.handoff) }
+            else if notice.meetingReminder { signal(.meeting) }
             else if let status = notice.terminalStatus { signal(status == 0 ? .terminalSuccess : .terminalFailure) }
             else if notice.event == .agents || ["codex", "claude", "claude code"].contains(notice.notification?.app.lowercased() ?? "") {
                 signal(.agent)

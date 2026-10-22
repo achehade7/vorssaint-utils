@@ -14,6 +14,7 @@ struct NotchNoticeView: View {
 
     private var wings: NotchNoticeWings { notice.wings(in: geometry) }
     private var tint: Color {
+        if notice.meetingReminder { return Color(red: 125 / 255, green: 220 / 255, blue: 232 / 255) }
         if let cue = NotchDeviceFeedback(notice) { return cue.tint }
         switch notice.event {
         // A warning reads as one in any agent's color; other AI notices wear it.
@@ -25,6 +26,7 @@ struct NotchNoticeView: View {
     }
     /// The words of a timer's notice share its orange too.
     private var textTint: Color {
+        if notice.meetingReminder { return tint }
         if let cue = NotchDeviceFeedback(notice) { return cue.tint }
         return notice.event == .timer ? .orange : .white
     }

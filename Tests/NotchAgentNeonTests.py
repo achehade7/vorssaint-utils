@@ -33,8 +33,12 @@ appearance = source[source.index("        let completion ="):source.index("     
 rendering = source[source.index("        let completion ="):source.index("        let workspaceOpacity =")]
 provider_colors = (repo / "Sources/Vorssaint/UI/Notch/NotchAgentComponents.swift").read_text()
 provider_colors = provider_colors[provider_colors.index("extension AgentProvider {"):provider_colors.index("\n}\n") + 2]
-meeting_handler = declaration("    func signalMeetingStarted(at", (
-    repo / "Sources/Vorssaint/Services/Notch/NotchService.swift").read_text())
+service_source = (repo / "Sources/Vorssaint/Services/Notch/NotchService.swift").read_text()
+meeting_handler = declaration("    func signalMeetingStarted(at", service_source)
+reminder_handler = declaration("    func signalMeetingReminder(title:", service_source)
+notice_can_present = declaration("    private var noticeCanPresent:", service_source).replace("private ", "", 1)
+notice_changed = declaration(".onChange(of: service.notice) { _, notice in")
+notice_changed = notice_changed[notice_changed.index("{ _, notice in") + len("{ _, notice in"):-1]
 swift = r'''
 import Foundation
 import SwiftUI
@@ -58,6 +62,9 @@ CHARGE
 PROGRESS_ADVANCING
     func receive(_ provider: AgentProvider) {
 RECEIVE
+    }
+    func noticeChanged(_ notice: NotchNotice?) {
+NOTICE_CHANGED
     }
     func appearance(working: Bool, elapsed: TimeInterval? = nil, reduceMotion: Bool = false) -> (Color, Color) {
         let age = elapsed ?? signalAt.map { Date().timeIntervalSince($0) }
@@ -94,9 +101,38 @@ enum NotchNeonPalette {
 }
 final class MeetingService {
     var acceptsSystemFeedback = true, displayIsFullscreen = false
+    var expanded = false, dragPlaceholder = false, canShow = true
     var captureControls: Bool?
     var neonMeetingAt: Date?
+    var lastMeetingReminderStart: Date?
+    var notices: [NotchNotice] = []
+    func show(_ notice: NotchNotice) -> Bool {
+        guard canShow else { return false }
+        notices.append(notice)
+        return true
+    }
+NOTICE_CAN_PRESENT
 MEETING_HANDLER
+REMINDER_HANDLER
+}
+enum AppLanguage: String { case enUS = "en-US" }
+struct L10n {
+    static let shared = L10n()
+    let language = AppLanguage.enUS
+}
+struct FeatureStrings {
+    struct CalendarText { let untitled = "Untitled event" }
+    static func notchCalendar(_ language: AppLanguage) -> CalendarText { CalendarText() }
+}
+enum NotchEvent { case systemNotification, agents }
+struct NotchNotice {
+    let event: NotchEvent
+    let title: String, detail: String, symbol: String
+    var meetingReminder = false
+    var audioHandoff = false
+    var terminalStatus: Int?
+    struct Notification { var app: String }
+    var notification: Notification?
 }
 var checks = 0
 func expect(_ condition: Bool, _ message: String) {
@@ -280,13 +316,52 @@ for condition in 0..<5 {
 let service = MeetingService(), freshMeeting = Date().addingTimeInterval(-0.01)
 service.signalMeetingStarted(at: freshMeeting)
 expect(service.neonMeetingAt == freshMeeting, "live desktop meeting signal reaches the existing neon")
+let reminder = MeetingService(), reminderStart = Date().addingTimeInterval(599)
+reminder.signalMeetingReminder(title: "  Planning\nreview  ", start: reminderStart, at: Date().addingTimeInterval(-0.01))
+expect(reminder.notices.count == 1 && reminder.notices[0].title == "Planning review"
+       && reminder.notices[0].detail == "10 min" && reminder.notices[0].symbol == "calendar"
+       && reminder.notices[0].meetingReminder,
+       "ten-minute notice carries a clean title on the left and localized minutes on the right")
+reminder.signalMeetingReminder(title: "Duplicate", start: reminderStart, at: Date())
+expect(reminder.notices.count == 1, "duplicate transport payload cannot show the same reminder twice")
+let noticeModel = Model()
+noticeModel.noticeChanged(reminder.notices[0])
+expect(noticeModel.signature == .meeting, "reminder notice uses cyan meeting neon, not the generic message pulse")
+noticeModel.noticeChanged(NotchNotice(event: .systemNotification, title: "Slack", detail: "Meeting soon", symbol: "bell"))
+expect(noticeModel.signature == .message, "ordinary Slack and other notifications retain their existing pulse")
+for condition in 0..<10 {
+    let blocked = MeetingService()
+    var timestamp = Date(), start = Date().addingTimeInterval(599)
+    switch condition {
+    case 0: blocked.acceptsSystemFeedback = false
+    case 1: blocked.expanded = true
+    case 2: blocked.dragPlaceholder = true
+    case 3: blocked.captureControls = true
+    case 4: blocked.canShow = false
+    case 5: timestamp = Date().addingTimeInterval(-5)
+    case 6: timestamp = Date().addingTimeInterval(5)
+    case 7: start = Date().addingTimeInterval(590)
+    case 8: start = Date().addingTimeInterval(610)
+    default: start = Date(timeIntervalSince1970: .nan)
+    }
+    blocked.signalMeetingReminder(title: "Ignored", start: start, at: timestamp)
+    expect(blocked.notices.isEmpty && blocked.lastMeetingReminderStart == nil,
+           "unavailable surfaces, rejected notices and stale/early/invalid reminders stay silent")
+}
+let blank = MeetingService()
+blank.signalMeetingReminder(title: "\n\t  ", start: reminderStart, at: Date())
+expect(blank.notices.first?.title == "Untitled event", "blank title reuses the calendar's localized fallback")
+let long = MeetingService()
+long.signalMeetingReminder(title: String(repeating: "界", count: 200), start: reminderStart, at: Date())
+expect(long.notices.first?.title.count == 160, "long Unicode titles are bounded without splitting characters")
 print("PASS: \(checks) agent neon checks")
 '''
 for token, value in [("SIGNATURE", signature), ("DURATION", duration), ("SIGNAL", signal),
                      ("ELECTRIC_PROFILE", charging_signal), ("CHARGE", charge),
                      ("RECEIVE", receive), ("APPEARANCE", appearance), ("RENDERING", rendering),
                      ("PROVIDER_COLORS", provider_colors), ("PROGRESS_ADVANCING", progress_advancing),
-                     ("MEETING_HANDLER", meeting_handler)]:
+                     ("MEETING_HANDLER", meeting_handler), ("REMINDER_HANDLER", reminder_handler),
+                     ("NOTICE_CAN_PRESENT", notice_can_present), ("NOTICE_CHANGED", notice_changed)]:
     swift = swift.replace(token, value)
 
 with tempfile.TemporaryDirectory(prefix="notch-agent-neon-") as directory:

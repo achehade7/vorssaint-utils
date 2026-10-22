@@ -17,6 +17,7 @@ struct NotchNotice: Equatable {
     var fileURL: URL? = nil
     var terminalStatus: Int? = nil
     var audioHandoff = false
+    var meetingReminder = false
     var replayed = false
     /// The agent an AI notice is about, which tints its mark.
     var agent: AgentProvider? = nil
@@ -157,6 +158,7 @@ final class NotchService: ObservableObject {
     private var displayConnections = NotchDisplayConnectionTracker()
     @Published private(set) var neonCopyAt: Date?
     @Published private(set) var neonMeetingAt: Date?
+    private var lastMeetingReminderStart: Date?
     @Published private(set) var nightPalette: Double = 0
     @Published private(set) var routingFileDrag = false
     @Published private(set) var dragTargetWorkspace: String?
@@ -1642,6 +1644,25 @@ final class NotchService: ObservableObject {
         neonMeetingAt = date
     }
 
+    /// A single ten-minute notice from SketchyBar's existing calendar feed.
+    /// Missed reminders never queue behind quiet mode, sleep or an open tool.
+    func signalMeetingReminder(title: String, start: Date, at date: Date) {
+        let now = Date()
+        guard acceptsSystemFeedback, noticeCanPresent,
+              (0..<2).contains(now.timeIntervalSince(date)),
+              (597...600).contains(start.timeIntervalSince(now)),
+              lastMeetingReminderStart != start else { return }
+        let label = String(title.components(separatedBy: .controlCharacters).joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
+        let detail = Duration.seconds(600).formatted(.units(allowed: [.minutes], width: .abbreviated)
+            .locale(Locale(identifier: L10n.shared.language.rawValue)))
+        if show(NotchNotice(event: .systemNotification,
+                            title: label.isEmpty ? FeatureStrings.notchCalendar(L10n.shared.language).untitled : label,
+                            detail: detail, symbol: "calendar", meetingReminder: true)) {
+            lastMeetingReminderStart = start
+        }
+    }
+
     func toggle() { expanded ? collapse() : open() }
 
     /// The island stays on screen, so only a manual resign takes its keyboard.
@@ -2577,6 +2598,10 @@ final class NotchService: ObservableObject {
             return
         }
         guard notice == selectedNotice else { return }
+        if selectedNotice.meetingReminder {
+            open(.calendar)
+            return
+        }
         if let id = selectedNotice.notificationID {
             guard NotchNotificationService.shared.openingID == nil else { return }
             // The pointer stays where the banner was; like a click on the
@@ -3860,6 +3885,14 @@ final class NotchService: ObservableObject {
             self?.signalMeetingStarted(at: Date(timeIntervalSince1970: timestamp))
         }
         observers.append((distributed, meetingObserver))
+        let reminderObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.meetingReminder"), object: nil, queue: .main) { [weak self] note in
+            guard let timestamp = note.userInfo?["at"] as? Double, timestamp.isFinite,
+                  let start = note.userInfo?["start"] as? Double, start.isFinite,
+                  let title = note.userInfo?["title"] as? String else { return }
+            self?.signalMeetingReminder(title: title, start: Date(timeIntervalSince1970: start),
+                                        at: Date(timeIntervalSince1970: timestamp))
+        }
+        observers.append((distributed, reminderObserver))
         let terminalObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.terminal"), object: nil, queue: .main) { [weak self] note in
             guard let self, let status = note.userInfo?["status"] as? Int,
                   let seconds = note.userInfo?["seconds"] as? Int, seconds >= 10,
