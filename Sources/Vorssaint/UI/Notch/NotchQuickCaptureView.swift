@@ -28,12 +28,6 @@ struct NotchQuickCaptureView: View {
                         Text(session.label).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
-                    if draft.canUndoScreenshot {
-                        Button { draft.undoLastScreenshot() } label: { Image(systemName: "arrow.uturn.backward") }
-                            .help(text.undoScreenshot + " · ⌘Z")
-                            .accessibilityLabel(text.undoScreenshot)
-                            .accessibilityIdentifier("notch.quickCapture.undo")
-                    }
                     Button(text.startSession) { draft.captureGroup() }
                         .fixedSize()
                         .accessibilityIdentifier("notch.quickCapture.resumeSession")
@@ -130,6 +124,11 @@ struct NotchQuickCaptureView: View {
                     Label(draft.pendingSessionImage == nil ? text.screenshot : text.retryScreenshot, systemImage: "viewfinder")
                 }
                 .disabled(draft.saving)
+                Button { draft.undoLastScreenshot() } label: { Image(systemName: "arrow.uturn.backward") }
+                    .disabled(!draft.canUndoScreenshot)
+                    .help(text.undoScreenshot + " · ⌃⌘Z")
+                    .accessibilityLabel(text.undoScreenshot)
+                    .accessibilityIdentifier("notch.quickCapture.undo")
                 Spacer(minLength: 0)
                 if draft.saving { ProgressView().controlSize(.mini) }
                 Button(text.cancel) { draft.cancel() }.disabled(draft.saving)
@@ -145,6 +144,7 @@ struct NotchQuickCaptureView: View {
         .padding(.top, service.geometry.safeContentTop)
         .padding(.bottom, NotchLayout.bottomInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(NotchQuickCaptureUndoKeys(draft: draft))
         .onAppear { focused = true }
         .onChange(of: draft.saving) { if !draft.saving { focused = true } }
         .popover(item: $preview) { attachment in
@@ -186,6 +186,36 @@ struct NotchQuickCaptureView: View {
             .foregroundStyle(.secondary)
         }
         .frame(width: 88)
+    }
+}
+
+/// A window-local monitor reaches Cmd-Control-Z even while NSTextView owns
+/// focus. It never takes plain Cmd-Z away from native text editing.
+struct NotchQuickCaptureUndoKeys: NSViewRepresentable {
+    let draft: NotchQuickCaptureService
+    func makeNSView(context: Context) -> Area { let view = Area(); view.draft = draft; return view }
+    func updateNSView(_ view: Area, context: Context) { view.draft = draft }
+    static func dismantleNSView(_ view: Area, coordinator: ()) { view.stop() }
+
+    final class Area: NSView {
+        weak var draft: NotchQuickCaptureService?
+        private var monitor: Any?
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stop()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                self?.handle(event) == true ? nil : event
+            }
+        }
+        func handle(_ event: NSEvent) -> Bool {
+            guard let window, window.isVisible, !isHiddenOrHasHiddenAncestor,
+                  window.attachedSheet == nil, event.window === window else { return false }
+            return draft?.handleUndoKey(event, selecting: false) == true
+        }
+        func stop() { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil }
+        deinit { stop() }
     }
 }
 

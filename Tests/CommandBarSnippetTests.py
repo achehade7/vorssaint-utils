@@ -233,6 +233,17 @@ expect(previewOnly.title == "Permanent with spaces" && previewOnly.subtitle == "
 expect(board.reads == readsBeforeKeep, "typing keep does not read clipboard")
 previewOnly.run(nil)
 expect(stored().contains { $0.name == "Permanent with spaces" && $0.expiresAt == nil }, "keep saves names with spaces permanently")
+board.value = "permanent scratch"
+row("snip keep tmp").run(nil)
+let scratch = stored().first { $0.name == "tmp" }!
+board.value = "temporary scratch"
+let overwriteScratch = row("snip save TMP")
+expect(overwriteScratch.id == "action.snippetSave" && overwriteScratch.confirmationPrompt != nil,
+       "tmp is the case-insensitive exception and still requires replacement confirmation")
+overwriteScratch.run(nil)
+let replacedScratch = stored().first { $0.id == scratch.id }!
+expect(replacedScratch.replacement == "temporary scratch" && replacedScratch.expiresAt != nil,
+       "save tmp replaces permanent content with a temporary value")
 print("Snippet commands: \(checks) checks passed")
 '''
 service = 'Sources/Vorssaint/Services/CommandBar/CommandBarService.swift'

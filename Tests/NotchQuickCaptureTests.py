@@ -56,10 +56,13 @@ final class ScreenshotSelectionController {
     struct Capture { let image: CGImage }
     enum Outcome { case captured(Capture), cancelled, failed }
     let requiresDraggedRegion: Bool
+    let freeze: Bool
+    var protectedWindowIDs: Set<CGWindowID> = []
     var completion: ((Outcome) -> Void)?
     init(freeze: Bool, includePointer: Bool, showLastRegion: Bool, hideVorssaintWindows: Bool,
          protectedWindowIDs: @escaping () -> Set<CGWindowID>, purpose: String?, requiresDraggedRegion: Bool) {
         self.requiresDraggedRegion = requiresDraggedRegion
+        self.freeze = freeze
         Self.last = self
     }
     func begin(completion: @escaping (Outcome) -> Void) { self.completion = completion }
@@ -183,12 +186,18 @@ expect(draft.text.isEmpty && draft.error == nil && !island.showingQuickCapture &
 draft.text = "keep during region selection"
 draft.captureRegion()
 expect(ScreenshotSelectionController.last!.requiresDraggedRegion, "camera requires region drag")
+expect(ScreenshotSelectionController.last!.freeze, "ordinary quick capture keeps a frozen screen")
 ScreenshotSelectionController.last!.completion?(.cancelled)
 expect(draft.text == "keep during region selection" && island.showingQuickCapture && draft.images.isEmpty,
        "cancel selection returns to unchanged text")
 draft.captureRegion()
 ScreenshotSelectionController.last!.completion?(.captured(.init(image: image)))
 expect(!draft.images.isEmpty, "selected image is held in draft")
+expect(draft.canUndoScreenshot, "ordinary screenshot is available to undo")
+draft.undoLastScreenshot()
+expect(draft.images.isEmpty && draft.text == "keep during region selection", "ordinary undo preserves the thought")
+draft.captureRegion()
+ScreenshotSelectionController.last!.completion?(.captured(.init(image: image)))
 draft.captureRegion()
 ScreenshotSelectionController.last!.completion?(.captured(.init(image: image)))
 expect(draft.images.count == 2 && island.showingQuickCapture, "consecutive screenshots return to same capture field")
@@ -453,12 +462,14 @@ loop.text = "Keep the thought"; loop.sessionLabel = "SAP-531"
 let starts = island.opens
 loop.captureGroup()
 expect(loop.isSelecting && loop.capturingGroup && loop.session?.count == 0, "one group action starts selecting")
+expect(!ScreenshotSelectionController.last!.freeze, "group selection uses the live screen")
 for count in 1...3 {
     let selector = ScreenshotSelectionController.last!
     selector.completion?(.captured(.init(image: image)))
     waitUntil { loop.isSelecting && !loop.saving }
     expect(ScreenshotSelectionController.last !== selector && loop.session?.count == count,
            "each saved image immediately arms a new region selector")
+    expect(!ScreenshotSelectionController.last!.freeze, "every following group shot stays live")
 }
 expect(island.opens == starts, "capture loop never flashes the editor between images")
 loop.pauseGroupCapture()
@@ -546,8 +557,13 @@ expect(undo.session?.count == 0 && undo.images.isEmpty && !undo.canUndoScreensho
 expect(try fm.contentsOfDirectory(atPath: undoFolder.path).isEmpty, "zero count leaves no PNGs")
 ScreenshotSelectionController.last!.completion?(.captured(.init(image: image)))
 waitUntil { undo.isSelecting && !undo.saving }
-let keyWindow = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 50), styleMask: [.titled], backing: .buffered, defer: false)
+let keyWindow = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 50), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
 keyWindow.makeKeyAndOrderFront(nil)
+NSApplication.shared.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+    timestamp: 1, windowNumber: keyWindow.windowNumber, context: nil, characters: "z",
+    charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6)!)
+expect(undo.session?.count == 1, "unrelated app window cannot undo a group screenshot")
+ScreenshotSelectionController.last!.protectedWindowIDs = [CGWindowID(keyWindow.windowNumber)]
 NSApplication.shared.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
                                                timestamp: 1, windowNumber: keyWindow.windowNumber, context: nil,
                                                characters: "z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6)!)
@@ -565,9 +581,34 @@ func undoKey(_ modifiers: NSEvent.ModifierFlags, repeatKey: Bool = false) -> NSE
                     isARepeat: repeatKey, keyCode: 6)!
 }
 expect(NotchQuickCaptureService.isUndoScreenshot(undoKey(.command)), "Cmd-Z is screenshot undo")
+expect(NotchQuickCaptureService.isUndoScreenshot(undoKey([.command, .control])), "Cmd-Control-Z is explicit screenshot undo")
 expect(!NotchQuickCaptureService.isUndoScreenshot(undoKey([.command, .shift]))
        && !NotchQuickCaptureService.isUndoScreenshot(undoKey([]))
        && !NotchQuickCaptureService.isUndoScreenshot(undoKey(.command, repeatKey: true)), "plain Z, redo and key repeat are untouched")
+expect(!undo.handleUndoKey(undoKey(.command), selecting: false), "plain Cmd-Z belongs to editor text undo")
+expect(!NotchQuickCaptureService.isUndoScreenshot(undoKey([.command, .option]))
+       && !undo.handleUndoKey(undoKey([.command, .option]), selecting: false), "old Cmd-Option-Z no longer owns screenshot undo")
+
+// Ordinary attachments retain capture-order undo across reordering and empty groups.
+let ordinary = NotchQuickCaptureService(store: store)
+for _ in 0..<2 { ordinary.captureRegion(); ScreenshotSelectionController.last!.completion?(.captured(.init(image: image))) }
+let latestOrdinary = ordinary.images.last!.id
+expect(ordinary.moveImage(latestOrdinary, to: ordinary.images.first!.id), "ordinary thumbnails can be reordered")
+ordinary.startSession(); ordinary.stopSession(); waitUntil { !ordinary.saving }
+expect(ordinary.canUndoScreenshot, "empty group stop keeps ordinary screenshot undo")
+ordinary.text = "Keep the thought"
+expect(ordinary.handleUndoKey(undoKey([.command, .control]), selecting: false), "explicit screenshot undo works in the editor")
+expect(ordinary.images.count == 1 && !ordinary.images.contains { $0.id == latestOrdinary }
+       && ordinary.text == "Keep the thought", "ordinary undo follows capture order without changing text")
+ordinary.captureRegion()
+let ordinarySelector = ScreenshotSelectionController.last!
+ordinarySelector.protectedWindowIDs = [CGWindowID(keyWindow.windowNumber)]
+keyWindow.makeKeyAndOrderFront(nil)
+NSApplication.shared.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+    timestamp: 1, windowNumber: keyWindow.windowNumber, context: nil, characters: "z",
+    charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6)!)
+expect(ordinary.images.isEmpty && ordinary.isSelecting, "native Cmd-Z in ordinary selection undoes the prior shot and keeps selecting")
+ordinary.cancelSelection(); keyWindow.orderOut(nil)
 
 // An unavailable destination pauses the loop without discarding the pending image.
 let failedLoopImages = root.appendingPathComponent("failed-loop-images")
@@ -592,7 +633,7 @@ failedLoop.stopSession(); waitUntil { !failedLoop.saving }
 // Native event routing: only a right click in this icon consumes an event.
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
-let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 60), styleMask: .titled,
+let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 60), styleMask: [.titled, .nonactivatingPanel],
                       backing: .buffered, defer: false)
 let area = NotchObsidianRightClick.Area(frame: NSRect(x: 10, y: 10, width: 22, height: 26))
 var homeOpens = 0
@@ -649,14 +690,32 @@ window.makeKeyAndOrderFront(nil)
 window.makeFirstResponder(editor)
 editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
 func key(_ code: UInt16, _ flags: NSEvent.ModifierFlags = []) {
+    let characters = code == 53 ? "\u{1b}" : code == 6 ? "z" : "\r"
     let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 1,
                                 windowNumber: window.windowNumber, context: nil,
-                                characters: code == 53 ? "\u{1b}" : "\r",
-                                charactersIgnoringModifiers: code == 53 ? "\u{1b}" : "\r",
+                                characters: characters,
+                                charactersIgnoringModifiers: characters,
                                 isARepeat: false, keyCode: code)!
     app.sendEvent(event)
     RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 }
+// Use the real editor and its focused text view, not just a key predicate.
+let menu = NSMenu(); let editItem = NSMenuItem(); menu.addItem(editItem)
+let editMenu = NSMenu(title: "Edit"); editItem.submenu = editMenu
+editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+app.mainMenu = menu
+let priorImageIDs = draft.images.map(\.id)
+capture(draft)
+window.makeFirstResponder(editor)
+let textBeforeUndo = draft.text
+editor.insertText("temporary typing", replacementRange: editor.selectedRange())
+RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+key(6, .command)
+expect(draft.text == textBeforeUndo && draft.images.count == priorImageIDs.count + 1,
+       "Cmd-Z in the focused thought field undoes typing, not screenshots")
+key(6, [.command, .control])
+expect(draft.images.map(\.id) == priorImageIDs && draft.text == textBeforeUndo,
+       "Cmd-Control-Z in the focused thought field undoes the screenshot")
 key(36, .shift)
 expect(draft.text.hasSuffix("\n") && !draft.saving, "Shift-Enter inserts a line without saving")
 key(36)

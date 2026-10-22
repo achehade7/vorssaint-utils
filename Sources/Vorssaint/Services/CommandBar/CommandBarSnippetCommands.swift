@@ -58,7 +58,7 @@ enum CommandBarSnippetCommands {
         }
         let matches = TextSnippetSupport.named(name, in: TextSnippetSupport.decode(UserDefaults.standard.data(forKey: DefaultsKey.textSnippets)))
         let expected = matches.first
-        if temporary, let expected, expected.expiresAt == nil {
+        if temporary, let expected, !TextSnippetSupport.allowsTemporaryReplacement(of: expected) {
             return [CommandBarEntry(id: "action.snippetSave.blocked", title: name,
                                     subtitle: SnippetCaptureStrings.localized(L10n.shared.language).permanentName,
                                     icon: .symbol("lock"), countsUsage: false, keepsBarOpen: true, run: { _ in

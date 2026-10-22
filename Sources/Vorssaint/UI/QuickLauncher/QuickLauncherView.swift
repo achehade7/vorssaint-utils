@@ -64,9 +64,12 @@ struct QuickLauncherView: View {
             }
         }, trailing: {
             if notchSize != nil, launcher.activeUtility == nil {
-                NotchIconButton(symbol: launcher.isEditing ? "checkmark" : "slider.horizontal.3",
-                                title: FeatureStrings.notch(l10n.language).customizeTools, selected: launcher.isEditing) {
-                    withAnimation(.easeOut(duration: 0.15)) { launcher.isEditing.toggle() }
+                HStack(spacing: 8) {
+                    if AppFeature.extraBrightness.isAvailable { NotchExtraBrightnessButton() }
+                    NotchIconButton(symbol: launcher.isEditing ? "checkmark" : "slider.horizontal.3",
+                                    title: FeatureStrings.notch(l10n.language).customizeTools, selected: launcher.isEditing) {
+                        withAnimation(.easeOut(duration: 0.15)) { launcher.isEditing.toggle() }
+                    }
                 }
             }
         })
@@ -599,5 +602,35 @@ struct FlowLayoutLite: Layout {
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
         }
+    }
+}
+
+/// A small boost switch in the island's Tools header. Normal display
+/// brightness stays on the Controls page.
+private struct NotchExtraBrightnessButton: View {
+    @ObservedObject private var service = ExtraBrightnessService.shared
+    @ObservedObject private var l10n = L10n.shared
+    @AppStorage(DefaultsKey.extraBrightnessEnabled) private var enabled = false
+
+    var body: some View {
+        Button(action: service.toggle) {
+            Image(systemName: "sun.max.fill")
+                .font(.system(size: 12, weight: .medium))
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: "plus").font(.system(size: 7, weight: .bold))
+                        .padding(1).background(.black, in: Circle()).offset(x: 5, y: -3)
+                }
+                .foregroundStyle(enabled ? NotchNeonPalette.amber : .white.opacity(0.85))
+                .frame(width: 28, height: 26)
+                .background(enabled ? NotchNeonPalette.amber.opacity(0.16) : .white.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .disabled(!service.supported && !enabled)
+        .help(l10n.s.extraBrightnessName)
+        .accessibilityLabel(l10n.s.extraBrightnessName)
+        .accessibilityAddTraits(enabled ? .isSelected : [])
+        .accessibilityIdentifier("notch.extraBrightness")
+        .onAppear { service.syncWithPreferences() }
     }
 }

@@ -28,7 +28,7 @@ final class SnippetSaveDraft: ObservableObject {
         let matches = TextSnippetSupport.named(name.trimmingCharacters(in: .whitespacesAndNewlines),
                                                in: TextSnippetSupport.decode(data))
         if matches.count > 1 { error = .changed; return false }
-        if temporary, let existing = matches.first, existing.expiresAt == nil {
+        if temporary, let existing = matches.first, !TextSnippetSupport.allowsTemporaryReplacement(of: existing) {
             error = .permanentName; return false
         }
         if let replacement, matches.first != replacement {

@@ -650,6 +650,12 @@ enum TextSnippetSupport {
             .compare(name, options: .caseInsensitive) == .orderedSame }
     }
 
+    /// The scratch name may switch between permanent and temporary storage.
+    static func allowsTemporaryReplacement(of snippet: TextSnippet) -> Bool {
+        snippet.expiresAt != nil
+            || snippet.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "tmp"
+    }
+
     /// Both clipboard and OCR saves use the same replacement and expiry rules.
     static func saving(name: String, text: String, temporary: Bool, expected: TextSnippet?,
                        data: Data?, now: Date = Date(), calendar: Calendar = .current) throws -> Data {
@@ -659,7 +665,9 @@ enum TextSnippetSupport {
         var snippets = decode(data, now: now)
         let matches = named(name, in: snippets)
         guard matches.count <= 1, matches.first == expected else { throw SaveFailure.changed }
-        guard !temporary || matches.first?.expiresAt != nil || matches.isEmpty else { throw SaveFailure.permanentName }
+        if temporary, let existing = matches.first, !allowsTemporaryReplacement(of: existing) {
+            throw SaveFailure.permanentName
+        }
         var saved = expected ?? TextSnippet()
         saved.name = name; saved.replacement = text
         saved.expiresAt = temporary ? calendar.dateInterval(of: .day, for: now)?.end : nil

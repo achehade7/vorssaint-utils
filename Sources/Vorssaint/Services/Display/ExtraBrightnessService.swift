@@ -66,6 +66,15 @@ final class ExtraBrightnessService: ObservableObject {
 
     private init() {}
 
+    func toggle() {
+        refreshSupported()
+        let defaults = UserDefaults.standard
+        let enabled = defaults.bool(forKey: DefaultsKey.extraBrightnessEnabled)
+        guard AppFeature.extraBrightness.isAvailable, supported || enabled else { return }
+        defaults.set(!enabled, forKey: DefaultsKey.extraBrightnessEnabled)
+        syncWithPreferences()
+    }
+
     func syncWithPreferences() {
         refreshSupported()
         let enabled = AppFeature.extraBrightness.isAvailable

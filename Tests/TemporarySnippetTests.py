@@ -37,6 +37,24 @@ do {
     _ = try TextSnippetSupport.saving(name: "iban", text: "temp", temporary: true, expected: legacy, data: legacyData)
     fatalError("must protect permanent name")
 } catch TextSnippetSupport.SaveFailure.permanentName { checks += 1 }
+var scratch = legacy; scratch.name = "tmp"
+let scratchData = try JSONEncoder().encode([scratch])
+let overwritten = try TextSnippetSupport.saving(name: "TMP", text: "new scratch", temporary: true,
+                                               expected: scratch, data: scratchData)
+let overwrittenScratch = TextSnippetSupport.decode(overwritten)[0]
+try expect(overwrittenScratch.id == scratch.id && overwrittenScratch.trigger == scratch.trigger
+           && overwrittenScratch.folder == scratch.folder && overwrittenScratch.replacement == "new scratch"
+           && overwrittenScratch.expiresAt == Calendar.current.dateInterval(of: .day, for: now)!.end,
+           "tmp exception preserves metadata and expires the new content at midnight")
+for name in ["temp", "tmp-other"] {
+    var other = scratch; other.name = name
+    try expect(!TextSnippetSupport.allowsTemporaryReplacement(of: other), "tmp exception does not extend to other names")
+}
+defaults.set(scratchData, forKey: DefaultsKey.textSnippets)
+let scratchDraft = SnippetSaveDraft(text: "OCR scratch", defaults: defaults); scratchDraft.name = " TMP "
+try expect(!scratchDraft.save() && scratchDraft.replacement == scratch && scratchDraft.save(),
+           "OCR tmp replacement uses the same exception and confirmation")
+defaults.removeObject(forKey: DefaultsKey.textSnippets)
 var existing = legacy; existing.expiresAt = now.addingTimeInterval(60)
 let promoted = try TextSnippetSupport.saving(name: "iban", text: "new value", temporary: false, expected: existing,
                                             data: JSONEncoder().encode([existing]))
