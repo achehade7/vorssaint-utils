@@ -838,7 +838,7 @@ extension SnippetFeatureStrings {
         soundUnavailable: "Son indisponible",
         commandHint: "↩ Copier · ⌘↩ Insérer",
         saveClipboardHint: "snip save <nom> · snip keep <nom>",
-        replaceClipboardFormat: "Remplacer « %@ » par le texte copié ?",
+        replaceClipboardFormat: "Remplacer « %@ » par le texte copié ?",
         clipboardSaved: "Extrait enregistré",
         clipboardEmpty: "Copiez du texte d’abord",
         clipboardChanged: "Extrait modifié. Relancez la recherche avant de le remplacer."
