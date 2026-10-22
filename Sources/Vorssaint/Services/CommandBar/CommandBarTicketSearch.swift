@@ -7,6 +7,25 @@ import AppKit
 /// No clipboard content is sent anywhere until a specific row is activated.
 final class CommandBarTicketSearch {
     var onResult: (() -> Void)?
+
+    /// Only an exact typed key gets local-note suggestions. The configured Jira
+    /// destination remains the first row and is opened only when selected.
+    static func directEntry(query: String) -> (key: String, entry: CommandBarEntry)? {
+        let words = query.split(whereSeparator: \.isWhitespace)
+        guard words.count == 2, words[0].lowercased() == "j" else { return nil }
+        let key = words[1].uppercased()
+        guard ticketKeys(in: key) == [key],
+              let link = CommandBarLinks.decode(UserDefaults.standard.data(forKey: DefaultsKey.commandBarLinks))
+                .first(where: { $0.name.lowercased() == "j" && $0.kind == .link && $0.takesQuery }),
+              let url = URL(string: CommandBarLinks.expand(link.destination, kind: .link, query: key)),
+              ["https", "http"].contains(url.scheme?.lowercased() ?? ""), url.host != nil,
+              url.user == nil, url.password == nil else { return nil }
+        let entry = CommandBarEntry(id: "action.jticket." + key, title: "Jira · " + key,
+                                    subtitle: FeatureStrings.commandBar(L10n.shared.language).openInBrowser + " · " + (url.host ?? ""),
+                                    icon: .symbol("link"), countsUsage: false,
+                                    run: { _ in NSWorkspace.shared.open(url) })
+        return (key, entry)
+    }
     private var generation = UUID()
     private var loaded = false
     private var keys: [String] = []

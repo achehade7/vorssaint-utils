@@ -18,6 +18,17 @@ struct NotchCalendarEvent {
     var end = Date().addingTimeInterval(2400)
     var meetingURL = URL(string: "https://meet.google.com/abc-defg-hij")
 }
+enum CommandBarNoteSearch {
+    static func matches(_ title: String, filter: String) -> Bool {
+        filter.lowercased().split(separator: " ").allSatisfy { title.lowercased().contains($0) }
+    }
+}
+final class MeetingNoteService {
+    static let shared = MeetingNoteService()
+    var prepared: [String] = []
+    func show(_ event: NotchCalendarEvent, joining: Bool) { precondition(!joining); prepared.append(event.id) }
+}
+enum MeetingNoteStrings { static func prepareAndOpen(_ language: L10n.Language) -> String { "Prepare & open" } }
 enum NotchCalendarSupport {
     static var enabled = true
     static func isEnabled() -> Bool { enabled }
@@ -44,9 +55,10 @@ enum L10n { static let shared = Self(); var language: Language { .init() }; stru
 enum FeatureStrings {
     struct Strings {
         let title = "Calendar", description = "Setup", allow = "Allow", permission = "Permission"
-        let noMeetingLink = "No call", openCalendar = "Open Calendar", untitled = "Untitled", ongoing = "Happening now"
+        let noMeetingLink = "No call", openCalendar = "Open Calendar", untitled = "Untitled", ongoing = "Happening now", noResultsTitle = "No results"
     }
     static func notchCalendar(_ language: L10n.Language) -> Strings { Strings() }
+    static func commandBar(_ language: L10n.Language) -> Strings { Strings() }
 }
 final class NotchService {
     enum Module { case calendar }
@@ -114,11 +126,11 @@ NotchCalendarService.shared.events = [
     NotchCalendarEvent(allDay: true, title: "All day"),
     NotchCalendarEvent(title: "No call", meetingURL: nil)
 ]
-_ = search.rows(limit: 3); spin()
-let choices = search.rows(limit: 3)
+_ = search.rows(); spin()
+let choices = search.rows()
 precondition(choices.count == 3 && Set(choices.map(\.id)).count == 3, "overlapping events remain separate selectable rows")
 precondition(choices.prefix(2).allSatisfy { $0.subtitle.contains("Happening now") }, "ongoing meetings are labelled")
-precondition(choices[2].title == "Next" && search.rows().count == 1, "meet remains one result; meet next offers three")
+precondition(choices[2].title == "Next" && search.rows().count == 3, "bare meet offers the next three joinable meetings")
 precondition(search.noteEvent(entryID: choices[0].id)?.id == "a", "Cmd-Return resolves the selected meeting only")
 precondition(search.noteEvent(entryID: "action.meet.empty") == nil, "placeholder cannot prepare a note")
 EKEventStore.status = .denied
@@ -130,6 +142,28 @@ precondition(NotchCalendarService.shared.reads == readCount, "switching list siz
 NotchCalendarSupport.enabled = false
 rows[0].run(nil)
 precondition(NSWorkspace.shared.opened.count == 1, "a stale row cannot join after the feature is disabled")
+NotchCalendarSupport.enabled = true
+search.reset()
+NotchCalendarService.shared.events = [
+    NotchCalendarEvent(id: "1", title: "First"),
+    NotchCalendarEvent(id: "2", title: "Second"),
+    NotchCalendarEvent(id: "3", title: "Third"),
+    NotchCalendarEvent(id: "4", title: "ABS weekly KT", meetingURL: nil),
+    NotchCalendarEvent(id: "5", title: "ABS weekly KT", end: Date().addingTimeInterval(-1)),
+    NotchCalendarEvent(id: "6", allDay: true, title: "ABS weekly KT")
+]
+_ = search.rows(limit: 3, noteFilter: ""); spin()
+precondition(search.rows(limit: 3, noteFilter: "").count == 3, "bare note offers three")
+let filtered = search.rows(limit: 40, noteFilter: "weekly abs")
+precondition(filtered.count == 1 && filtered[0].id == "action.note.upcoming.4", "filter before limit, any word order; no call link required")
+let callsBefore = NSWorkspace.shared.opened.count
+precondition(MeetingNoteService.shared.prepared.isEmpty, "typing never prepares notes")
+filtered[0].run(nil)
+precondition(MeetingNoteService.shared.prepared == ["4"] && NSWorkspace.shared.opened.count == callsBefore, "note opens preparation without joining")
+precondition(search.noteEvent(entryID: filtered[0].id) == nil, "Cmd-Return does not turn note preparation into a call")
+EKEventStore.status = .denied
+filtered[0].run(nil)
+precondition(MeetingNoteService.shared.prepared.count == 1, "stale note result respects revoked permission")
 print("Meeting command: preview, explicit join, cancellation, empty/expired results and permission gates passed")
 '''
 with tempfile.TemporaryDirectory(prefix="meeting-command-tests-") as temporary:

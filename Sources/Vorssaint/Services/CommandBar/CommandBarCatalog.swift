@@ -1467,10 +1467,11 @@ enum CommandBarCatalog {
     /// search inside a category, so that run copies its own answer and closes
     /// the bar once it lands, unless the person has typed on or the bar has
     /// moved on to something else in the meantime.
-    private static func runScript(_ link: CommandBarLink) {
+    private static func runScript(_ link: CommandBarLink, argument suppliedArgument: String? = nil) {
         let service = CommandBarService.shared
         let typed = service.queryWhenRun.trimmingCharacters(in: .whitespaces)
-        let argument = CommandBarLinks.trailingArgument(query: typed, name: link.name) ?? ""
+        let argument = suppliedArgument
+            ?? CommandBarLinks.trailingArgument(query: typed, name: link.name) ?? ""
         // A script that needs something to work on asks for it rather than
         // running on nothing; one marked as needing nothing just runs.
         if argument.isEmpty, !link.runsWithoutArgument {
@@ -1504,6 +1505,23 @@ enum CommandBarCatalog {
             copyAnswer(text)
             service.hide()
         }
+    }
+
+    /// Keep Return on the conversion while the rates are loading. The normal
+    /// script path waits for the answer and discards it if the person types on.
+    static func currencyEntry(argument: String, result: CommandBarScriptRunner.Result?,
+                              bar: CommandBarFeatureStrings) -> CommandBarEntry {
+        CommandBarEntry(id: "currency.result", title: result?.text ?? argument,
+                        subtitle: result.map { $0.detail ?? bar.copyHint } ?? "ECB · …",
+                        icon: .symbol("dollarsign.circle"), isAnswer: true,
+                        countsUsage: false, keepsBarOpen: result?.copyText == nil,
+                        run: { _ in
+                            if let result {
+                                if let text = result.copyText { copyAnswer(text) }
+                            } else {
+                                runScript(CommandBarCurrency.helper, argument: argument)
+                            }
+                        })
     }
 
     /// The row a saved script shows once it has answered: the same shape as

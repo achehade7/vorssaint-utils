@@ -70,6 +70,19 @@ _ = search.rows(); access.finish()
 precondition(search.rows()[0].id == "action.jclip.empty" && search.rows()[0].keepsBarOpen)
 precondition(CommandBarTicketSearch.ticketKeys(in: "xSAP-12_foo SAP-123a SAP-123 sap-123") == ["SAP-123"], "reject partial keys")
 precondition(CommandBarTicketSearch.ticketKeys(in: (1...20).map { "SAP-\($0)" }.joined(separator: " ")).count == 12)
+let direct = CommandBarTicketSearch.directEntry(query: "J sap-531")!
+precondition(direct.key == "SAP-531" && direct.entry.title == "Jira · SAP-531")
+let clipboardReads = board.reads
+let openedBefore = NSWorkspace.shared.urls.count
+precondition(CommandBarTicketSearch.directEntry(query: "j SAP-5310")?.key == "SAP-5310")
+for invalid in ["j", "j clip", "j SAP-531 extra", "j SAP-0", "j SAP-531!", "note SAP-531"] {
+    precondition(CommandBarTicketSearch.directEntry(query: invalid) == nil, "only exact typed keys are handled")
+}
+precondition(board.reads == clipboardReads && NSWorkspace.shared.urls.count == openedBefore, "typed key neither reads clipboard nor opens browser")
+direct.entry.run(nil)
+precondition(NSWorkspace.shared.urls.last?.absoluteString == "https://example.atlassian.net/browse/SAP-531", "Return opens configured Jira URL")
+UserDefaults.standard.links = CommandBarLinks.encode([])
+precondition(CommandBarTicketSearch.directEntry(query: "j SAP-531") == nil, "missing j shortcut is not replaced with a hardcoded site")
 print("Ticket command: extraction, deduplication, explicit selection, configured URL, empty input and cancellation passed")
 '''
 source = (repo/'Sources/Vorssaint/Services/CommandBar/CommandBarLinks.swift').read_text()

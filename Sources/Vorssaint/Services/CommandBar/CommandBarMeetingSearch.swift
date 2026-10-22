@@ -28,7 +28,7 @@ final class CommandBarMeetingSearch {
         return events.first { "action.meet." + $0.id == entryID && $0.end > Date() && $0.meetingURL != nil }
     }
 
-    func rows(limit: Int = 1) -> [CommandBarEntry] {
+    func rows(limit: Int = 3, noteFilter: String? = nil) -> [CommandBarEntry] {
         let strings = FeatureStrings.notchCalendar(L10n.shared.language)
         guard NotchCalendarSupport.isEnabled() else {
             reset()
@@ -60,14 +60,14 @@ final class CommandBarMeetingSearch {
         }
         let now = Date()
         let meetings = NotchCalendarSupport.upcoming(events, now: now)
-            .filter { !$0.allDay && $0.meetingURL != nil }.prefix(limit)
+            .filter { event in !event.allDay && (noteFilter != nil || event.meetingURL != nil)
+                && (noteFilter.map { CommandBarNoteSearch.matches(event.title, filter: $0) } ?? true) }.prefix(limit)
         guard !meetings.isEmpty else {
-            return [CommandBarEntry(id: "action.meet.empty", title: strings.noMeetingLink,
+            return [CommandBarEntry(id: "action.meet.empty", title: noteFilter == nil ? strings.noMeetingLink : FeatureStrings.commandBar(L10n.shared.language).noResultsTitle,
                                     subtitle: strings.openCalendar, icon: .symbol("calendar"),
                                     countsUsage: false, run: { _ in NotchService.shared.open(.calendar) })]
         }
         return meetings.map { event in
-            let url = event.meetingURL!
             let start = DateFormatter.localizedString(from: event.start, dateStyle: .short, timeStyle: .short)
             let relative: String
             if event.start <= now { relative = strings.ongoing }
@@ -77,13 +77,14 @@ final class CommandBarMeetingSearch {
                 formatter.unitsStyle = .short
                 relative = formatter.localizedString(for: event.start, relativeTo: now)
             }
-            return CommandBarEntry(id: "action.meet." + event.id,
+            return CommandBarEntry(id: (noteFilter == nil ? "action.meet." : "action.note.upcoming.") + event.id,
                                     title: event.title.isEmpty ? strings.untitled : event.title,
-                                    subtitle: relative + " · " + start + " · " + (url.host ?? ""),
-                                    icon: .symbol("video"), countsUsage: false, run: { _ in
+                                    subtitle: relative + " · " + start + " · " + (noteFilter == nil ? (event.meetingURL?.host ?? "") : MeetingNoteStrings.prepareAndOpen(L10n.shared.language)),
+                                    icon: .symbol(noteFilter == nil ? "video" : "doc.text"), countsUsage: false, run: { _ in
                 guard NotchCalendarSupport.isEnabled(), event.end > Date(),
                       EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
-                NSWorkspace.shared.open(url)
+                if noteFilter != nil { MeetingNoteService.shared.show(event, joining: false) }
+                else if let url = event.meetingURL { NSWorkspace.shared.open(url) }
             })
         }
     }

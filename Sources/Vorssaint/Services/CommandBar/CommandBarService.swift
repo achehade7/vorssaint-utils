@@ -155,6 +155,7 @@ final class CommandBarService: ObservableObject {
     let fileSearch = CommandBarFileSearch()
     private let meetingSearch = CommandBarMeetingSearch()
     private let ticketSearch = CommandBarTicketSearch()
+    private let noteSearch = CommandBarNoteSearch()
     /// Which row answered which few letters, for as long as the app runs. Not
     /// stored: the bar forgets everything typed into it when it goes.
     private var queryMemory = CommandBarQueryMemory()
@@ -267,6 +268,7 @@ final class CommandBarService: ObservableObject {
         fileSearch.onResult = { [weak self] in self?.refreshResults() }
         meetingSearch.onResult = { [weak self] in self?.refreshResults() }
         ticketSearch.onResult = { [weak self] in self?.refreshResults() }
+        noteSearch.onResult = { [weak self] in self?.refreshResults() }
     }
 
     // MARK: - Lifecycle
@@ -383,6 +385,7 @@ final class CommandBarService: ObservableObject {
         scriptRunner.reset()
         meetingSearch.reset()
         ticketSearch.reset()
+        noteSearch.reset()
         fileSearch.reset()
         let id = UUID()
         presentationID = id
@@ -580,6 +583,7 @@ final class CommandBarService: ObservableObject {
         scriptRunner.reset()
         meetingSearch.reset()
         ticketSearch.reset()
+        noteSearch.reset()
         fileSearch.reset()
         // Closing while listening for a combination must give every global key
         // back, or the whole app would go quiet until the next relaunch.
@@ -1187,6 +1191,7 @@ final class CommandBarService: ObservableObject {
         let loadGeneration = fileScopeLoadGeneration
         meetingSearch.reset()
         ticketSearch.reset()
+        noteSearch.reset()
         fileSearch.reset()
         fileScopeCache = []
         fileIgnoreCache = enabled
@@ -1499,6 +1504,7 @@ final class CommandBarService: ObservableObject {
             if trimmed.isEmpty {
                 meetingSearch.reset()
                 ticketSearch.reset()
+                noteSearch.reset()
                 let showsBrowse = CommandBarHome.showsBrowseList(
                     compact: compactMode,
                     hasCategory: activeCategory != nil,
@@ -1578,7 +1584,7 @@ final class CommandBarService: ObservableObject {
              .capturingShortcut:
             setCompactHome(false)
         }
-        let awaiting = fileSearch.isAwaiting || scriptRunner.isAwaiting || meetingSearch.isAwaiting || ticketSearch.isAwaiting
+        let awaiting = fileSearch.isAwaiting || scriptRunner.isAwaiting || meetingSearch.isAwaiting || ticketSearch.isAwaiting || noteSearch.isAwaiting
         if awaitsAnswers != awaiting { awaitsAnswers = awaiting }
         refreshPanelLayout()
     }
@@ -1745,6 +1751,25 @@ final class CommandBarService: ObservableObject {
 
     private func searchRows(for trimmed: String) -> [CommandBarEntry] {
         let bar = FeatureStrings.commandBar(L10n.shared.language)
+        if activeCategory == nil, let note = CommandBarNoteSearch.query(trimmed) {
+            scriptRunner.cancelPending()
+            fileSearch.cancelPending()
+            ticketSearch.reset()
+            if note.previous {
+                meetingSearch.reset()
+                return noteSearch.rows(for: .previous(note.filter))
+            }
+            noteSearch.reset()
+            return meetingSearch.rows(limit: note.filter.isEmpty ? 3 : 40, noteFilter: note.filter)
+        }
+        if activeCategory == nil, isEnabled(.links), let ticket = CommandBarTicketSearch.directEntry(query: trimmed) {
+            scriptRunner.cancelPending()
+            fileSearch.cancelPending()
+            meetingSearch.reset()
+            ticketSearch.reset()
+            return [ticket.entry] + noteSearch.rows(for: .ticket(ticket.key))
+        }
+        noteSearch.reset()
         if activeCategory == nil, trimmed.lowercased() == "j clip" {
             scriptRunner.cancelPending()
             fileSearch.cancelPending()
@@ -1761,7 +1786,7 @@ final class CommandBarService: ObservableObject {
         if activeCategory == nil, ["meet", "meet next"].contains(trimmed.lowercased()) {
             scriptRunner.cancelPending()
             fileSearch.cancelPending()
-            return meetingSearch.rows(limit: trimmed.lowercased() == "meet next" ? 3 : 1)
+            return meetingSearch.rows()
         }
         meetingSearch.reset()
         if activeCategory == nil, CommandBarFileSearchSupport.isRecentQuery(trimmed) {
@@ -1868,8 +1893,23 @@ final class CommandBarService: ObservableObject {
         let scriptMatch = isEnabled(.links)
             ? CommandBarLinks.matchingScriptLink(in: savedLinks, query: trimmed)
             : nil
+        // Fixed unit/calculator answers take precedence ("pounds" can also
+        // mean mass). Currency is independent of saved links and uses the
+        // installed helper through the same debounced runner.
+        let currencyArgument = isEnabled(.calculator) && answer == nil && scriptMatch == nil
+            ? CommandBarCurrency.argument(for: trimmed)
+            : nil
         var scriptAnswer: CommandBarEntry?
-        if let scriptMatch, !hiddenCache.contains("link.\(scriptMatch.link.id.uuidString)") {
+        if let currencyArgument {
+            let helper = CommandBarCurrency.helper
+            let result = scriptRunner.cachedResult(linkID: helper.id, argument: currencyArgument)
+            if result != nil {
+                scriptRunner.cancelPending()
+            } else {
+                scriptRunner.schedule(link: helper, argument: currencyArgument)
+            }
+            scriptAnswer = CommandBarCatalog.currencyEntry(argument: currencyArgument, result: result, bar: bar)
+        } else if let scriptMatch, !hiddenCache.contains("link.\(scriptMatch.link.id.uuidString)") {
             if let result = scriptRunner.cachedResult(linkID: scriptMatch.link.id,
                                                        argument: scriptMatch.argument) {
                 scriptRunner.cancelPending()

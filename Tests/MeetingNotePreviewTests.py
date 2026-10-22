@@ -30,7 +30,7 @@ app.setActivationPolicy(.accessory)
 let input = MeetingNoteInput(identity: "fixture", title: "SAP-531 Review", start: Date(), end: Date().addingTimeInterval(1800), people: [.init(name: "Example Person")])
 let draft = MeetingNoteDraft(input: input, store: .init(vault: URL(fileURLWithPath: "/unavailable-test-vault")))
 var confirms = 0, cancels = 0
-private let view = MeetingNoteView(draft: draft, cancel: { if draft.cancel() { cancels += 1 } }, confirm: { confirms += 1 })
+private let view = MeetingNoteView(draft: draft, joining: !CommandLine.arguments.contains("--prepare"), cancel: { if draft.cancel() { cancels += 1 } }, confirm: { confirms += 1 })
 private let host = NSHostingView(rootView: view)
 host.frame = NSRect(x: 0, y: 0, width: 440, height: 250)
 let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
@@ -65,3 +65,4 @@ with tempfile.TemporaryDirectory(prefix='meeting-note-preview-') as folder:
                     str(repo / 'Sources/Vorssaint/Services/CommandBar/MeetingNoteStore.swift'),
                     str(repo / 'Sources/Vorssaint/Services/CommandBar/MeetingNoteDraft.swift'), str(main), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
+    subprocess.run([str(binary), '--prepare'], check=True)

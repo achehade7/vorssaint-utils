@@ -23,6 +23,13 @@ struct MeetingNoteStore {
         .init(vault: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("dev/knowledge"))
     }
 
+    static func obsidianURL(_ file: URL) -> URL? {
+        var link = URLComponents()
+        link.scheme = "obsidian"; link.host = "open"
+        link.queryItems = [URLQueryItem(name: "path", value: file.path)]
+        return link.url
+    }
+
     static func date(_ date: Date, format: String) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -83,11 +90,18 @@ struct MeetingNoteStore {
     }
 
     private func project(for title: String) throws -> String? {
+        var projects = Set<String>()
+        let folders = (try? FileManager.default.contentsOfDirectory(at: vault.appendingPathComponent("projects"),
+            includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+        for folder in folders where (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            let name = folder.lastPathComponent
+            let pattern = #"(?<![\p{L}\p{N}_])"# + NSRegularExpression.escapedPattern(for: name) + #"(?![\p{L}\p{N}_])"#
+            if title.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil { projects.insert(name) }
+        }
         let expression = try NSRegularExpression(pattern: #"\b[A-Z][A-Z0-9]+-\d+\b"#)
         let keys = Set(expression.matches(in: title, range: NSRange(title.startIndex..., in: title))
             .compactMap { Range($0.range, in: title).map { String(title[$0]) } })
-        guard !keys.isEmpty else { return nil }
-        var projects = Set<String>()
+        guard !keys.isEmpty else { return projects.count == 1 ? projects.first : nil }
         for name in ["sap-support", "abs"] {
             let folder = vault.appendingPathComponent("projects/" + name)
             guard let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isSymbolicLinkKey],
@@ -150,9 +164,11 @@ struct MeetingNoteStore {
               text.hasPrefix("---\n"), text.contains("date: {{date:YYYY-MM-DD}}"),
               text.contains("calendar_event:\n"), text.contains("type: meeting"), text.contains("project: []"), text.contains("topics: []"),
               text.contains("folded: false"), text.contains("# {{title}}"), text.contains("## Purpose\n") else { throw Failure.template }
+        let projects = try project(for: input.title).map { [$0] } ?? []
+        let projectProperty = String(data: try JSONEncoder().encode(projects), encoding: .utf8)!
         text = text.replacingOccurrences(of: "{{date:YYYY-MM-DD}}", with: Self.date(input.start, format: "yyyy-MM-dd"))
             .replacingOccurrences(of: "{{title}}", with: title)
-            .replacingOccurrences(of: "project: []", with: "project: [" + (try project(for: input.title) ?? "") + "]")
+            .replacingOccurrences(of: "project: []", with: "project: " + projectProperty)
             .replacingOccurrences(of: "## Purpose\n", with: "## Purpose\n\n" + Self.purpose(input) + "\n")
         if let identity = input.identity {
             let eventID = String(data: try JSONEncoder().encode(identity), encoding: .utf8)!

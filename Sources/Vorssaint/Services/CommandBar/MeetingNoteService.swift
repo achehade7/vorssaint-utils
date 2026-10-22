@@ -32,8 +32,8 @@ final class MeetingNoteService: ObservableObject {
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    func show(_ event: NotchCalendarEvent) {
-        guard allowed(event), draft?.saving != true else { return }
+    func show(_ event: NotchCalendarEvent, joining: Bool = true) {
+        guard allowed(event, joining: joining), draft?.saving != true else { return }
         close()
         var people = event.notePeople
         if !people.contains(where: \.isCurrentUser), !NSFullUserName().isEmpty {
@@ -48,9 +48,9 @@ final class MeetingNoteService: ObservableObject {
         panel.level = .floating; panel.isOpaque = false; panel.backgroundColor = .clear
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        panel.contentView = NSHostingView(rootView: MeetingNoteView(draft: draft, cancel: { [weak self] in
+        panel.contentView = NSHostingView(rootView: MeetingNoteView(draft: draft, joining: joining, cancel: { [weak self] in
             if draft.cancel() { self?.close() }
-        }, confirm: { [weak self] in self?.confirm(event, draft: draft) }))
+        }, confirm: { [weak self] in self?.confirm(event, draft: draft, joining: joining) }))
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
         if let frame = screen?.visibleFrame {
             panel.setFrameOrigin(NSPoint(x: frame.midX - 220, y: frame.midY + frame.height * 0.12 - 125))
@@ -59,24 +59,24 @@ final class MeetingNoteService: ObservableObject {
         panel.orderFrontRegardless(); panel.makeKey()
     }
 
-    private func allowed(_ event: NotchCalendarEvent) -> Bool {
-        NotchCalendarSupport.isEnabled() && event.end > Date() && event.meetingURL != nil
+    private func allowed(_ event: NotchCalendarEvent, joining: Bool) -> Bool {
+        NotchCalendarSupport.isEnabled() && event.end > Date() && (!joining || event.meetingURL != nil)
             && EKEventStore.authorizationStatus(for: .event) == .fullAccess
     }
 
-    private func confirm(_ event: NotchCalendarEvent, draft: MeetingNoteDraft) {
-        draft.save(allowed: allowed(event)) { [weak self] file in
+    private func confirm(_ event: NotchCalendarEvent, draft: MeetingNoteDraft, joining: Bool) {
+        draft.save(allowed: allowed(event, joining: joining)) { [weak self] file in
             guard let self else { return }
             guard let prepared = file else { NotchService.shared.signalQuickCapture(success: false); return }
             self.close()
-            if self.allowed(event), let meeting = event.meetingURL { NSWorkspace.shared.open(meeting) }
-            var link = URLComponents()
-            link.scheme = "obsidian"; link.host = "open"
-            link.queryItems = [URLQueryItem(name: "path", value: prepared.file.path)]
-            self.keepShortcut(link.url, until: event.end)
+            let link = MeetingNoteStore.obsidianURL(prepared.file)
+            if joining {
+                if self.allowed(event, joining: true), let meeting = event.meetingURL { NSWorkspace.shared.open(meeting) }
+                self.keepShortcut(link, until: event.end)
+            } else if let link { NSWorkspace.shared.open(link) }
             let text = MeetingNoteStrings.localized(L10n.shared.language)
             _ = NotchService.shared.show(NotchNotice(event: .capture, title: "", detail: prepared.created ? text.created : text.ready,
-                                                    symbol: "doc.text", fileURL: link.url, meetingNote: true))
+                                                    symbol: "doc.text", fileURL: link, meetingNote: true))
         }
     }
 
@@ -90,6 +90,7 @@ private final class MeetingNotePanel: NSPanel {
 
 private struct MeetingNoteView: View {
     @ObservedObject var draft: MeetingNoteDraft
+    var joining = true
     let cancel: () -> Void, confirm: () -> Void
     @FocusState private var focused: Bool
     private var text: MeetingNoteStrings { .localized(L10n.shared.language) }
@@ -117,7 +118,7 @@ private struct MeetingNoteView: View {
                 Spacer()
                 if draft.saving { ProgressView().controlSize(.small) }
                 Button(action: confirm) {
-                    Text(text.join + "  ↩").font(.system(size: 12, weight: .semibold))
+                    Text((joining ? text.join : MeetingNoteStrings.prepareAndOpen(L10n.shared.language)) + "  ↩").font(.system(size: 12, weight: .semibold))
                         .padding(.horizontal, 12).padding(.vertical, 7)
                         .background(LinearGradient(colors: [NotchNeonPalette.purple, NotchNeonPalette.blue],
                                                    startPoint: .leading, endPoint: .trailing), in: Capsule())

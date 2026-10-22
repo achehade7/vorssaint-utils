@@ -122,7 +122,45 @@ try "---\njira:\n  - SAP-599\n---\n".write(to: root.appendingPathComponent("proj
 for (key, project) in [("SAP-531", "sap-support"), ("SAP-599", "abs"), ("SAP-999", "")] {
     let event = MeetingNoteInput(identity: key, title: key + " Review", start: start, end: start, people: [])
     let file = try store.prepare(event, topic: event.title).file
-    try expect(try String(contentsOf: file, encoding: .utf8).contains("project: [" + project + "]"), "project mapped from existing Jira property")
+    let property = String(data: try JSONEncoder().encode(project.isEmpty ? [] : [project]), encoding: .utf8)!
+    try expect(try String(contentsOf: file, encoding: .utf8).contains("project: " + property + "\n"), "project mapped from existing Jira property")
+}
+// Title matches use actual top-level project folders and must agree with Jira.
+for name in ["platform", "phase.2", "true"] {
+    try fm.createDirectory(at: root.appendingPathComponent("projects/" + name), withIntermediateDirectories: true)
+}
+try fm.createDirectory(at: root.appendingPathComponent("projects/abs/investigations"), withIntermediateDirectories: true)
+try "not a folder".write(to: root.appendingPathComponent("projects/readme"), atomically: true, encoding: .utf8)
+let projectCases: [(String, [String])] = [
+    ("Weekly ABS KT", ["abs"]),
+    ("weekly abs kt", ["abs"]),
+    ("Weekly (AbS): KT", ["abs"]),
+    ("ABS and abs follow-up", ["abs"]),
+    ("ABSOLUTE preABS ABS2 _ABS ABS_ éABS ABSé", []),
+    ("SAP-SUPPORT review", ["sap-support"]),
+    ("Platform planning", ["platform"]),
+    ("PHASE.2 review", ["phase.2"]),
+    ("phaseX2 review", []),
+    ("true planning", ["true"]),
+    ("readme investigations review", []),
+    ("Unmatched planning", []),
+    ("ABS SAP-599 review", ["abs"]),
+    ("ABS SAP-999 review", ["abs"]),
+    ("ABS SAP-531 review", []),
+    ("platform SAP-599 review", []),
+    ("ABS sap-support review", []),
+    ("ABS sap-support SAP-599 review", []),
+    ("SAP-531 SAP-599 review", []),
+    ("ABS SAP-531 SAP-599 review", [])
+]
+for (index, entry) in projectCases.enumerated() {
+    let (title, expected) = entry
+    let event = MeetingNoteInput(identity: "project-case-\(index)", title: title, start: start, end: start, people: [])
+    // Editing the topic does not change the original event-title mapping.
+    let file = try store.prepare(event, topic: "Mapping case \(index)").file
+    let body = try String(contentsOf: file, encoding: .utf8)
+    let property = String(data: try JSONEncoder().encode(expected), encoding: .utf8)!
+    try expect(body.contains("project: " + property + "\n"), "project mapping for \(title)")
 }
 // Preview and Escape cannot write or trigger join callbacks.
 let countBefore = try fm.contentsOfDirectory(atPath: root.appendingPathComponent("meetings").path).count

@@ -3,6 +3,43 @@
 
 struct MeetingNoteStrings {
     let title: String, join: String, ready: String, created: String, failed: String
+    static func readFailure(_ language: AppLanguage) -> String {
+        switch language {
+        case .enUS: return "Could not read meeting notes"
+        case .ptBR: return "Não foi possível ler as notas das reuniões"
+        case .tr: return "Toplantı notları okunamadı"
+        case .ru: return "Не удалось прочитать заметки встреч"
+        case .es: return "No se pudieron leer las notas de reuniones"
+        case .sk: return "Poznámky zo stretnutí sa nepodarilo načítať"
+        case .de: return "Besprechungsnotizen konnten nicht gelesen werden"
+        case .fr: return "Impossible de lire les notes de réunion"
+        case .it: return "Impossibile leggere le note delle riunioni"
+        case .ja: return "会議メモを読み込めませんでした"
+        case .ko: return "회의 메모를 읽을 수 없습니다"
+        case .uk: return "Не вдалося прочитати нотатки зустрічей"
+        case .zhHans: return "无法读取会议笔记"
+        case .zhTW: return "無法讀取會議筆記"
+        case .zhHK: return "無法讀取會議筆記"
+        }
+    }
+    static func prepareAndOpen(_ language: AppLanguage) -> String {
+        switch language {
+        case .enUS: return "Prepare & open"
+        case .ptBR: return "Preparar e abrir"
+        case .tr: return "Hazırla ve aç"
+        case .ru: return "Создать и открыть"
+        case .es: return "Preparar y abrir"
+        case .sk: return "Pripraviť a otvoriť"
+        case .de: return "Vorbereiten & öffnen"
+        case .fr: return "Préparer et ouvrir"
+        case .it: return "Prepara e apri"
+        case .ja: return "準備して開く"
+        case .ko: return "준비하고 열기"
+        case .uk: return "Підготувати й відкрити"
+        case .zhHans: return "准备并打开"
+        case .zhTW, .zhHK: return "準備並開啟"
+        }
+    }
     static func localized(_ language: AppLanguage) -> Self {
         switch language {
         case .enUS: return .init(title: "Meeting note", join: "Prepare & join", ready: "Note ready", created: "Note created", failed: "Could not prepare the note. Nothing was opened.")

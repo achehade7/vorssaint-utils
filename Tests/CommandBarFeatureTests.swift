@@ -505,7 +505,8 @@ enum CommandBarFeatureTests {
             func script(_ name: String, printing output: String, failing: Bool = false,
                         slow: Bool = false) -> CommandBarLink {
                 let file = folder.appending(path: UUID().uuidString)
-                let lines: [String] = ["#!/bin/sh", "echo run >> \"$0.runs\"", slow ? "sleep 0.5" : "",
+                let lines: [String] = ["#!/bin/sh", "echo run >> \"$0.runs\"",
+                                       "printf '%s' \"$1\" > \"$0.argument\"", slow ? "sleep 0.5" : "",
                                        output.isEmpty ? "" : "echo '\(output)'", failing ? "exit 3" : ""]
                 let body = lines.joined(separator: "\n") + "\n"
                 FileManager.default.createFile(atPath: file.path, contents: Data(body.utf8),
@@ -529,6 +530,7 @@ enum CommandBarFeatureTests {
             // a run that is already going when Return is pressed.
             func returnOnScript(_ link: CommandBarLink, typed: String, saved: [CommandBarLink],
                                 category: CommandBarSource? = nil, sameOpening: Bool = false,
+                                argument: String? = nil,
                                 before: () -> Void = {}, meanwhile: () -> Void = {}) {
                 if !sameOpening { bar.scriptRunner.reset() }
                 ScriptRunHost.Defaults.standard.links = saved
@@ -540,7 +542,7 @@ enum CommandBarFeatureTests {
                 bar.hidden = 0
                 ScriptRunHost.copied = []
                 before()
-                ScriptRunHost.runScript(link)
+                ScriptRunHost.runScript(link, argument: argument)
                 meanwhile()
                 settle()
                 bar.refresh()
@@ -645,6 +647,24 @@ enum CommandBarFeatureTests {
             returnOnScript(fxHelp, typed: "fx", saved: [fxHelp], sameOpening: true)
             suite.expect(ScriptRunHost.copied.isEmpty && bar.hidden == 0,
                          "Return on currency help preserves the clipboard and open field")
+            let directFX = script("fx", printing: #"{"vorssaintResult":1,"text":"125.00 USD","detail":"ECB · 2026-10-22","copyText":"125.00"}"#, slow: true)
+            let currencyArgument = CommandBarCurrency.argument(for: "100 euros to dollars")!
+            returnOnScript(directFX, typed: "100 euros to dollars", saved: [directFX],
+                           argument: currencyArgument, before: {
+                bar.scriptRunner.runNow(link: directFX, argument: currencyArgument)
+            })
+            suite.expect(ScriptRunHost.copied == ["125.00"] && bar.hidden == 1 && runs(directFX) == 1,
+                         "Return during direct currency loading copies once when the in-flight answer arrives")
+            suite.expect((try? String(contentsOfFile: directFX.destination + ".argument", encoding: .utf8))
+                            == "100 EUR to USD",
+                         "direct currency passes canonical codes as one argument to the existing helper")
+            returnOnScript(directFX, typed: "100 euros to dollars", saved: [directFX],
+                           argument: currencyArgument, meanwhile: { bar.query = "100 km to miles" })
+            suite.expect(ScriptRunHost.copied.isEmpty && bar.hidden == 0,
+                         "typing on while direct currency loads cannot copy a stale result")
+            returnOnScript(fxHelp, typed: "100 eur to usd", saved: [fxHelp], argument: currencyArgument)
+            suite.expect(ScriptRunHost.copied.isEmpty && bar.hidden == 0,
+                         "a direct currency error leaves the clipboard and field intact")
             var needsInput = script("Copy Path", printing: "/tmp/notes")
             needsInput.runsWithoutArgument = false
             returnOnScript(needsInput, typed: "co", saved: [needsInput])
@@ -1263,6 +1283,27 @@ enum CommandBarFeatureTests {
                 && units("1 fluid ounce to ml") == units("1 floz to ml")
                 && units("236 ml to fl oz") == units("236 ml to floz"),
                "fluid ounces written as two words, the way a bottle prints them, convert")
+        for (query, expected) in [
+            ("100 eur to usd", "100 EUR to USD"),
+            ("100 euro to dollar", "100 EUR to USD"),
+            ("100 euros to dollars", "100 EUR to USD"),
+            ("  12,50 EUROS  TO\tUS DOLLARS  ", "12,50 EUR to USD"),
+            ("-12.50 usd to euros", "-12.50 USD to EUR"),
+            ("0 dollars to yen", "0 USD to JPY"),
+            ("100 pounds to euros", "100 GBP to EUR"),
+            ("100 swiss francs to GBP", "100 CHF to GBP"),
+            ("100 canadian dollars to australian dollars", "100 CAD to AUD"),
+        ] {
+            suite.expect(CommandBarCurrency.argument(for: query) == expected,
+                         "direct currency recognizes \(query.debugDescription)")
+        }
+        for query in ["100 eur", "100 eur to", "100 euro to doll", "fx 100 eur to usd",
+                      "100 eur usd", "100 kilometres to miles", "8 fl oz to ml", "1 pounds to kg",
+                      "100 foo to bar", "NaN eur to usd", "1e9 eur to usd", "100;open eur to usd",
+                      "1,000.00 eur to usd", "100 eur to usd extra", "1000000000000 eur to usd"] {
+            suite.expect(CommandBarCurrency.argument(for: query) == nil,
+                         "\(query.debugDescription) does not start an implicit currency request")
+        }
         suite.expect(units("100 km") == nil, "without the word there is no conversion")
         suite.expect(units("to") == nil && units("in") == nil,
                "the little words alone convert nothing")
