@@ -36,11 +36,11 @@ struct CommandBarDropletMotion: Equatable {
 
     /// The bar hangs this far below the island, where the drop lands.
     static let landingGap: CGFloat = 16
-    static let beadSide: CGFloat = 26
+    static let beadSide: CGFloat = 24
     /// The companion's size in the bar's field.
     static let mascotSize: CGFloat = 22
     /// Its size riding in the drop, as a share of that.
-    static let ridingScale: CGFloat = 0.7
+    static let ridingScale: CGFloat = 0.65
     /// The neck roots this far inside the island, so it grows out of its edge.
     static let rootDepth: CGFloat = 6
     /// The field's corners, as the bar draws them.
