@@ -22,6 +22,35 @@ final class SnippetLibraryService: ObservableObject {
     @Published private(set) var presentationID = UUID()
     @Published private(set) var snippets: [TextSnippet] = []
 
+    enum TemplateAction { case copy, insert }
+    @Published private(set) var template: TextSnippet?
+    @Published var templateValues: [String: String] = [:]
+    @Published private(set) var templateAction = TemplateAction.copy
+    private var templateCompletion: ((TextSnippet) -> Void)?
+    var templateFields: [String] { SnippetTemplateSupport.fields(in: template?.replacement ?? "") }
+    var canFinishTemplate: Bool {
+        template != nil && templateFields.allSatisfy {
+            !(templateValues[$0] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    func resolveTemplate(_ snippet: TextSnippet, action: TemplateAction,
+                         completion: @escaping (TextSnippet) -> Void) {
+        guard !SnippetTemplateSupport.fields(in: snippet.replacement).isEmpty else { completion(snippet); return }
+        hide()
+        template = snippet
+        templateAction = action
+        templateCompletion = completion
+        present()
+    }
+
+    func finishTemplate() {
+        guard canFinishTemplate, var filled = template, let completion = templateCompletion else { return }
+        filled.replacement = SnippetTemplateSupport.fill(filled.replacement, values: templateValues)
+        hide()
+        completion(filled)
+    }
+
     private let hotkey = QuickToolHotkey(id: 19)
     private var panel: NSPanel?
     private var keyMonitor: Any?
@@ -43,7 +72,7 @@ final class SnippetLibraryService: ObservableObject {
                                             fallback: .snippetLibraryDefault)
         shortcutRegistrationFailed = !hotkey.sync(enabled: enabled, shortcut: shortcut,
                                                   storageKey: DefaultsKey.snippetLibraryShortcut)
-        if !enabled { hide() }
+        if !AppFeature.textSnippets.isAvailable || (!enabled && template == nil) { hide() }
         if isVisible {
             reloadSnippets()
             // Edits made in Settings can flip the panel between its list and
@@ -93,6 +122,11 @@ final class SnippetLibraryService: ObservableObject {
     }
 
     func show() {
+        hide()
+        present()
+    }
+
+    private func present() {
         reloadSnippets()
         let panel = ensurePanel()
         TextSnippetService.shared.setLibraryVisible(true)
@@ -113,6 +147,9 @@ final class SnippetLibraryService: ObservableObject {
     func hide() {
         removeMonitors()
         panel?.orderOut(nil)
+        template = nil
+        templateValues = [:]
+        templateCompletion = nil
         TextSnippetService.shared.setLibraryVisible(false)
     }
 
@@ -148,6 +185,10 @@ final class SnippetLibraryService: ObservableObject {
     }
 
     func insert(_ snippet: TextSnippet) {
+        resolveTemplate(snippet, action: .insert) { [weak self] filled in self?.insertResolved(filled) }
+    }
+
+    private func insertResolved(_ snippet: TextSnippet) {
         hide()
         // The panel never activates, so focus normally sits in the target
         // app. When Vorssaint itself is frontmost (its Settings window, for
@@ -166,6 +207,7 @@ final class SnippetLibraryService: ObservableObject {
             }
             return
         }
+        UserDefaults.standard.set(snippet.id.uuidString, forKey: DefaultsKey.lastUsedSnippetID)
         let clipboard = TextSnippetSupport.needsClipboard(snippet.replacement)
             ? NSPasteboard.general.string(forType: .string)
             : nil
@@ -288,6 +330,14 @@ final class SnippetLibraryService: ObservableObject {
             // Japanese and Korean, so composition always wins.
             if let editor = panel.firstResponder as? NSTextView, editor.hasMarkedText() {
                 return event
+            }
+
+            if self.template != nil {
+                switch Int(event.keyCode) {
+                case kVK_Escape: self.hide(); return nil
+                case kVK_Return, kVK_ANSI_KeypadEnter: self.finishTemplate(); return nil
+                default: return event
+                }
             }
 
             switch Int(event.keyCode) {

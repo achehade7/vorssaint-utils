@@ -11,7 +11,7 @@ final class CommandBarMeetingSearch {
     private var task: Task<Void, Never>?
     private var generation = UUID()
     private var loaded = false
-    private var event: NotchCalendarEvent?
+    private var events: [NotchCalendarEvent] = []
     var isAwaiting: Bool { task != nil }
 
     func reset() {
@@ -19,10 +19,16 @@ final class CommandBarMeetingSearch {
         task?.cancel()
         task = nil
         loaded = false
-        event = nil
+        events = []
     }
 
-    func rows() -> [CommandBarEntry] {
+    func noteEvent(entryID: String) -> NotchCalendarEvent? {
+        guard NotchCalendarSupport.isEnabled(),
+              EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return nil }
+        return events.first { "action.meet." + $0.id == entryID && $0.end > Date() && $0.meetingURL != nil }
+    }
+
+    func rows(limit: Int = 1) -> [CommandBarEntry] {
         let strings = FeatureStrings.notchCalendar(L10n.shared.language)
         guard NotchCalendarSupport.isEnabled() else {
             reset()
@@ -44,7 +50,7 @@ final class CommandBarMeetingSearch {
                 task = Task { @MainActor [weak self] in
                     let events = await NotchCalendarService.shared.meetingEvents()
                     guard let self, !Task.isCancelled, self.generation == token else { return }
-                    self.event = NotchCalendarSupport.nextMeeting(events, now: Date())
+                    self.events = events
                     self.loaded = true
                     self.task = nil
                     self.onResult?()
@@ -52,18 +58,33 @@ final class CommandBarMeetingSearch {
             }
             return []
         }
-        guard let event, event.end > Date(), let url = event.meetingURL else {
+        let now = Date()
+        let meetings = NotchCalendarSupport.upcoming(events, now: now)
+            .filter { !$0.allDay && $0.meetingURL != nil }.prefix(limit)
+        guard !meetings.isEmpty else {
             return [CommandBarEntry(id: "action.meet.empty", title: strings.noMeetingLink,
                                     subtitle: strings.openCalendar, icon: .symbol("calendar"),
                                     countsUsage: false, run: { _ in NotchService.shared.open(.calendar) })]
         }
-        let start = DateFormatter.localizedString(from: event.start, dateStyle: .short, timeStyle: .short)
-        return [CommandBarEntry(id: "action.meet", title: event.title.isEmpty ? strings.untitled : event.title,
-                                subtitle: start + " · " + (url.host ?? ""), icon: .symbol("video"),
-                                countsUsage: false, run: { _ in
-            guard NotchCalendarSupport.isEnabled(), event.end > Date(),
-                  EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
-            NSWorkspace.shared.open(url)
-        })]
+        return meetings.map { event in
+            let url = event.meetingURL!
+            let start = DateFormatter.localizedString(from: event.start, dateStyle: .short, timeStyle: .short)
+            let relative: String
+            if event.start <= now { relative = strings.ongoing }
+            else {
+                let formatter = RelativeDateTimeFormatter()
+                formatter.locale = Locale(identifier: L10n.shared.language.rawValue)
+                formatter.unitsStyle = .short
+                relative = formatter.localizedString(for: event.start, relativeTo: now)
+            }
+            return CommandBarEntry(id: "action.meet." + event.id,
+                                    title: event.title.isEmpty ? strings.untitled : event.title,
+                                    subtitle: relative + " · " + start + " · " + (url.host ?? ""),
+                                    icon: .symbol("video"), countsUsage: false, run: { _ in
+                guard NotchCalendarSupport.isEnabled(), event.end > Date(),
+                      EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
+                NSWorkspace.shared.open(url)
+            })
+        }
     }
 }

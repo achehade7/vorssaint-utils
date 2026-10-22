@@ -31,6 +31,7 @@ final class NotchLockScreenModel: ObservableObject {
     @Published var chargingArrivalID: UUID?
     @Published var chargingPercent: Int?
     @Published var lowBatteryAt: Date?
+    @Published var lowBatteryPercent: Int?
     @Published var fullChargeAt: Date?
     @Published var deviceFeedback: DeviceFeedback?
     @Published var displayArrival: NotchDisplayArrival?
@@ -67,14 +68,15 @@ struct NotchLockScreenIsland: View {
         let padlockSide = min(geometry.compactMusicArtworkSide, wing)
         let playing = model.showsMusic(music.playback) && music.playback?.isPlaying == true
         let device = model.deviceFeedback
+        let lowBattery = model.lowBatteryAt != nil
         let cue = device.flatMap { NotchDeviceFeedback($0.notice) }
         NotchShape(attached: true, radius: NotchLayout.surfaceRadius(height: size.height))
             .fill(.black)
             .overlay(alignment: .top) {
                 HStack(spacing: 0) {
-                    Image(systemName: device?.notice.symbol ?? (showsChargingSignal ? "bolt.fill" : model.padlockOpen ? "lock.open.fill" : "lock.fill"))
+                    Image(systemName: device?.notice.symbol ?? (lowBattery ? "battery.0percent" : showsChargingSignal ? "bolt.fill" : model.padlockOpen ? "lock.open.fill" : "lock.fill"))
                         .font(.system(size: min(13, contentHeight * 0.42), weight: .semibold))
-                        .foregroundStyle(cue?.tint ?? (showsChargingSignal ? NotchNeonPalette.charging
+                        .foregroundStyle(cue?.tint ?? (lowBattery ? NotchBatteryEdge.tint : showsChargingSignal ? NotchNeonPalette.charging
                                          : model.padlockOpen ? NotchNeonPalette.blue : NotchNeonPalette.purple))
                         .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
                         .symbolEffect(.bounce, options: .speed(1.4), value: reduceMotion ? false : model.padlockOpen)
@@ -87,13 +89,17 @@ struct NotchLockScreenIsland: View {
                         NotchEqualizerBars(isPlaying: playing, bars: NotchLayout.compactMusicBarCount,
                                            barWidth: NotchLayout.compactMusicBarWidth, height: geometry.compactMusicBarHeight,
                                            tint: NotchNeonPalette.blue)
-                            .opacity(playing && !showsChargingSignal && device == nil ? 1 : 0)
+                            .opacity(playing && !showsChargingSignal && !lowBattery && device == nil ? 1 : 0)
                         if let device, !device.notice.title.isEmpty, wing >= 30 {
                             Text(device.notice.title)
                                 .font(.system(size: 10.5, weight: .semibold))
                                 .monospacedDigit()
                                 .foregroundStyle(cue?.tint ?? .white)
                                 .fixedSize()
+                        } else if device == nil, lowBattery, let percent = model.lowBatteryPercent, wing >= 30 {
+                            Text("\(percent)%")
+                                .font(.system(size: 10.5, weight: .semibold)).monospacedDigit()
+                                .foregroundStyle(NotchBatteryEdge.tint)
                         } else if device == nil, showsChargingSignal, let percent = model.chargingPercent, wing >= 30 {
                             Text("\(percent)%")
                                 .font(.system(size: 10.5, weight: .semibold))

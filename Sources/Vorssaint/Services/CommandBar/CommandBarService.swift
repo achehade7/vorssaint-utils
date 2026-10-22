@@ -154,6 +154,7 @@ final class CommandBarService: ObservableObject {
     let scriptRunner = CommandBarScriptRunner()
     let fileSearch = CommandBarFileSearch()
     private let meetingSearch = CommandBarMeetingSearch()
+    private let ticketSearch = CommandBarTicketSearch()
     /// Which row answered which few letters, for as long as the app runs. Not
     /// stored: the bar forgets everything typed into it when it goes.
     private var queryMemory = CommandBarQueryMemory()
@@ -265,6 +266,7 @@ final class CommandBarService: ObservableObject {
         scriptRunner.onResult = { [weak self] in self?.refreshResults() }
         fileSearch.onResult = { [weak self] in self?.refreshResults() }
         meetingSearch.onResult = { [weak self] in self?.refreshResults() }
+        ticketSearch.onResult = { [weak self] in self?.refreshResults() }
     }
 
     // MARK: - Lifecycle
@@ -380,6 +382,7 @@ final class CommandBarService: ObservableObject {
         deferredRowShortcut.cancel()
         scriptRunner.reset()
         meetingSearch.reset()
+        ticketSearch.reset()
         fileSearch.reset()
         let id = UUID()
         presentationID = id
@@ -576,6 +579,7 @@ final class CommandBarService: ObservableObject {
         deferredRowShortcut.cancel()
         scriptRunner.reset()
         meetingSearch.reset()
+        ticketSearch.reset()
         fileSearch.reset()
         // Closing while listening for a combination must give every global key
         // back, or the whole app would go quiet until the next relaunch.
@@ -1182,6 +1186,7 @@ final class CommandBarService: ObservableObject {
         fileScopeLoadGeneration &+= 1
         let loadGeneration = fileScopeLoadGeneration
         meetingSearch.reset()
+        ticketSearch.reset()
         fileSearch.reset()
         fileScopeCache = []
         fileIgnoreCache = enabled
@@ -1493,6 +1498,7 @@ final class CommandBarService: ObservableObject {
             let trimmed = query.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty {
                 meetingSearch.reset()
+                ticketSearch.reset()
                 let showsBrowse = CommandBarHome.showsBrowseList(
                     compact: compactMode,
                     hasCategory: activeCategory != nil,
@@ -1572,7 +1578,7 @@ final class CommandBarService: ObservableObject {
              .capturingShortcut:
             setCompactHome(false)
         }
-        let awaiting = fileSearch.isAwaiting || scriptRunner.isAwaiting || meetingSearch.isAwaiting
+        let awaiting = fileSearch.isAwaiting || scriptRunner.isAwaiting || meetingSearch.isAwaiting || ticketSearch.isAwaiting
         if awaitsAnswers != awaiting { awaitsAnswers = awaiting }
         refreshPanelLayout()
     }
@@ -1739,10 +1745,23 @@ final class CommandBarService: ObservableObject {
 
     private func searchRows(for trimmed: String) -> [CommandBarEntry] {
         let bar = FeatureStrings.commandBar(L10n.shared.language)
-        if activeCategory == nil, trimmed.lowercased() == "meet" {
+        if activeCategory == nil, trimmed.lowercased() == "j clip" {
             scriptRunner.cancelPending()
             fileSearch.cancelPending()
-            return meetingSearch.rows()
+            meetingSearch.reset()
+            return ticketSearch.rows()
+        }
+        ticketSearch.reset()
+        if activeCategory == nil, let entries = CommandBarSnippetCommands.rows(for: trimmed) {
+            scriptRunner.cancelPending()
+            fileSearch.cancelPending()
+            meetingSearch.reset()
+            return entries
+        }
+        if activeCategory == nil, ["meet", "meet next"].contains(trimmed.lowercased()) {
+            scriptRunner.cancelPending()
+            fileSearch.cancelPending()
+            return meetingSearch.rows(limit: trimmed.lowercased() == "meet next" ? 3 : 1)
         }
         meetingSearch.reset()
         if activeCategory == nil, CommandBarFileSearchSupport.isRecentQuery(trimmed) {
@@ -2671,6 +2690,27 @@ final class CommandBarService: ObservableObject {
         leaveActions()
     }
 
+    /// Snippets insert at the previous caret; file-backed rows retain Reveal.
+    func runCommandReturn() -> Bool {
+        guard case .search = mode, let entry = selectedEntry else { return false }
+        if let event = meetingSearch.noteEvent(entryID: entry.id) {
+            hide()
+            MeetingNoteService.shared.show(event)
+            return true
+        }
+        if CommandBarSnippetCommands.snippet(for: entry.id) != nil {
+            recordUsage(of: entry)
+            hide()
+            CommandBarSnippetCommands.insert(entryID: entry.id)
+            return true
+        }
+        if entry.canRevealInFinder {
+            revealInFinder(entry)
+            return true
+        }
+        return false
+    }
+
     func runSelected() {
         switch mode {
         case .actions:
@@ -3561,16 +3601,11 @@ final class CommandBarService: ObservableObject {
                     break
                 }
             }
-            // ⌘Return shows the selected row where it lives. Guarded by the
-            // row's own rule, so a row with nowhere to go hands the keys back
-            // and Return goes on meaning what it always did.
+            // ⌘Return inserts a snippet or reveals a file-backed row.
+            // Other rows retain their normal Return action.
             if event.modifierFlags.contains(.command),
                Int(event.keyCode) == kVK_Return || Int(event.keyCode) == kVK_ANSI_KeypadEnter {
-                if case .search = self.mode, let entry = self.selectedEntry,
-                   entry.canRevealInFinder {
-                    self.revealInFinder(entry)
-                    return nil
-                }
+                if self.runCommandReturn() { return nil }
             }
             // In a checklist, native controls own Tab, Space and arrows.
             // Only Return in the search field means the flow's primary action,

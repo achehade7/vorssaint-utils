@@ -151,7 +151,9 @@ struct NotchCapsuleNoticeView: View {
         // its reactions are off. A
         // notice about the agent itself wears its mark; warnings and renewals
         // keep a symbol that says what happened.
-        if NotchMascotSupport.isEnabled(), let reaction = notice.mascot {
+        if notice.meetingNote {
+            MeetingNoteMark().frame(width: CapsuleLayout.symbolWidth, height: CapsuleLayout.symbolSize + 3)
+        } else if NotchMascotSupport.isEnabled(), let reaction = notice.mascot {
             let side = min(CapsuleLayout.symbolWidth, CapsuleLayout.artworkSide(geometry))
             NotchMascotView(look: NotchMascotSupport.look(), mood: NotchService.shared.mascotRestingMood,
                             size: side, reaction: NotchMascotSupport.reacts() ? reaction : nil)

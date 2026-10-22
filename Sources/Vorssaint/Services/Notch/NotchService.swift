@@ -17,11 +17,12 @@ struct NotchNotice: Equatable {
     var fileURL: URL? = nil
     var terminalStatus: Int? = nil
     var audioHandoff = false
+    var meetingNote = false
     var meetingReminder = false
     var meetingStartsNow = false
     var meetingURL: URL? = nil
     var replayed = false
-    var duration: TimeInterval { meetingStartsNow ? 4 : replayed ? 3 : event.duration }
+    var duration: TimeInterval { meetingNote ? 3 : meetingStartsNow ? 4 : replayed ? 3 : event.duration }
     /// The agent an AI notice is about, which tints its mark.
     var agent: AgentProvider? = nil
     /// With the companion on, it takes the symbol's place in the notice and
@@ -1013,8 +1014,19 @@ final class NotchService: ObservableObject {
         return geometry.noticeWingWidth(preferred: 40)
     }
 
+    /// Critical power briefly owns the closed strip; underlying activities keep running.
+    var showsLowBatteryWarning: Bool {
+        neonLowBatteryAt != nil && acceptsSystemFeedback && !expanded && !peeking
+            && !dragPlaceholder && !showsAeroSpace && captureControls == nil && !noticeExpanded
+    }
+
     var surfaceSize: CGSize {
         if showsAeroSpace { return aeroSpaceSize }
+        if showsLowBatteryWarning {
+            return geometry.floats
+                ? CGSize(width: 112, height: geometry.restingSize(showsContent: false).height)
+                : geometry.noticeSize(wingWidth: 40)
+        }
         if let capsule = capsuleSurfaceSize { return capsule }
         if fullscreenCompact { return geometry.bareCutout }
         if captureControls != nil {
@@ -1053,7 +1065,7 @@ final class NotchService: ObservableObject {
     /// notice beside a camera, or the music strip naming its song, reaches
     /// further toward its wider side. A capsule runs its strips end to end.
     var surfaceShift: CGFloat {
-        guard !geometry.floats, !fullscreenCompact, captureControls == nil, !expanded, !dragPlaceholder else { return 0 }
+        guard !showsLowBatteryWarning, !geometry.floats, !fullscreenCompact, captureControls == nil, !expanded, !dragPlaceholder else { return 0 }
         if showsAeroSpace { return geometry.noticeShift(aeroSpaceWings) }
         if let notice { return noticeExpanded ? 0 : geometry.noticeShift(notice.wings(in: geometry)) }
         return namedMusicWings.map { ($0.trailing - $0.leading) / 2 } ?? 0
@@ -1061,7 +1073,7 @@ final class NotchService: ObservableObject {
 
     var quickCaptureSurfaceSize: CGSize {
         CGSize(width: min(geometry.screen.width - 24, max(geometry.cameraWidth + 80, 440)),
-               height: geometry.safeContentTop + 232 + NotchLayout.bottomInset)
+               height: geometry.safeContentTop + 260 + NotchLayout.bottomInset)
     }
 
     /// The open island around the Command Bar: the bar's width within the
@@ -4711,10 +4723,14 @@ final class NotchService: ObservableObject {
         show(NotchNotice(event: .inputSource, title: reading.code, detail: reading.name, symbol: "keyboard"))
     }
 
+    // The lock-screen reader shares this discharge cycle across presentation changes.
+    var lowBatteryWarnings = NotchBatterySignal.Tracker()
+
     private func startPower() {
         guard PowerSampler.hasInternalBattery else { return }
         powerSampler = PowerSampler(smc: nil)
         power = powerSampler?.sample() ?? PowerReading()
+        _ = lowBatteryWarnings.update(before: nil, next: power.chargePercent, externalConnected: power.externalConnected)
         let callback: IOPowerSourceCallbackType = { context in
             guard let context else { return }
             let owner = Unmanaged<NotchService>.fromOpaque(context).takeUnretainedValue()
@@ -4822,14 +4838,14 @@ final class NotchService: ObservableObject {
         if next.externalConnected || (next.chargePercent ?? 0) > NotchBatterySignal.criticalLevel {
             setLowBatterySignal(at: nil)
         }
-        if NotchBatterySignal.crossedCritical(before: before.chargePercent, next: next.chargePercent,
+        if lowBatteryWarnings.update(before: before.chargePercent, next: next.chargePercent,
                                               externalConnected: next.externalConnected),
            acceptsSystemFeedback, NotchSupport.routes(.battery) {
             setLowBatterySignal(at: Date())
             publishCriticalBattery()
         }
-        // SketchyBar keeps the persistent orange/red warning. At ten percent
-        // both surfaces pulse together once, without interrupting live content.
+        // SketchyBar keeps the persistent warning. Each discharge level synchronizes
+        // one brief cue on both surfaces; the activity underneath continues timing.
         if pluggedIn { return }
         guard before.externalConnected != next.externalConnected else { return }
         let text = FeatureStrings.notch(L10n.shared.language)

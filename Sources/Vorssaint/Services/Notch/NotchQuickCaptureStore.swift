@@ -84,6 +84,33 @@ struct NotchQuickCaptureStore {
         return result
     }
 
+    /// Build the new numbering with hard links, then atomically exchange folders.
+    /// Until the exchange succeeds, every original path and byte stays intact.
+    func reorderSession(_ session: Session, order: [Int]) throws {
+        guard session.count > 0, let folder = session.folder,
+              order.count == session.count, Set(order) == Set(1...session.count) else { throw Failure.write }
+        guard order != Array(1...session.count) else { return }
+        try checkScreenshotLocation(folder)
+        let files = FileManager.default
+        let folderInfo = try folder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard folderInfo.isDirectory == true, folderInfo.isSymbolicLink != true else { throw Failure.unsafeLocation }
+        let names = (1...session.count).map { String(format: "%02d.png", $0) }
+        guard Set(try files.contentsOfDirectory(atPath: folder.path)) == Set(names) else { throw Failure.busy }
+        // A dated sibling remains eligible for normal retention if the process
+        // exits between the exchange and removal of the old directory.
+        let staging = folder.deletingLastPathComponent().appendingPathComponent(
+            folder.lastPathComponent + " (reorder " + UUID().uuidString + ")", isDirectory: true)
+        guard mkdir(staging.path, 0o700) == 0 else { throw Failure.write }
+        defer { try? files.removeItem(at: staging) }
+        for (index, original) in order.enumerated() {
+            let source = folder.appendingPathComponent(names[original - 1])
+            let info = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard info.isRegularFile == true, info.isSymbolicLink != true else { throw Failure.unsafeLocation }
+            guard Darwin.link(source.path, staging.appendingPathComponent(names[index]).path) == 0 else { throw Failure.write }
+        }
+        guard renamex_np(staging.path, folder.path, UInt32(RENAME_SWAP)) == 0 else { throw Failure.write }
+    }
+
     func appendSession(_ session: Session) throws {
         guard session.count > 0 else { return }
         guard let folder = session.folder else { throw Failure.write }

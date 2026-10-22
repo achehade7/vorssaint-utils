@@ -27,6 +27,14 @@ private actor NotchCalendarReader {
                                       title: event.title ?? "", calendar: event.calendar.title,
                                       start: start, end: end, allDay: event.isAllDay,
                                       location: event.location ?? "",
+                                      notePeople: (event.attendees ?? []).compactMap { person in
+                                          guard person.participantType == .person || person.participantType == .unknown,
+                                                let name = person.name,
+                                                !name.contains("@"), !name.contains(":") else { return nil }
+                                          return MeetingNotePerson(name: name, isCurrentUser: person.isCurrentUser)
+                                      },
+                                      noteEventKey: MeetingNoteKey.google(externalIdentifier: event.calendarItemExternalIdentifier,
+                                                                          start: start),
                                       meetingURL: NotchCalendarSupport.meetingURL(
                                         url: event.url, location: event.location, notes: event.notes),
                                       color: Self.tint(event.calendar),

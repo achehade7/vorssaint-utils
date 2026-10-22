@@ -206,6 +206,28 @@ enum NotchMusicVisibilityTests {
         charging.displayArrival = nil
         suite.expect(charging.surfaceSize == chargingBare, "finite feedback returns the exact idle footprint")
 
+        for fullscreen in [false, true] {
+            let warning = Service()
+            warning.displayIsFullscreen = fullscreen
+            warning.modules = [.agents]
+            warning.hasAgentActivity = true
+            let agentsSize = warning.surfaceSize
+            warning.neonLowBatteryAt = Date()
+            suite.expect(warning.showsLowBatteryWarning && warning.compactActivity == .agents
+                         && warning.surfaceSize == warning.geometry.noticeSize(wingWidth: 40)
+                         && warning.surfaceShift == 0,
+                         "low battery takes the centered strip while preserving agents on desktop and fullscreen")
+            warning.neonLowBatteryAt = nil
+            suite.expect(!warning.showsLowBatteryWarning && warning.surfaceSize == agentsSize,
+                         "warning expiry restores the exact running-agent geometry")
+            warning.neonLowBatteryAt = Date()
+            warning.expanded = true
+            suite.expect(!warning.showsLowBatteryWarning, "low battery does not erase an open capture or tool")
+            warning.expanded = false
+            warning.acceptsSystemFeedback = false
+            suite.expect(!warning.showsLowBatteryWarning, "quiet and sleep gates suppress warning presentation")
+        }
+
         let devices = Service()
         devices.modules = [.system]
         devices.selected = .system

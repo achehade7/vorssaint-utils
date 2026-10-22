@@ -131,6 +131,11 @@ struct TextSnippetsSettings: View {
             }
         }
         .formStyle(.grouped)
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: RunLoop.main)) { _ in
+            let current = TextSnippetSupport.decode(UserDefaults.standard.data(forKey: DefaultsKey.textSnippets))
+            if current != snippets { snippets = current }
+        }
         .observesSecureInput(isActive: enabled || libraryEnabled)
         .sheet(isPresented: $creating) {
             SnippetEditor(text: text,

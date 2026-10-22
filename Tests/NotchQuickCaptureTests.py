@@ -254,6 +254,19 @@ fails("session day symlink must not be traversed") {
     _ = try NotchQuickCaptureStore(vault: sessionVault, screenshots: linkedRoot)
         .saveSessionScreenshot(png, session: emptySession, at: date)
 }
+// Renumber a group atomically; failed validation leaves every original intact.
+try sessionStore.reorderSession(labelled, order: [2, 1])
+expect(try Data(contentsOf: labelled.folder!.appendingPathComponent("01.png")) == Data("second image".utf8),
+       "reordering changes the actual numbered files")
+expect(try Data(contentsOf: labelled.folder!.appendingPathComponent("02.png")) == png, "original screenshot bytes survive reorder")
+fails("duplicate reorder indices must be rejected") { try sessionStore.reorderSession(labelled, order: [1, 1]) }
+try Data("unrelated".utf8).write(to: labelled.folder!.appendingPathComponent("notes.txt"))
+fails("reorder must never discard unrelated group files") { try sessionStore.reorderSession(labelled, order: [2, 1]) }
+expect(try Data(contentsOf: labelled.folder!.appendingPathComponent("01.png")) == Data("second image".utf8),
+       "failed reorder preserves numbering and bytes")
+try fm.removeItem(at: labelled.folder!.appendingPathComponent("notes.txt"))
+try sessionStore.reorderSession(labelled, order: [2, 1])
+
 // Retention reaches session images, preserving recent and unrelated files.
 let oldSessionFolder = day.appendingPathComponent("1234 old session")
 try fm.createDirectory(at: oldSessionFolder, withIntermediateDirectories: true)
@@ -432,6 +445,75 @@ sessionDraft.cancelSelection()
 waitUntil { sessionDraft.session == nil }
 expect(try island.opens == beforeCancel && summaryCount() == 7, "overdue timer closes after selection cancellation without reopening")
 
+// Group action captures repeatedly, Escape pauses, and the same action resumes.
+let loopVault = root.appendingPathComponent("loop-vault")
+try fm.createDirectory(at: loopVault, withIntermediateDirectories: true)
+let loop = NotchQuickCaptureService(store: .init(vault: loopVault, screenshots: root.appendingPathComponent("loop-images")))
+loop.text = "Keep the thought"; loop.sessionLabel = "SAP-531"
+let starts = island.opens
+loop.captureGroup()
+expect(loop.isSelecting && loop.capturingGroup && loop.session?.count == 0, "one group action starts selecting")
+for count in 1...3 {
+    let selector = ScreenshotSelectionController.last!
+    selector.completion?(.captured(.init(image: image)))
+    waitUntil { loop.isSelecting && !loop.saving }
+    expect(ScreenshotSelectionController.last !== selector && loop.session?.count == count,
+           "each saved image immediately arms a new region selector")
+}
+expect(island.opens == starts, "capture loop never flashes the editor between images")
+loop.pauseGroupCapture()
+expect(!loop.isSelecting && !loop.capturingGroup && island.showingQuickCapture && loop.images.count == 3,
+       "Escape returns the grid and keeps every image")
+let folder = loop.session!.folder
+loop.captureGroup()
+ScreenshotSelectionController.last!.completion?(.captured(.init(image: image)))
+waitUntil { loop.isSelecting && !loop.saving }
+loop.pauseGroupCapture()
+expect(loop.session?.folder == folder && loop.session?.count == 4 && loop.text == "Keep the thought",
+       "resuming keeps the same group, label, note and numbering")
+let firstID = loop.images[0].id, lastID = loop.images[3].id
+expect(loop.moveImage(firstID, to: lastID), "grid accepts reordering inside the active group")
+waitUntil { !loop.saving }
+expect(loop.images.last?.id == firstID && loop.images.last?.file?.lastPathComponent == "04.png",
+       "grid identities follow the newly numbered files")
+loop.captureGroup()
+let pendingSelector = ScreenshotSelectionController.last!
+pendingSelector.completion?(.captured(.init(image: image)))
+loop.pauseGroupCapture()
+waitUntil { !loop.saving }
+RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+expect(!loop.isSelecting && !loop.capturingGroup && loop.session?.count == 5,
+       "Escape during the file write stops the next selection without losing its capture")
+loop.captureGroup()
+loop.cancelSelection()
+let stoppedOpens = island.opens
+RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+expect(!loop.isSelecting && !loop.capturingGroup && island.opens == stoppedOpens,
+       "lock or shutdown cancels the loop without reopening")
+loop.stopSession(); waitUntil { !loop.saving }
+let loopLines = try String(contentsOf: loopVault.appendingPathComponent("Captures.md"), encoding: .utf8).split(separator: "\n")
+expect(loopLines.count == 1 && loopLines[0].contains("5 screenshots"), "resumed sets still write one group summary")
+
+// An unavailable destination pauses the loop without discarding the pending image.
+let failedLoopImages = root.appendingPathComponent("failed-loop-images")
+try Data("obstruction".utf8).write(to: failedLoopImages)
+let failedLoop = NotchQuickCaptureService(store: .init(vault: loopVault, screenshots: failedLoopImages))
+failedLoop.text = "Keep failed capture"
+failedLoop.captureGroup()
+ScreenshotSelectionController.last!.completion?(.captured(.init(image: image)))
+waitUntil { !failedLoop.saving }
+expect(!failedLoop.isSelecting && !failedLoop.capturingGroup && failedLoop.pendingSessionImage != nil,
+       "write failure ends repeated selection and retains the unsaved screenshot")
+expect(failedLoop.text == "Keep failed capture" && failedLoop.error == .save && island.showingQuickCapture,
+       "write failure returns the draft with an error")
+try fm.removeItem(at: failedLoopImages)
+failedLoop.captureGroup()
+waitUntil { failedLoop.isSelecting && !failedLoop.saving }
+expect(failedLoop.session?.count == 1 && failedLoop.pendingSessionImage == nil,
+       "resume retries the pending image once before requesting the next region")
+failedLoop.pauseGroupCapture()
+failedLoop.stopSession(); waitUntil { !failedLoop.saving }
+
 // Native event routing: only a right click in this icon consumes an event.
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
@@ -460,16 +542,16 @@ if CommandLine.arguments.contains("--active") {
     draft.startSession(); capture(draft); capture(draft)
 }
 let content = NotchQuickCaptureView(service: island, draft: draft)
-    .frame(width: 440, height: 270, alignment: .top)
+    .frame(width: 440, height: 298, alignment: .top)
     .foregroundStyle(.white).background(.black).environment(\.colorScheme, .dark)
 let host = NSHostingView(rootView: content)
-host.frame = NSRect(x: 0, y: 0, width: 440, height: 270)
+host.frame = NSRect(x: 0, y: 0, width: 440, height: 298)
 window.contentView = host
 window.setContentSize(host.frame.size)
 window.orderFrontRegardless()
 RunLoop.main.run(until: Date().addingTimeInterval(0.15))
 host.layoutSubtreeIfNeeded()
-expect(host.fittingSize.height <= 270, "capture field fits its island height")
+expect(host.fittingSize.height <= 298, "capture field fits its island height")
 if CommandLine.arguments.count > 1, let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
     host.cacheDisplay(in: host.bounds, to: bitmap)
     try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: CommandLine.arguments[1]))
@@ -526,7 +608,7 @@ window.contentView = activeHost
 window.orderFrontRegardless()
 RunLoop.main.run(until: Date().addingTimeInterval(0.15))
 activeHost.layoutSubtreeIfNeeded()
-expect(activeHost.fittingSize.height <= 270, "running session and attachments fit the capture panel")
+expect(activeHost.fittingSize.height <= 298, "running session and attachments fit the capture panel")
 draft.stopSession(); waitUntil { !draft.saving }
 window.orderOut(nil)
 print("PASS: \(checks) quick capture checks")

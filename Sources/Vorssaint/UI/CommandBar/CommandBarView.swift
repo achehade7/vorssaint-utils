@@ -565,6 +565,16 @@ struct CommandBarView: View {
                 VStack(alignment: .leading, spacing: 1.5) {
                     titleView(entry)
                     subtitleView(entry)
+                    if entry.id.hasPrefix("snippet.") {
+                        Text(FeatureStrings.snippets(l10n.language).commandHint)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(NotchNeonPalette.blue.opacity(0.85)).lineLimit(1)
+                    }
+                    if entry.id.hasPrefix("action.meet."), case .symbol("video") = entry.icon {
+                        MeetingAudioPreflightView().padding(.top, 4)
+                        Text("⌘↩ " + MeetingNoteStrings.localized(l10n.language).join)
+                            .font(.system(size: 9, weight: .medium)).foregroundStyle(NotchNeonPalette.purple)
+                    }
                 }
                 Spacer(minLength: 12)
                 if service.commandIsHeld, index < 9 {
@@ -704,8 +714,8 @@ struct CommandBarView: View {
                 Text(entry.subtitle)
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    .lineLimit(entry.id.hasPrefix("snippet.") ? 2 : 1)
+                    .truncationMode(entry.id.hasPrefix("snippet.") ? .tail : .middle)
             }
         }
     }

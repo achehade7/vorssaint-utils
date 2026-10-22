@@ -280,6 +280,9 @@ if (( TEST )); then
         Sources/Vorssaint/Services/Notch/NotchDownloadSupport.swift
         Sources/Vorssaint/Services/Notch/NotchDownloadProgressObserver.swift
         Sources/Vorssaint/Core/NotchCalendarStrings.swift
+        Sources/Vorssaint/Core/MeetingNotePerson.swift
+        Sources/Vorssaint/Core/MeetingNoteKey.swift
+        Sources/Vorssaint/Core/MeetingNoteStrings.swift
         Sources/Vorssaint/Core/NotchNotificationStrings.swift
         Sources/Vorssaint/Core/NotchGestureStrings.swift
         Sources/Vorssaint/Core/NotchAgentStrings.swift

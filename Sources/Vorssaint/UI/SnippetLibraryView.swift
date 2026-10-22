@@ -17,11 +17,15 @@ struct SnippetLibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            searchBar
-            Divider()
-            content
-            Divider()
-            footer
+            if library.template != nil {
+                SnippetTemplateForm()
+            } else {
+                searchBar
+                Divider()
+                content
+                Divider()
+                footer
+            }
         }
         .frame(width: 460)
         .background(HUDBackdrop(cornerRadius: 22, contrast: .high))

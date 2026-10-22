@@ -26,7 +26,7 @@ def declaration(marker, text=source):
 handlers = "\n".join(declaration(marker) for marker in [
     "    private func powerChanged()", "    private func stopPower()", "    private func setChargingSignal(",
     "    private func setLowBatterySignal(",
-    "    private func setFullChargeSignal(",
+    "    private func setFullChargeSignal(", "    var showsLowBatteryWarning:",
 ])
 charging = declaration('enum NotchChargingSignal', (repo / 'Sources/Vorssaint/UI/Notch/NotchNeonEdge.swift').read_text())
 battery = declaration('enum NotchBatterySignal', (repo / 'Sources/Vorssaint/UI/Notch/NotchBatteryPulse.swift').read_text())
@@ -82,6 +82,9 @@ final class Service {
     var fullChargeWork: DispatchWorkItem?
     var neonLowBatteryAt: Date?
     var lowBatteryWork: DispatchWorkItem?
+    var expanded = false, peeking = false, dragPlaceholder = false, showsAeroSpace = false, noticeExpanded = false
+    var captureControls: Int?
+    var lowBatteryWarnings = NotchBatterySignal.Tracker()
     var criticalPublications = 0
     func publishCriticalBattery() { criticalPublications += 1 }
     var chargingWork: DispatchWorkItem?
@@ -242,7 +245,14 @@ let critical = Service()
 critical.power.chargePercent = 11
 critical.sample(percent: 10, plugged: false, charging: false)
 expect(critical.neonLowBatteryAt != nil && critical.criticalPublications == 1 && critical.shown.isEmpty,
-       "ten percent sends one synchronized red pulse without replacing live content")
+       "ten percent signals a cue without mutating the underlying agent notice")
+expect(critical.showsLowBatteryWarning && critical.notice.event == .agents,
+       "battery takes display priority without replacing or resetting the stored agent activity")
+critical.displayIsFullscreen = true
+expect(critical.showsLowBatteryWarning, "visible fullscreen island gives battery the same priority")
+critical.expanded = true
+expect(!critical.showsLowBatteryWarning, "battery does not cover an open tool or draft")
+critical.expanded = false
 let criticalDate = critical.neonLowBatteryAt
 let staleCritical = critical.lowBatteryWork
 critical.sample(percent: 9, plugged: false, charging: false)
@@ -259,6 +269,11 @@ expect(critical.neonLowBatteryAt == newerCritical, "an obsolete red expiry canno
 critical.lowBatteryWork?.perform()
 expect(critical.neonLowBatteryAt == nil && critical.lowBatteryWork == nil,
        "red heartbeat expires and removes its temporary wings")
+let resumed = Service()
+resumed.sample(percent: 10, plugged: false, charging: false)
+resumed.lowBatteryWork?.perform()
+expect(!resumed.showsLowBatteryWarning && resumed.notice.event == .agents && resumed.notice.detail == "0:20 / 12:34",
+       "expiry restores underlying agent content without changing its timers")
 for suppressed in [true, false] {
     let muted = Service()
     muted.power.chargePercent = 11
@@ -279,6 +294,28 @@ expect(!NotchBatterySignal.crossedCritical(before: 11, next: 10, externalConnect
        "a charging battery does not warn at ten percent")
 expect(NotchBatterySignal.crossedCritical(before: 25, next: 8, externalConnected: false),
        "a reading that skips ten still warns")
+let descent = Service()
+for level in [10, 5, 1] {
+    descent.sample(percent: level, plugged: false, charging: false)
+    expect(descent.neonLowBatteryAt != nil && descent.criticalPublications == (level == 10 ? 1 : level == 5 ? 2 : 3),
+           "each discharge level starts its own synchronized cue")
+    descent.sample(percent: level + 1, plugged: false, charging: false)
+    descent.sample(percent: level, plugged: false, charging: false)
+    expect(descent.criticalPublications == (level == 10 ? 1 : level == 5 ? 2 : 3), "percentage jitter cannot repeat a level in one discharge cycle")
+}
+descent.sample(percent: 20, plugged: true)
+descent.sample(percent: 10, plugged: false, charging: false)
+expect(descent.criticalPublications == 4, "charger connection rearms the warnings")
+let skipped = Service()
+skipped.sample(percent: 1, plugged: false, charging: false)
+expect(skipped.criticalPublications == 1, "skipping several levels produces a single cue")
+skipped.sample(percent: 2, plugged: false, charging: false)
+skipped.sample(percent: 1, plugged: false, charging: false)
+expect(skipped.criticalPublications == 1, "skipped levels are consumed, not queued")
+for (before, next) in [(6, 5), (2, 1)] {
+    expect(NotchBatterySignal.crossedCritical(before: before, next: next, externalConnected: false),
+           "five and one percent each trigger a fresh warning")
+}
 for reduced in [false, true] {
     expect(NotchBatterySignal.opacity(at: -0.1, reduceMotion: reduced) == 0
            && NotchBatterySignal.opacity(at: NotchBatterySignal.duration, reduceMotion: reduced) == 0,

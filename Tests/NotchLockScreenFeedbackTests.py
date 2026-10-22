@@ -35,7 +35,7 @@ methods = "\n".join(declaration(service, marker).replace("private ", "", 1) for 
     "    private var acceptsFeedback:", "    private func syncFeedbackSources()",
     "    private func accessoryArrived(", "    private func microphoneChanged(",
     "    private func showDeviceFeedback(", "    private func showDisplayArrival(",
-    "    private func showLowBattery()", "    private func clearLowBattery()",
+    "    private func showLowBattery(", "    private func clearLowBattery()",
     "    private func showFullCharge()", "    private func clearFullCharge()",
     "    private func clearFeedback()", "    private func powerChanged()", "    private func hide(",
 ])
@@ -62,6 +62,7 @@ enum NotchSupport {
 enum NotchLockScreenSupport { static var enabled = true; static func isEnabled() -> Bool { enabled } }
 final class NotchService {
     static let shared = NotchService()
+    var lowBatteryWarnings = NotchBatterySignal.Tracker()
     var quietMode = false
     var shown: [Bool] = [], retractions = 0
     func showMicrophone(muted: Bool) -> Bool { shown.append(muted); return true }
@@ -93,6 +94,7 @@ final class NotchLockScreenModel {
     var deviceFeedback: DeviceFeedback?
     var displayArrival: NotchDisplayArrival?
     var lowBatteryAt: Date?
+    var lowBatteryPercent: Int?
     var fullChargeAt: Date?, unlockHandoffAt: Date?
     var chargingArrivalID: UUID?, lockRippleID: UUID?, trackShimmerID: UUID?
     var chargingPercent: Int?
@@ -176,15 +178,31 @@ expect(lock.model.lowBatteryAt == nil, "unknown power source cannot announce a d
 SystemInfo.reading = Reading(percent: 11); lock.powerChanged()
 SystemInfo.reading = Reading(percent: 10); lock.powerChanged()
 let critical = lock.model.lowBatteryAt
+expect(lock.model.lowBatteryPercent == 10, "lock cue carries the real percentage")
 expect(critical != nil, "real 11 to 10 crossing starts lock heartbeat")
 lock.powerChanged()
 expect(lock.model.lowBatteryAt == critical, "repeated low reading does not restart heartbeat")
+for level in [5, 1] {
+    SystemInfo.reading = Reading(percent: level); lock.powerChanged()
+    expect(lock.model.lowBatteryAt != nil && lock.model.lowBatteryPercent == level,
+           "lock screen announces five and one percent")
+    let began = lock.model.lowBatteryAt
+    SystemInfo.reading = Reading(percent: level + 1); lock.powerChanged()
+    SystemInfo.reading = Reading(percent: level); lock.powerChanged()
+    expect(lock.model.lowBatteryAt == began, "lock warning is once per level despite jitter")
+}
 SystemInfo.reading = Reading(percent: 11); lock.powerChanged()
 expect(lock.model.lowBatteryAt == nil, "known battery recovery clears heartbeat")
 SystemInfo.reading = Reading(percent: 10); lock.powerChanged()
 SystemInfo.reading = Reading(percent: 10, isOnBattery: false, isOnExternalPower: true); lock.powerChanged()
 expect(lock.model.lowBatteryAt == nil && lock.model.chargingArrivalID != nil, "plug clears low heartbeat and keeps charging cue")
 lock.showDisplayArrival(.init(x: 1, y: 0)); lock.microphoneChanged(true)
+// Charging on the lock screen must rearm the desktop's very same tracker.
+expect(NotchService.shared.lowBatteryWarnings.update(before: 11, next: 10, externalConnected: false),
+       "charging while locked rearms the desktop warning cycle")
+SystemInfo.reading = Reading(percent: 11); lock.powerChanged()
+SystemInfo.reading = Reading(percent: 10); lock.powerChanged()
+expect(lock.model.lowBatteryAt == nil, "a desktop warning cannot replay after switching to the lock-screen reader")
 NotchService.shared.quietMode = true; lock.syncFeedbackSources()
 expect(lock.model.displayArrival == nil && lock.model.deviceFeedback == nil && lock.model.chargingArrivalID == nil,
        "quiet clears all current transient cues")

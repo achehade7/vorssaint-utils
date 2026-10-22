@@ -72,6 +72,12 @@ struct SnippetFeatureStrings {
     let soundCaption: String
     let soundPickerLabel: String
     let soundUnavailable: String
+    let commandHint: String
+    let saveClipboardHint: String
+    let replaceClipboardFormat: String
+    let clipboardSaved: String
+    let clipboardEmpty: String
+    let clipboardChanged: String
 }
 
 extension FeatureStrings {
@@ -162,7 +168,13 @@ extension SnippetFeatureStrings {
         soundToggle: "입력한 트리거가 확장될 때 소리 재생",
         soundCaption: "입력한 트리거가 확장될 때마다 짧은 시스템 소리가 재생됩니다.",
         soundPickerLabel: "소리",
-        soundUnavailable: "사용할 수 없는 소리"
+        soundUnavailable: "사용할 수 없는 소리",
+        commandHint: "↩ 복사 · ⌘↩ 삽입",
+        saveClipboardHint: "snip save <이름> · 복사한 텍스트 저장",
+        replaceClipboardFormat: "“%@”을(를) 복사한 텍스트로 바꿀까요?",
+        clipboardSaved: "스니펫 저장됨",
+        clipboardEmpty: "먼저 텍스트를 복사하세요",
+        clipboardChanged: "스니펫이 변경되었습니다. 바꾸기 전에 다시 검색하세요."
     )
     static let uk = SnippetFeatureStrings(
         pageTitle: "Текстові сніпети",
@@ -229,7 +241,13 @@ extension SnippetFeatureStrings {
         soundToggle: "Відтворювати звук, коли тригер розгортається",
         soundCaption: "Щоразу, коли введений тригер розгортається, лунає короткий системний звук.",
         soundPickerLabel: "Звук",
-        soundUnavailable: "Звук недоступний"
+        soundUnavailable: "Звук недоступний",
+        commandHint: "↩ Копіювати · ⌘↩ Вставити",
+        saveClipboardHint: "snip save <назва> · зберегти скопійований текст",
+        replaceClipboardFormat: "Замінити «%@» скопійованим текстом?",
+        clipboardSaved: "Фрагмент збережено",
+        clipboardEmpty: "Спочатку скопіюйте текст",
+        clipboardChanged: "Фрагмент змінено. Знайдіть його знову перед заміною."
     )
 }
 
@@ -299,7 +317,13 @@ extension SnippetFeatureStrings {
         soundToggle: "Play a sound when a typed trigger expands",
         soundCaption: "A short system sound plays each time a typed trigger expands.",
         soundPickerLabel: "Sound",
-        soundUnavailable: "Sound unavailable"
+        soundUnavailable: "Sound unavailable",
+        commandHint: "↩ Copy · ⌘↩ Insert",
+        saveClipboardHint: "snip save <name> · save copied text",
+        replaceClipboardFormat: "Replace “%@” with the copied text?",
+        clipboardSaved: "Snippet saved",
+        clipboardEmpty: "Copy some text first",
+        clipboardChanged: "Snippet changed. Search again before replacing it."
     )
 
     static let ptBR = SnippetFeatureStrings(
@@ -367,7 +391,13 @@ extension SnippetFeatureStrings {
         soundToggle: "Tocar um som quando um gatilho digitado expandir",
         soundCaption: "Um som curto do sistema toca sempre que um gatilho digitado se expande.",
         soundPickerLabel: "Som",
-        soundUnavailable: "Som indisponível"
+        soundUnavailable: "Som indisponível",
+        commandHint: "↩ Copiar · ⌘↩ Inserir",
+        saveClipboardHint: "snip save <nome> · salvar texto copiado",
+        replaceClipboardFormat: "Substituir “%@” pelo texto copiado?",
+        clipboardSaved: "Snippet salvo",
+        clipboardEmpty: "Copie um texto primeiro",
+        clipboardChanged: "O snippet mudou. Pesquise novamente antes de substituí-lo."
     )
 
     static let tr = SnippetFeatureStrings(
@@ -435,7 +465,13 @@ extension SnippetFeatureStrings {
         soundToggle: "Yazılan bir tetikleyici genişlediğinde ses çal",
         soundCaption: "Yazılan bir tetikleyici genişlediğinde kısa bir sistem sesi çalar.",
         soundPickerLabel: "Ses",
-        soundUnavailable: "Ses kullanılamıyor"
+        soundUnavailable: "Ses kullanılamıyor",
+        commandHint: "↩ Kopyala · ⌘↩ Ekle",
+        saveClipboardHint: "snip save <ad> · kopyalanan metni kaydet",
+        replaceClipboardFormat: "“%@” kopyalanan metinle değiştirilsin mi?",
+        clipboardSaved: "Parçacık kaydedildi",
+        clipboardEmpty: "Önce bir metin kopyalayın",
+        clipboardChanged: "Parçacık değişti. Değiştirmeden önce yeniden arayın."
     )
 
     static let ru = SnippetFeatureStrings(
@@ -503,7 +539,13 @@ extension SnippetFeatureStrings {
         soundToggle: "Воспроизводить звук при развёртывании введённого триггера",
         soundCaption: "Короткий системный звук воспроизводится каждый раз, когда введённый триггер разворачивается.",
         soundPickerLabel: "Звук",
-        soundUnavailable: "Звук недоступен"
+        soundUnavailable: "Звук недоступен",
+        commandHint: "↩ Копировать · ⌘↩ Вставить",
+        saveClipboardHint: "snip save <имя> · сохранить скопированный текст",
+        replaceClipboardFormat: "Заменить «%@» скопированным текстом?",
+        clipboardSaved: "Фрагмент сохранён",
+        clipboardEmpty: "Сначала скопируйте текст",
+        clipboardChanged: "Фрагмент изменён. Найдите его снова перед заменой."
     )
 
     static let es = SnippetFeatureStrings(
@@ -571,7 +613,13 @@ extension SnippetFeatureStrings {
         soundToggle: "Reproducir un sonido al expandir un disparador escrito",
         soundCaption: "Se reproduce un sonido corto del sistema cada vez que un disparador escrito se expande.",
         soundPickerLabel: "Sonido",
-        soundUnavailable: "Sonido no disponible"
+        soundUnavailable: "Sonido no disponible",
+        commandHint: "↩ Copiar · ⌘↩ Insertar",
+        saveClipboardHint: "snip save <nombre> · guardar texto copiado",
+        replaceClipboardFormat: "¿Reemplazar «%@» por el texto copiado?",
+        clipboardSaved: "Fragmento guardado",
+        clipboardEmpty: "Copia un texto primero",
+        clipboardChanged: "El fragmento cambió. Búscalo de nuevo antes de reemplazarlo."
     )
 
     static let sk = SnippetFeatureStrings(
@@ -639,7 +687,13 @@ extension SnippetFeatureStrings {
         soundToggle: "Prehrať zvuk pri rozbalení napísaného spúšťača",
         soundCaption: "Krátky systémový zvuk zaznie vždy, keď sa napísaný spúšťač rozbalí.",
         soundPickerLabel: "Zvuk",
-        soundUnavailable: "Zvuk nie je k dispozícii"
+        soundUnavailable: "Zvuk nie je k dispozícii",
+        commandHint: "↩ Kopírovať · ⌘↩ Vložiť",
+        saveClipboardHint: "snip save <názov> · uložiť skopírovaný text",
+        replaceClipboardFormat: "Nahradiť „%@“ skopírovaným textom?",
+        clipboardSaved: "Úryvok uložený",
+        clipboardEmpty: "Najprv skopírujte text",
+        clipboardChanged: "Úryvok sa zmenil. Pred nahradením ho znova vyhľadajte."
     )
 
     static let de = SnippetFeatureStrings(
@@ -707,7 +761,13 @@ extension SnippetFeatureStrings {
         soundToggle: "Ton abspielen, wenn ein getipptes Kürzel ausgeschrieben wird",
         soundCaption: "Ein kurzer Systemton wird jedes Mal abgespielt, wenn ein getipptes Kürzel ausgeschrieben wird.",
         soundPickerLabel: "Ton",
-        soundUnavailable: "Ton nicht verfügbar"
+        soundUnavailable: "Ton nicht verfügbar",
+        commandHint: "↩ Kopieren · ⌘↩ Einfügen",
+        saveClipboardHint: "snip save <Name> · kopierten Text speichern",
+        replaceClipboardFormat: "„%@“ durch den kopierten Text ersetzen?",
+        clipboardSaved: "Textbaustein gespeichert",
+        clipboardEmpty: "Zuerst Text kopieren",
+        clipboardChanged: "Textbaustein geändert. Vor dem Ersetzen erneut suchen."
     )
 
     static let fr = SnippetFeatureStrings(
@@ -775,7 +835,13 @@ extension SnippetFeatureStrings {
         soundToggle: "Jouer un son au développement d’un déclencheur tapé",
         soundCaption: "Un court son système est joué chaque fois qu’un déclencheur tapé se développe.",
         soundPickerLabel: "Son",
-        soundUnavailable: "Son indisponible"
+        soundUnavailable: "Son indisponible",
+        commandHint: "↩ Copier · ⌘↩ Insérer",
+        saveClipboardHint: "snip save <nom> · enregistrer le texte copié",
+        replaceClipboardFormat: "Remplacer « %@ » par le texte copié ?",
+        clipboardSaved: "Extrait enregistré",
+        clipboardEmpty: "Copiez du texte d’abord",
+        clipboardChanged: "Extrait modifié. Relancez la recherche avant de le remplacer."
     )
 
     static let it = SnippetFeatureStrings(
@@ -843,7 +909,13 @@ extension SnippetFeatureStrings {
         soundToggle: "Riproduci un suono quando un trigger digitato si espande",
         soundCaption: "Un breve suono di sistema viene riprodotto ogni volta che un trigger digitato si espande.",
         soundPickerLabel: "Suono",
-        soundUnavailable: "Suono non disponibile"
+        soundUnavailable: "Suono non disponibile",
+        commandHint: "↩ Copia · ⌘↩ Inserisci",
+        saveClipboardHint: "snip save <nome> · salva il testo copiato",
+        replaceClipboardFormat: "Sostituire “%@” con il testo copiato?",
+        clipboardSaved: "Frammento salvato",
+        clipboardEmpty: "Prima copia del testo",
+        clipboardChanged: "Frammento modificato. Cercalo di nuovo prima di sostituirlo."
     )
 
     static let ja = SnippetFeatureStrings(
@@ -911,7 +983,13 @@ extension SnippetFeatureStrings {
         soundToggle: "入力したトリガーが展開されたときに音を再生",
         soundCaption: "入力したトリガーが展開されるたびに、短いシステム音が再生されます。",
         soundPickerLabel: "サウンド",
-        soundUnavailable: "利用できないサウンド"
+        soundUnavailable: "利用できないサウンド",
+        commandHint: "↩ コピー · ⌘↩ 挿入",
+        saveClipboardHint: "snip save <名前> · コピーしたテキストを保存",
+        replaceClipboardFormat: "「%@」をコピーしたテキストで置き換えますか？",
+        clipboardSaved: "スニペットを保存しました",
+        clipboardEmpty: "先にテキストをコピーしてください",
+        clipboardChanged: "スニペットが変更されました。置き換える前に再検索してください。"
     )
 
     static let zhHans = SnippetFeatureStrings(
@@ -979,7 +1057,13 @@ extension SnippetFeatureStrings {
         soundToggle: "输入的触发词展开时播放声音",
         soundCaption: "每次输入的触发词展开时都会播放一个简短的系统声音。",
         soundPickerLabel: "声音",
-        soundUnavailable: "声音不可用"
+        soundUnavailable: "声音不可用",
+        commandHint: "↩ 复制 · ⌘↩ 插入",
+        saveClipboardHint: "snip save <名称> · 保存已复制的文本",
+        replaceClipboardFormat: "用已复制的文本替换“%@”？",
+        clipboardSaved: "片段已保存",
+        clipboardEmpty: "请先复制文本",
+        clipboardChanged: "片段已更改。替换前请重新搜索。"
     )
 
     static let zhTW = SnippetFeatureStrings(
@@ -1047,7 +1131,13 @@ extension SnippetFeatureStrings {
         soundToggle: "輸入的觸發詞展開時播放聲音",
         soundCaption: "每次輸入的觸發詞展開時都會播放一個簡短的系統聲音。",
         soundPickerLabel: "聲音",
-        soundUnavailable: "聲音無法使用"
+        soundUnavailable: "聲音無法使用",
+        commandHint: "↩ 複製 · ⌘↩ 插入",
+        saveClipboardHint: "snip save <名稱> · 儲存已複製的文字",
+        replaceClipboardFormat: "以已複製的文字取代「%@」？",
+        clipboardSaved: "片段已儲存",
+        clipboardEmpty: "請先複製文字",
+        clipboardChanged: "片段已變更。取代前請重新搜尋。"
     )
 
     static let zhHK = SnippetFeatureStrings(
@@ -1115,6 +1205,12 @@ extension SnippetFeatureStrings {
         soundToggle: "輸入嘅觸發詞展開時播放聲音",
         soundCaption: "每次輸入嘅觸發詞展開時都會播放一個簡短嘅系統聲音。",
         soundPickerLabel: "聲音",
-        soundUnavailable: "聲音無法使用"
+        soundUnavailable: "聲音無法使用",
+        commandHint: "↩ 複製 · ⌘↩ 插入",
+        saveClipboardHint: "snip save <名稱> · 儲存已複製的文字",
+        replaceClipboardFormat: "以已複製的文字取代「%@」？",
+        clipboardSaved: "片段已儲存",
+        clipboardEmpty: "請先複製文字",
+        clipboardChanged: "片段已更改。取代前請重新搜尋。"
     )
 }

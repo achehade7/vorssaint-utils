@@ -11,6 +11,8 @@ source = (repo / "Sources/Vorssaint/Services/CommandBar/CommandBarMeetingSearch.
 fixture = r'''
 import Foundation
 struct NotchCalendarEvent {
+    var id = UUID().uuidString
+    var allDay = false
     var title = "Planning"
     var start = Date().addingTimeInterval(600)
     var end = Date().addingTimeInterval(2400)
@@ -19,7 +21,7 @@ struct NotchCalendarEvent {
 enum NotchCalendarSupport {
     static var enabled = true
     static func isEnabled() -> Bool { enabled }
-    static func nextMeeting(_ events: [NotchCalendarEvent], now: Date) -> NotchCalendarEvent? { events.first }
+    static func upcoming(_ events: [NotchCalendarEvent], now: Date) -> [NotchCalendarEvent] { events.filter { $0.end > now }.sorted { $0.start < $1.start } }
 }
 final class NotchCalendarService {
     static let shared = NotchCalendarService()
@@ -38,13 +40,13 @@ enum EKEventStore {
     static var status = Status.fullAccess
     static func authorizationStatus(for kind: Kind) -> Status { status }
 }
-enum L10n { static let shared = Self(); var language: Int { 0 }; init() { self = .instance }; case instance }
+enum L10n { static let shared = Self(); var language: Language { .init() }; struct Language { var rawValue = "en-US" }; init() { self = .instance }; case instance }
 enum FeatureStrings {
     struct Strings {
         let title = "Calendar", description = "Setup", allow = "Allow", permission = "Permission"
-        let noMeetingLink = "No call", openCalendar = "Open Calendar", untitled = "Untitled"
+        let noMeetingLink = "No call", openCalendar = "Open Calendar", untitled = "Untitled", ongoing = "Happening now"
     }
-    static func notchCalendar(_ language: Int) -> Strings { Strings() }
+    static func notchCalendar(_ language: L10n.Language) -> Strings { Strings() }
 }
 final class NotchService {
     enum Module { case calendar }
@@ -102,6 +104,29 @@ search.reset()
 NotchCalendarService.shared.events = [NotchCalendarEvent(end: Date().addingTimeInterval(-1))]
 _ = search.rows(); spin()
 precondition(search.rows()[0].id == "action.meet.empty")
+search.reset()
+let simultaneous = Date().addingTimeInterval(-30)
+NotchCalendarService.shared.events = [
+    NotchCalendarEvent(id: "a", title: "Parallel A", start: simultaneous),
+    NotchCalendarEvent(id: "b", title: "Parallel B", start: simultaneous),
+    NotchCalendarEvent(id: "c", title: "Next", start: Date().addingTimeInterval(1200)),
+    NotchCalendarEvent(id: "d", title: "Later", start: Date().addingTimeInterval(2400)),
+    NotchCalendarEvent(allDay: true, title: "All day"),
+    NotchCalendarEvent(title: "No call", meetingURL: nil)
+]
+_ = search.rows(limit: 3); spin()
+let choices = search.rows(limit: 3)
+precondition(choices.count == 3 && Set(choices.map(\.id)).count == 3, "overlapping events remain separate selectable rows")
+precondition(choices.prefix(2).allSatisfy { $0.subtitle.contains("Happening now") }, "ongoing meetings are labelled")
+precondition(choices[2].title == "Next" && search.rows().count == 1, "meet remains one result; meet next offers three")
+precondition(search.noteEvent(entryID: choices[0].id)?.id == "a", "Cmd-Return resolves the selected meeting only")
+precondition(search.noteEvent(entryID: "action.meet.empty") == nil, "placeholder cannot prepare a note")
+EKEventStore.status = .denied
+precondition(search.noteEvent(entryID: choices[0].id) == nil, "revoked calendar access blocks note preparation")
+EKEventStore.status = .fullAccess
+let readCount = NotchCalendarService.shared.reads
+_ = search.rows(limit: 3)
+precondition(NotchCalendarService.shared.reads == readCount, "switching list size does not add a calendar read")
 NotchCalendarSupport.enabled = false
 rows[0].run(nil)
 precondition(NSWorkspace.shared.opened.count == 1, "a stale row cannot join after the feature is disabled")

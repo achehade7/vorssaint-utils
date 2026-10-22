@@ -950,13 +950,10 @@ enum CommandBarCatalog {
                 CommandBarEntry(
                     id: "snippet.\(snippet.id.uuidString)",
                     title: snippet.name,
-                    subtitle: bar.kindSnippet,
+                    subtitle: CommandBarSnippetCommands.preview(snippet),
                     keywords: snippet.trigger + " " + snippet.folder,
                     icon: .symbol("text.append"),
-                    trouble: Permissions.shared.accessibility ? nil : .needsPermission,
-                    run: { _ in
-                        SnippetLibraryService.shared.insert(snippet)
-                    })
+                    run: { _ in CommandBarSnippetCommands.copy(snippet) })
             }
     }
 

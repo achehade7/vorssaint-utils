@@ -284,11 +284,12 @@ final class NotchLockScreenService {
         DispatchQueue.main.asyncAfter(deadline: .now() + NotchDisplayArrivalSignal.duration, execute: work)
     }
 
-    private func showLowBattery() {
+    private func showLowBattery(percent: Int? = nil) {
         guard acceptsFeedback, NotchSupport.routes(.battery) else { return }
         clearLowBattery()
         let began = Date()
         model.lowBatteryAt = began
+        model.lowBatteryPercent = percent
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.model.lowBatteryAt == began else { return }
             self.clearLowBattery()
@@ -300,6 +301,7 @@ final class NotchLockScreenService {
     private func clearLowBattery() {
         lowBatteryWork?.cancel(); lowBatteryWork = nil
         model.lowBatteryAt = nil
+        model.lowBatteryPercent = nil
     }
 
     private func showFullCharge() {
@@ -369,11 +371,9 @@ final class NotchLockScreenService {
                                          wasExternal: batteryExternal == true, external: external) {
             showFullCharge()
         }
-        if reading?.isOnBattery == true,
-           NotchBatterySignal.crossedCritical(before: batteryPercent, next: next,
-                                              externalConnected: reading?.isOnExternalPower == true) {
-            showLowBattery()
-        }
+        let lowWarning = NotchService.shared.lowBatteryWarnings.update(before: batteryPercent,
+            next: reading?.isOnBattery == true ? next : nil, externalConnected: external)
+        if lowWarning { showLowBattery(percent: next) }
         batteryPercent = next
         batteryExternal = external ? true : reading?.isOnBattery == true ? false : nil
         if reading?.isOnExternalPower == true || (next.map { $0 > NotchBatterySignal.criticalLevel } ?? false) {

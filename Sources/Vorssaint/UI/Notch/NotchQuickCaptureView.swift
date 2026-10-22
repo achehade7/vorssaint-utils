@@ -8,6 +8,7 @@ struct NotchQuickCaptureView: View {
     @ObservedObject var draft = NotchQuickCaptureService.shared
     @ObservedObject private var l10n = L10n.shared
     @FocusState private var focused: Bool
+    @State private var preview: NotchQuickCaptureService.Attachment?
     private var text: NotchQuickCaptureStrings { .localized(l10n.language) }
 
     var body: some View {
@@ -27,13 +28,17 @@ struct NotchQuickCaptureView: View {
                         Text(session.label).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
+                    Button(text.startSession) { draft.captureGroup() }
+                        .fixedSize()
+                        .accessibilityIdentifier("notch.quickCapture.resumeSession")
+                        .foregroundStyle(NotchNeonPalette.purple)
                     Button(text.stopSession) { draft.stopSession() }
                         .accessibilityIdentifier("notch.quickCapture.stopSession")
                 } else {
                     TextField(text.labelPrompt, text: $draft.sessionLabel)
                         .textFieldStyle(.plain)
                         .accessibilityIdentifier("notch.quickCapture.sessionLabel")
-                    Button(text.startSession) { draft.startSession() }
+                    Button(text.startSession) { draft.captureGroup() }
                         .foregroundStyle(NotchNeonPalette.purple)
                         .fixedSize()
                         .accessibilityIdentifier("notch.quickCapture.startSession")
@@ -76,29 +81,30 @@ struct NotchQuickCaptureView: View {
             }
             if !draft.images.isEmpty || draft.pendingSessionImage != nil {
                 ScrollViewReader { scroll in
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 8) {
+                    ScrollView(.vertical) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
                             ForEach(Array(draft.images.enumerated()), id: \.element.id) { index, attachment in
-                                if let file = attachment.file {
-                                    Button { NSWorkspace.shared.open(file) } label: {
-                                        thumbnail(attachment.image, label: file.lastPathComponent, saved: true)
-                                    }
-                                    .help(file.path)
-                                    .id(attachment.id)
-                                } else {
-                                    thumbnail(attachment.image, label: String(index + 1), saved: false)
-                                        .overlay(alignment: .topTrailing) {
-                                            Button { draft.removeImage(attachment.id) } label: {
-                                                Image(systemName: "xmark.circle.fill")
-                                                    .symbolRenderingMode(.palette)
-                                                    .foregroundStyle(.white, .black.opacity(0.8))
-                                                    .padding(3)
-                                            }
-                                            .accessibilityLabel(text.cancel)
-                                            .disabled(draft.saving)
-                                        }
-                                        .id(attachment.id)
+                                Button { preview = attachment } label: {
+                                    thumbnail(attachment.image, label: attachment.file?.lastPathComponent ?? String(index + 1),
+                                              saved: attachment.file != nil)
                                 }
+                                .overlay(alignment: .topTrailing) {
+                                    if attachment.file == nil {
+                                        Button { draft.removeImage(attachment.id) } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .symbolRenderingMode(.palette)
+                                                .foregroundStyle(.white, .black.opacity(0.8)).padding(3)
+                                        }
+                                        .accessibilityLabel(text.cancel)
+                                    }
+                                }
+                                .draggable(attachment.id.uuidString)
+                                .dropDestination(for: String.self) { values, _ in
+                                    guard let value = values.first, let id = UUID(uuidString: value) else { return false }
+                                    return draft.moveImage(id, to: attachment.id)
+                                }
+                                .disabled(draft.saving)
+                                .id(attachment.id)
                             }
                             if let image = draft.pendingSessionImage {
                                 thumbnail(image, label: text.retryScreenshot, saved: false)
@@ -108,13 +114,13 @@ struct NotchQuickCaptureView: View {
                     }
                     .scrollIndicators(.visible)
                     .onChange(of: draft.images.count) {
-                        if let last = draft.images.last { scroll.scrollTo(last.id, anchor: .trailing) }
+                        if let last = draft.images.last { scroll.scrollTo(last.id, anchor: .bottom) }
                     }
                 }
-                .frame(height: 72)
+                .frame(height: 100)
             }
             HStack(spacing: 12) {
-                Button { draft.captureRegion() } label: {
+                Button { if draft.session != nil { draft.captureGroup() } else { draft.captureRegion() } } label: {
                     Label(draft.pendingSessionImage == nil ? text.screenshot : text.retryScreenshot, systemImage: "viewfinder")
                 }
                 .disabled(draft.saving)
@@ -135,7 +141,27 @@ struct NotchQuickCaptureView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear { focused = true }
         .onChange(of: draft.saving) { if !draft.saving { focused = true } }
-        .onExitCommand { draft.cancel() }
+        .popover(item: $preview) { attachment in
+            VStack(spacing: 10) {
+                HStack {
+                    Text(attachment.file?.lastPathComponent ?? text.screenshot)
+                        .foregroundStyle(NotchNeonPalette.purple)
+                    Spacer()
+                    Button { preview = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain).accessibilityLabel(text.cancel)
+                }
+                .font(.system(size: 12, weight: .semibold))
+                if let file = attachment.file, let image = NSImage(contentsOf: file) {
+                    Image(nsImage: image).resizable().scaledToFit()
+                } else {
+                    Image(decorative: attachment.image, scale: 1).resizable().scaledToFit()
+                }
+            }
+            .padding(14).frame(width: 560, height: 360)
+            .background(.black.opacity(0.96)).environment(\.colorScheme, .dark)
+            .onExitCommand { preview = nil }
+        }
+        .onExitCommand { if preview != nil { preview = nil } else { draft.cancel() } }
         .accessibilityIdentifier("notch.quickCapture")
     }
 
@@ -145,6 +171,7 @@ struct NotchQuickCaptureView: View {
                 .frame(width: 88, height: 52)
                 .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 5))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(NotchNeonPalette.purple.opacity(0.2), lineWidth: 0.5))
             HStack(spacing: 3) {
                 if saved { Image(systemName: "checkmark").foregroundStyle(NotchNeonPalette.purple) }
                 Text(label).lineLimit(1)

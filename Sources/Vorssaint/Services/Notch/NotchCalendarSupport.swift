@@ -20,6 +20,8 @@ struct NotchCalendarEvent: Equatable, Identifiable, Sendable {
     let end: Date
     let allDay: Bool
     let location: String
+    var notePeople: [MeetingNotePerson] = []
+    var noteEventKey: String? = nil
     var meetingURL: URL? = nil
     var color: NotchCalendarColor = .fallback
     var calendarItemIdentifier = ""

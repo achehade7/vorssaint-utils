@@ -26,6 +26,7 @@ struct NotchNoticeView: View {
     }
     /// The words of a timer's notice share its orange too.
     private var textTint: Color {
+        if notice.meetingNote { return NotchNeonPalette.purple }
         if notice.meetingReminder { return tint }
         if let cue = NotchDeviceFeedback(notice) { return cue.tint }
         return notice.event == .timer ? .orange : .white
@@ -86,7 +87,9 @@ struct NotchNoticeView: View {
                 Group {
                     // A notice about the agent itself wears its mark, and a
                     // warning keeps a symbol that says what happened.
-                    if let reaction = companionReaction {
+                    if notice.meetingNote {
+                        MeetingNoteMark().frame(width: 18, height: 20)
+                    } else if let reaction = companionReaction {
                         let size = NotchMascotSupport.noticeSize
                         NotchMascotView(look: NotchMascotSupport.look(), mood: NotchService.shared.mascotRestingMood,
                                         size: size, reaction: NotchMascotSupport.reacts() ? reaction : nil)

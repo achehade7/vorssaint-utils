@@ -794,6 +794,7 @@ enum DefaultsKey {
 
     // Text snippets: type a trigger, get the expansion.
     static let textSnippetsEnabled = "textSnippetsEnabled"
+    static let lastUsedSnippetID = "lastUsedSnippetID"
     static let textSnippets = "textSnippets"              // Data: [TextSnippet] JSON
     static let snippetLibraryEnabled = "snippetLibraryEnabled"
     static let snippetLibraryShortcut = "snippetLibraryShortcut"
