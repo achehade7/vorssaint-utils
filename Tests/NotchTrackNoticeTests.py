@@ -33,6 +33,8 @@ views = "\n".join(declaration(notice, marker) for marker in [
 
 views += "\n" + (repo / "Sources/Vorssaint/UI/Notch/NotchEqualizerBars.swift").read_text()
 views += "\n" + (repo / "Sources/Vorssaint/UI/Notch/NotchDecorativeClock.swift").read_text()
+views += "\n" + declaration((repo / "Sources/Vorssaint/Services/CommandBar/MeetingNoteService.swift").read_text(),
+                              "struct MeetingNoteMark: View")
 
 swift = r'''
 import AppKit
@@ -46,7 +48,7 @@ struct NotchNotificationContent {
 }
 struct NotchNotice {
     let event: NotchEvent, title: String, detail: String, symbol: String
-    var meetingReminder = false
+    var meetingReminder = false, meetingNote = false
     var level: Double?, notification: NotchNotificationContent?, agent: AgentProvider?, mascot: NotchMascotReaction?
     var cameraGap: CGFloat { 6 }
     var readsFromEnds: Bool { true }
@@ -81,7 +83,7 @@ enum NotchLayout {
     static let compactMusicBarCount = 7
     static let compactMusicBarWidth: CGFloat = 1.8
 }
-enum NotchNeonPalette { static let blue = Color.blue }
+enum NotchNeonPalette { static let blue = Color.blue, purple = Color.purple }
 enum NotchAudioLevelSupport {
     static func barIndex(_ index: Int, of count: Int, bands: Int) -> Int { min(bands - 1, index) }
 }
