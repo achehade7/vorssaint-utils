@@ -61,6 +61,24 @@ enum MixerFeatureTests {
             let restored = curveDefaults.dictionary(forKey: DefaultsKey.appVolumes) as? [String: Double] ?? [:]
             suite.expectClose(restored["com.example.quiet"] ?? -1, 0.5,
                         "a backup restored from before the change is converted on the next launch")
+            curveDefaults.set(["com.example.quiet": 0.5, "com.example.boosted": 1.5], forKey: DefaultsKey.appVolumes)
+            let exported = SettingsBackupSupport.payload(appVersion: "test") { curveDefaults.object(forKey: $0) }
+            let exportedSettings = exported[SettingsBackupSupport.settingsKey] as? [String: Any] ?? [:]
+            let exportedVolumes = exportedSettings[DefaultsKey.appVolumes] as? [String: Double] ?? [:]
+            suite.expectClose(exportedVolumes["com.example.quiet"] ?? -1, 0.25,
+                        "a backup saves app volumes as the gains 3.4.1 plays, at the same loudness")
+            suite.expect(exportedVolumes["com.example.boosted"] == 1.5
+                   && exportedSettings[DefaultsKey.appVolumesArePositions] == nil,
+                   "a backup keeps boosted levels and leaves the position marker out")
+            let imported = SettingsBackupSupport.sanitizedSettings(from: exported) ?? [:]
+            for key in SettingsBackupSupport.keysToClear(whenImporting: imported) {
+                curveDefaults.removeObject(forKey: key)
+            }
+            for (key, value) in imported { curveDefaults.set(value, forKey: key) }
+            Defaults.migrateAppVolumesToPositions(in: curveDefaults)
+            let reimported = curveDefaults.dictionary(forKey: DefaultsKey.appVolumes) as? [String: Double] ?? [:]
+            suite.expectClose(reimported["com.example.quiet"] ?? -1, 0.5,
+                        "importing that backup here puts the sliders back where they were")
             curveDefaults.removePersistentDomain(forName: curveSuite)
         }
         suite.expectClose(MixerRoutingSupport.volumeFraction(fromPercentageText: "40",
