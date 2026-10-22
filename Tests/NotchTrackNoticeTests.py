@@ -46,6 +46,7 @@ struct NotchNotificationContent {
 }
 struct NotchNotice {
     let event: NotchEvent, title: String, detail: String, symbol: String
+    var meetingReminder = false
     var level: Double?, notification: NotchNotificationContent?, agent: AgentProvider?, mascot: NotchMascotReaction?
     var cameraGap: CGFloat { 6 }
     var readsFromEnds: Bool { true }
