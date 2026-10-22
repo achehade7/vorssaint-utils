@@ -28,6 +28,12 @@ struct NotchQuickCaptureView: View {
                         Text(session.label).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
+                    if draft.canUndoScreenshot {
+                        Button { draft.undoLastScreenshot() } label: { Image(systemName: "arrow.uturn.backward") }
+                            .help(text.undoScreenshot + " · ⌘Z")
+                            .accessibilityLabel(text.undoScreenshot)
+                            .accessibilityIdentifier("notch.quickCapture.undo")
+                    }
                     Button(text.startSession) { draft.captureGroup() }
                         .fixedSize()
                         .accessibilityIdentifier("notch.quickCapture.resumeSession")

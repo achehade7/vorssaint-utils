@@ -22,6 +22,22 @@ final class SnippetLibraryService: ObservableObject {
     @Published private(set) var presentationID = UUID()
     @Published private(set) var snippets: [TextSnippet] = []
 
+    @Published private(set) var saveDraft: SnippetSaveDraft?
+
+    func saveCapturedText(_ text: String) {
+        guard AppFeature.textSnippets.isAvailable else { return }
+        hide()
+        saveDraft = SnippetSaveDraft(text: text)
+        present()
+    }
+
+    func finishSave() {
+        guard AppFeature.textSnippets.isAvailable, saveDraft?.save() == true else { return }
+        hide()
+        TextSnippetService.shared.syncWithPreferences()
+        QuickToolHUD.show(icon: "checkmark", message: FeatureStrings.snippets(L10n.shared.language).clipboardSaved)
+    }
+
     enum TemplateAction { case copy, insert }
     @Published private(set) var template: TextSnippet?
     @Published var templateValues: [String: String] = [:]
@@ -36,6 +52,7 @@ final class SnippetLibraryService: ObservableObject {
 
     func resolveTemplate(_ snippet: TextSnippet, action: TemplateAction,
                          completion: @escaping (TextSnippet) -> Void) {
+        guard snippet.isAvailable() else { return }
         guard !SnippetTemplateSupport.fields(in: snippet.replacement).isEmpty else { completion(snippet); return }
         hide()
         template = snippet
@@ -46,6 +63,7 @@ final class SnippetLibraryService: ObservableObject {
 
     func finishTemplate() {
         guard canFinishTemplate, var filled = template, let completion = templateCompletion else { return }
+        guard filled.isAvailable() else { hide(); return }
         filled.replacement = SnippetTemplateSupport.fill(filled.replacement, values: templateValues)
         hide()
         completion(filled)
@@ -72,7 +90,7 @@ final class SnippetLibraryService: ObservableObject {
                                             fallback: .snippetLibraryDefault)
         shortcutRegistrationFailed = !hotkey.sync(enabled: enabled, shortcut: shortcut,
                                                   storageKey: DefaultsKey.snippetLibraryShortcut)
-        if !AppFeature.textSnippets.isAvailable || (!enabled && template == nil) { hide() }
+        if !AppFeature.textSnippets.isAvailable || (!enabled && template == nil && saveDraft == nil) { hide() }
         if isVisible {
             reloadSnippets()
             // Edits made in Settings can flip the panel between its list and
@@ -148,6 +166,7 @@ final class SnippetLibraryService: ObservableObject {
         removeMonitors()
         panel?.orderOut(nil)
         template = nil
+        saveDraft = nil
         templateValues = [:]
         templateCompletion = nil
         TextSnippetService.shared.setLibraryVisible(false)
@@ -190,6 +209,7 @@ final class SnippetLibraryService: ObservableObject {
 
     private func insertResolved(_ snippet: TextSnippet) {
         hide()
+        guard snippet.isAvailable() else { return }
         // The panel never activates, so focus normally sits in the target
         // app. When Vorssaint itself is frontmost (its Settings window, for
         // example), the synthetic typing would land in our own fields.
@@ -332,6 +352,13 @@ final class SnippetLibraryService: ObservableObject {
                 return event
             }
 
+            if self.saveDraft != nil {
+                if Int(event.keyCode) == kVK_Escape { self.hide(); return nil }
+                if [kVK_Return, kVK_ANSI_KeypadEnter].contains(Int(event.keyCode)), event.modifierFlags.contains(.command) {
+                    self.finishSave(); return nil
+                }
+                return event
+            }
             if self.template != nil {
                 switch Int(event.keyCode) {
                 case kVK_Escape: self.hide(); return nil

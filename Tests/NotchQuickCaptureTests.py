@@ -494,6 +494,81 @@ loop.stopSession(); waitUntil { !loop.saving }
 let loopLines = try String(contentsOf: loopVault.appendingPathComponent("Captures.md"), encoding: .utf8).split(separator: "\n")
 expect(loopLines.count == 1 && loopLines[0].contains("5 screenshots"), "resumed sets still write one group summary")
 
+// Undo owns only the active group, rolls numbering back and keeps selecting.
+let undo = NotchQuickCaptureService(store: .init(vault: loopVault, screenshots: root.appendingPathComponent("undo-images")))
+undo.text = "Keep undo thought"; undo.sessionLabel = "Undo"
+undo.captureGroup(); undo.undoLastScreenshot()
+expect(undo.isSelecting && undo.session?.count == 0, "undo on an empty group changes nothing")
+for _ in 1...3 {
+    ScreenshotSelectionController.last!.completion?(.captured(.init(image: image)))
+    waitUntil { undo.isSelecting && !undo.saving }
+}
+let undoFolder = undo.session!.folder!
+let opensBeforeUndo = island.opens
+let lastCaptureID = undo.images.last!.id
+undo.undoLastScreenshot()
+waitUntil { undo.isSelecting && !undo.saving }
+expect(undo.session?.count == 2 && undo.images.count == 2 && !undo.images.contains { $0.id == lastCaptureID },
+       "undo removes latest capture and decrements count")
+expect(!fm.fileExists(atPath: undoFolder.appendingPathComponent("03.png").path)
+       && fm.fileExists(atPath: undoFolder.appendingPathComponent("02.png").path), "undo updates actual files")
+expect(island.opens == opensBeforeUndo && undo.text == "Keep undo thought", "undo keeps selection loop and draft, without flashing editor")
+ScreenshotSelectionController.last!.completion?(.captured(.init(image: image)))
+waitUntil { undo.isSelecting && !undo.saving }
+expect(undo.images.last?.file?.lastPathComponent == "03.png", "next capture reuses the removed number")
+undo.pauseGroupCapture()
+let newestID = undo.images.last!.id
+expect(undo.moveImage(newestID, to: undo.images.first!.id), "reorder before undo")
+waitUntil { !undo.saving }
+undo.captureGroup(); undo.undoLastScreenshot()
+waitUntil { undo.isSelecting && !undo.saving }
+expect(!undo.images.contains { $0.id == newestID } && undo.images.map { $0.file!.lastPathComponent } == ["01.png", "02.png"],
+       "undo follows capture identity after reordering and compacts remaining numbering")
+// Queue undo immediately while a capture write is still outstanding.
+ScreenshotSelectionController.last!.completion?(.captured(.init(image: image)))
+undo.undoLastScreenshot()
+waitUntil { undo.isSelecting && !undo.saving }
+expect(undo.session?.count == 2 && undo.pendingSessionImage == nil, "queued undo waits for captured file before removing it")
+ScreenshotSelectionController.last!.completion?(.captured(.init(image: image)))
+undo.undoLastScreenshot(); undo.pauseGroupCapture()
+waitUntil { !undo.saving }
+expect(!undo.capturingGroup && !undo.isSelecting && undo.session?.count == 2, "Escape during queued undo returns to editor without restarting")
+undo.captureGroup()
+let obstruction = undoFolder.appendingPathComponent("unrelated.txt")
+try Data("keep".utf8).write(to: obstruction)
+undo.undoLastScreenshot(); waitUntil { !undo.saving }
+expect(undo.session?.count == 2 && undo.images.count == 2 && undo.error == .save && !undo.capturingGroup,
+       "failed atomic removal keeps count, thumbnails and originals; exits with error")
+try fm.removeItem(at: obstruction)
+undo.captureGroup(); undo.undoLastScreenshot(); waitUntil { undo.isSelecting && !undo.saving }
+undo.undoLastScreenshot(); waitUntil { undo.isSelecting && !undo.saving }
+expect(undo.session?.count == 0 && undo.images.isEmpty && !undo.canUndoScreenshot, "can undo all captures")
+expect(try fm.contentsOfDirectory(atPath: undoFolder.path).isEmpty, "zero count leaves no PNGs")
+ScreenshotSelectionController.last!.completion?(.captured(.init(image: image)))
+waitUntil { undo.isSelecting && !undo.saving }
+let keyWindow = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 50), styleMask: [.titled], backing: .buffered, defer: false)
+keyWindow.makeKeyAndOrderFront(nil)
+NSApplication.shared.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                                               timestamp: 1, windowNumber: keyWindow.windowNumber, context: nil,
+                                               characters: "z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6)!)
+waitUntil { undo.isSelecting && !undo.saving }
+keyWindow.orderOut(nil)
+expect(undo.session?.count == 0 && undo.images.isEmpty, "native Cmd-Z monitor invokes undo and resumes selection")
+undo.pauseGroupCapture()
+let summariesBeforeEmptyStop = try Data(contentsOf: loopVault.appendingPathComponent("Captures.md"))
+undo.stopSession(); waitUntil { !undo.saving }
+expect(try Data(contentsOf: loopVault.appendingPathComponent("Captures.md")) == summariesBeforeEmptyStop,
+       "all captures undone means no summary")
+func undoKey(_ modifiers: NSEvent.ModifierFlags, repeatKey: Bool = false) -> NSEvent {
+    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
+                    windowNumber: 0, context: nil, characters: "z", charactersIgnoringModifiers: "z",
+                    isARepeat: repeatKey, keyCode: 6)!
+}
+expect(NotchQuickCaptureService.isUndoScreenshot(undoKey(.command)), "Cmd-Z is screenshot undo")
+expect(!NotchQuickCaptureService.isUndoScreenshot(undoKey([.command, .shift]))
+       && !NotchQuickCaptureService.isUndoScreenshot(undoKey([]))
+       && !NotchQuickCaptureService.isUndoScreenshot(undoKey(.command, repeatKey: true)), "plain Z, redo and key repeat are untouched")
+
 // An unavailable destination pauses the loop without discarding the pending image.
 let failedLoopImages = root.appendingPathComponent("failed-loop-images")
 try Data("obstruction".utf8).write(to: failedLoopImages)

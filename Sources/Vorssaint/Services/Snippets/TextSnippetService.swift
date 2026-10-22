@@ -25,6 +25,7 @@ final class TextSnippetService {
     private var tapThread: Thread?
     private var shouldStopTapThread = false
     private var pendingTapRestart = false
+    private var expiryTimer: Timer?
     private var activationObserver: NSObjectProtocol?
     private let inputLock = NSLock()
     private var buffer = ""
@@ -47,6 +48,7 @@ final class TextSnippetService {
         let enabled = AppFeature.textSnippets.isAvailable
             && UserDefaults.standard.bool(forKey: DefaultsKey.textSnippetsEnabled)
         reloadSnippets()
+        scheduleExpiry()
         let hasWork = inputLock.withLock {
             !(immediateSnippets.isEmpty && delimiterSnippets.isEmpty)
         }
@@ -65,6 +67,25 @@ final class TextSnippetService {
         } else {
             stop()
         }
+    }
+
+    /// One wake-up at the nearest expiry; no background polling.
+    private func scheduleExpiry() {
+        expiryTimer?.invalidate(); expiryTimer = nil
+        let defaults = UserDefaults.standard
+        guard let data = defaults.data(forKey: DefaultsKey.textSnippets),
+              let stored = try? JSONDecoder().decode([TextSnippet].self, from: data) else { return }
+        let active = stored.filter { $0.isAvailable() }
+        if active.count != stored.count, let encoded = TextSnippetSupport.encode(active) {
+            defaults.set(encoded, forKey: DefaultsKey.textSnippets)
+        }
+        guard let next = active.compactMap(\.expiresAt).min() else { return }
+        let timer = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in
+            self?.syncWithPreferences()
+            SnippetLibraryService.shared.syncWithPreferences()
+        }
+        expiryTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     /// Plays the sound an expansion would play, for the picker's preview.

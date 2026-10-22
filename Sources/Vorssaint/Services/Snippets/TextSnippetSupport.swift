@@ -27,9 +27,12 @@ struct TextSnippet: Codable, Identifiable, Equatable {
     /// migrate or orphan.
     var folder = ""
     var showsInLibrary = true
+    /// Temporary snippets expire at the next local midnight. Old snippets remain permanent.
+    var expiresAt: Date?
+    func isAvailable(at date: Date = Date()) -> Bool { expiresAt.map { $0 > date } ?? true }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, trigger, replacement, expansion, enabled, ignoresCase, folder, showsInLibrary
+        case id, name, trigger, replacement, expansion, enabled, ignoresCase, folder, showsInLibrary, expiresAt
     }
 }
 
@@ -48,6 +51,7 @@ extension TextSnippet {
         ignoresCase = try container.decodeIfPresent(Bool.self, forKey: .ignoresCase) ?? false
         folder = try container.decodeIfPresent(String.self, forKey: .folder) ?? ""
         showsInLibrary = try container.decodeIfPresent(Bool.self, forKey: .showsInLibrary) ?? true
+        expiresAt = try container.decodeIfPresent(Date.self, forKey: .expiresAt)
     }
 }
 
@@ -128,7 +132,7 @@ enum TextSnippetSupport {
                       expansion: TextSnippet.Expansion,
                       snippets: [TextSnippet]) -> TextSnippet? {
         var best: TextSnippet?
-        for snippet in snippets where snippet.enabled
+        for snippet in snippets where snippet.enabled && snippet.isAvailable()
             && snippet.expansion == expansion
             && !snippet.trigger.isEmpty
             && completes(buffer, trigger: snippet.trigger, ignoresCase: snippet.ignoresCase) {
@@ -597,7 +601,7 @@ enum TextSnippetSupport {
     static func librarySections(_ snippets: [TextSnippet], query: String) -> [LibrarySection] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let visible = snippets.filter { snippet in
-            guard snippet.enabled, snippet.showsInLibrary else { return false }
+            guard snippet.enabled, snippet.isAvailable(), snippet.showsInLibrary else { return false }
             guard !trimmed.isEmpty else { return true }
             return snippet.name.localizedStandardContains(trimmed)
                 || snippet.trigger.localizedStandardContains(trimmed)
@@ -639,12 +643,37 @@ enum TextSnippetSupport {
 
     // MARK: - Persistence
 
-    static func decode(_ data: Data?) -> [TextSnippet] {
+    enum SaveFailure: Error, Equatable { case changed, permanentName, empty }
+
+    static func named(_ name: String, in snippets: [TextSnippet]) -> [TextSnippet] {
+        snippets.filter { $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .compare(name, options: .caseInsensitive) == .orderedSame }
+    }
+
+    /// Both clipboard and OCR saves use the same replacement and expiry rules.
+    static func saving(name: String, text: String, temporary: Bool, expected: TextSnippet?,
+                       data: Data?, now: Date = Date(), calendar: Calendar = .current) throws -> Data {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SaveFailure.empty }
+        if let data, (try? JSONDecoder().decode([TextSnippet].self, from: data)) == nil { throw SaveFailure.changed }
+        var snippets = decode(data, now: now)
+        let matches = named(name, in: snippets)
+        guard matches.count <= 1, matches.first == expected else { throw SaveFailure.changed }
+        guard !temporary || matches.first?.expiresAt != nil || matches.isEmpty else { throw SaveFailure.permanentName }
+        var saved = expected ?? TextSnippet()
+        saved.name = name; saved.replacement = text
+        saved.expiresAt = temporary ? calendar.dateInterval(of: .day, for: now)?.end : nil
+        if let index = snippets.firstIndex(where: { $0.id == saved.id }) { snippets[index] = saved }
+        else { snippets.append(saved) }
+        return try JSONEncoder().encode(snippets)
+    }
+
+    static func decode(_ data: Data?, now: Date = Date()) -> [TextSnippet] {
         guard let data else { return [] }
-        return (try? JSONDecoder().decode([TextSnippet].self, from: data)) ?? []
+        return ((try? JSONDecoder().decode([TextSnippet].self, from: data)) ?? []).filter { $0.isAvailable(at: now) }
     }
 
     static func encode(_ snippets: [TextSnippet]) -> Data? {
-        try? JSONEncoder().encode(snippets)
+        try? JSONEncoder().encode(snippets.filter { $0.isAvailable() })
     }
 }

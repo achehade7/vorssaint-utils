@@ -399,12 +399,13 @@ struct NotchView: View {
                 // fit their side, never pushing them under the camera; the menu
                 // offers the same actions either way.
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 6) { items.trailing; trailingSections(band); updateControl(band); pinMark }
+                    HStack(spacing: 6) { items.trailing; trailingSections(band); NotchMeetingNoteButton(); updateControl(band); pinMark }
                     HStack(spacing: 6) {
-                        items.trailing; trailingSections(band)
+                        items.trailing; trailingSections(band); NotchMeetingNoteButton()
                         NotchUpdateControl(action: service.showUpdate, compact: true); pinMark
                     }
-                    HStack(spacing: 6) { items.trailing; trailingSections(band); pinMark }
+                    HStack(spacing: 6) { items.trailing; trailingSections(band); NotchMeetingNoteButton(); pinMark }
+                    HStack(spacing: 6) { items.trailing; trailingSections(band); NotchMeetingNoteButton() }
                     HStack(spacing: 6) { items.trailing; trailingSections(band) }
                 }
             }
@@ -617,6 +618,7 @@ struct NotchView: View {
                 .accessibilityAddTraits(active ? .isSelected : [])
             }
             NotchObsidianButton(service: service)
+            NotchMeetingNoteButton()
         }
         .fixedSize()
         .padding(.trailing, 2)

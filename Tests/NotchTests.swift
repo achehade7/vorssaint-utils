@@ -594,6 +594,7 @@ enum NotchTests {
     /// The views put the island's way to the sections where the band says:
     /// every fallback of the row's trailing side ends a wrapping page's
     /// controls with it, and the player shows it where the row does not.
+    /// A fifth, narrow fallback drops the meeting shortcut, never navigation.
     private static func sectionsButtonPlacementContracts(_ suite: TestSuite) {
         func source(_ path: String) -> String { (try? String(contentsOfFile: path, encoding: .utf8)) ?? "" }
         let island = source("Sources/Vorssaint/UI/Notch/NotchView.swift")
@@ -601,7 +602,9 @@ enum NotchTests {
             .components(separatedBy: "private func updateControl(").first ?? ""
         let fallbacks = row.components(separatedBy: "HStack(spacing: 6) {").count - 1
         let ends = row.components(separatedBy: "items.trailing; trailingSections(band)").count - 1
-        suite.expect(fallbacks == 4 && ends == fallbacks
+        let noteShortcuts = row.components(separatedBy: "NotchMeetingNoteButton()").count - 1
+        suite.expect(fallbacks == 5 && ends == fallbacks && noteShortcuts == 4
+                     && row.contains("HStack(spacing: 6) { items.trailing; trailingSections(band) }")
                      && row.contains("if band.trailingSectionsButton { NotchSectionsButton(action: service.toggleSections) }"),
                      "every fallback of the row's trailing side ends a wrapping page's controls with the sections button")
         let player = source("Sources/Vorssaint/UI/Notch/NotchMusicView.swift")

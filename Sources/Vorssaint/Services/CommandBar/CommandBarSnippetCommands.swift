@@ -10,7 +10,8 @@ enum CommandBarSnippetCommands {
 
     static func preview(_ snippet: TextSnippet) -> String {
         // Show the saved template literally: previewing never expands clipboard variables.
-        String(snippet.replacement.prefix(240)).components(separatedBy: .newlines)
+        (snippet.expiresAt == nil ? "" : SnippetCaptureStrings.localized(L10n.shared.language).today + " · ")
+        + String(snippet.replacement.prefix(240)).components(separatedBy: .newlines)
             .filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
@@ -38,28 +39,40 @@ enum CommandBarSnippetCommands {
                                     subtitle: strings.libraryTitle, icon: .symbol("text.append"),
                                     countsUsage: false, keepsBarOpen: true, run: { _ in })]
         }
-        guard parts[1].lowercased() == "save", parts.count == 3,
+        guard ["save", "keep"].contains(parts[1].lowercased()), parts.count == 3,
               !parts[2].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return [CommandBarEntry(id: "action.snippetSaveHelp", title: strings.saveClipboardHint,
                                     subtitle: strings.pageTitle, icon: .symbol("text.badge.plus"),
                                     countsUsage: false, keepsBarOpen: true, run: { _ in })]
         }
-        let name = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
-        let matches = matching(name, in: TextSnippetSupport.decode(UserDefaults.standard.data(forKey: DefaultsKey.textSnippets)))
+        let argument = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = argument.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
+        let temporary = parts[1].lowercased() == "save"
+        // Preserve the previous explicit-temp spelling while making save temporary by default.
+        let explicitTemp = temporary && words.first?.lowercased() == "temp"
+        let name = explicitTemp ? (words.count == 2 ? String(words[1]) : "") : argument
+        guard !name.isEmpty else {
+            return [CommandBarEntry(id: "action.snippetSaveHelp", title: strings.saveClipboardHint,
+                                    subtitle: SnippetCaptureStrings.localized(L10n.shared.language).today,
+                                    icon: .symbol("clock"), countsUsage: false, keepsBarOpen: true, run: { _ in })]
+        }
+        let matches = TextSnippetSupport.named(name, in: TextSnippetSupport.decode(UserDefaults.standard.data(forKey: DefaultsKey.textSnippets)))
         let expected = matches.first
+        if temporary, let expected, expected.expiresAt == nil {
+            return [CommandBarEntry(id: "action.snippetSave.blocked", title: name,
+                                    subtitle: SnippetCaptureStrings.localized(L10n.shared.language).permanentName,
+                                    icon: .symbol("lock"), countsUsage: false, keepsBarOpen: true, run: { _ in
+                                        QuickToolHUD.show(icon: "lock", message: SnippetCaptureStrings.localized(L10n.shared.language).permanentName)
+                                    })]
+        }
         return [CommandBarEntry(id: "action.snippetSave", title: name,
-                                subtitle: strings.saveClipboardHint, icon: .symbol("text.badge.plus"),
+                                subtitle: temporary ? SnippetCaptureStrings.localized(L10n.shared.language).today : SnippetCaptureStrings.localized(L10n.shared.language).permanent, icon: .symbol(temporary ? "clock" : "text.badge.plus"),
                                 confirmationPrompt: expected.map { String(format: strings.replaceClipboardFormat, $0.name) },
                                 countsUsage: false, keepsBarOpen: true,
-                                run: { _ in save(name: name, expected: expected) })]
+                                run: { _ in save(name: name, temporary: temporary, expected: expected) })]
     }
 
-    private static func matching(_ name: String, in snippets: [TextSnippet]) -> [TextSnippet] {
-        snippets.filter { $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            .compare(name, options: .caseInsensitive) == .orderedSame }
-    }
-
-    private static func save(name: String, expected: TextSnippet?) {
+    private static func save(name: String, temporary: Bool, expected: TextSnippet?) {
         let bar = CommandBarService.shared
         let presentation = bar.presentationID, query = bar.query, mode = bar.mode
         GeneralPasteboardAccess.shared.async({ NSPasteboard.general.string(forType: .string) }, then: { text in
@@ -70,23 +83,15 @@ enum CommandBarSnippetCommands {
                 return
             }
             let data = UserDefaults.standard.data(forKey: DefaultsKey.textSnippets)
-            // A damaged store must not be replaced by a new one-item library.
-            if let data, (try? JSONDecoder().decode([TextSnippet].self, from: data)) == nil {
-                QuickToolHUD.show(icon: "exclamationmark.circle", message: strings.clipboardChanged)
+            let encoded: Data
+            do { encoded = try TextSnippetSupport.saving(name: name, text: text, temporary: temporary,
+                                                         expected: expected, data: data) }
+            catch {
+                QuickToolHUD.show(icon: "exclamationmark.circle", message:
+                    error as? TextSnippetSupport.SaveFailure == .permanentName
+                        ? SnippetCaptureStrings.localized(L10n.shared.language).permanentName : strings.clipboardChanged)
                 return
             }
-            var snippets = TextSnippetSupport.decode(data)
-            let matches = matching(name, in: snippets)
-            guard matches.count <= 1, matches.first == expected else {
-                QuickToolHUD.show(icon: "exclamationmark.circle", message: strings.clipboardChanged)
-                return
-            }
-            var saved = expected ?? TextSnippet()
-            saved.name = name
-            saved.replacement = text
-            if let index = snippets.firstIndex(where: { $0.id == saved.id }) { snippets[index] = saved }
-            else { snippets.append(saved) }
-            guard let encoded = TextSnippetSupport.encode(snippets) else { return }
             UserDefaults.standard.set(encoded, forKey: DefaultsKey.textSnippets)
             TextSnippetService.shared.syncWithPreferences()
             SnippetLibraryService.shared.syncWithPreferences()
@@ -108,10 +113,12 @@ enum CommandBarSnippetCommands {
     }
 
     static func copy(_ snippet: TextSnippet) {
+        guard snippet.isAvailable() else { return }
         SnippetLibraryService.shared.resolveTemplate(snippet, action: .copy) { copyResolved($0) }
     }
 
     private static func copyResolved(_ snippet: TextSnippet) {
+        guard snippet.isAvailable() else { return }
         GeneralPasteboardAccess.shared.async({
             let clipboard = TextSnippetSupport.needsClipboard(snippet.replacement)
                 ? NSPasteboard.general.string(forType: .string) : nil

@@ -90,6 +90,21 @@ struct NotchQuickCaptureStore {
         guard session.count > 0, let folder = session.folder,
               order.count == session.count, Set(order) == Set(1...session.count) else { throw Failure.write }
         guard order != Array(1...session.count) else { return }
+        try replaceSessionImages(session, folder: folder, order: order)
+    }
+
+    /// Remove exactly one capture and compact numbering in the same atomic
+    /// folder exchange as reordering. Failure leaves every original untouched.
+    func removeSessionScreenshot(_ session: Session, number: Int) throws -> Session {
+        guard session.count > 0, let folder = session.folder,
+              (1...session.count).contains(number) else { throw Failure.write }
+        try replaceSessionImages(session, folder: folder, order: (1...session.count).filter { $0 != number })
+        var updated = session
+        updated.count -= 1
+        return updated
+    }
+
+    private func replaceSessionImages(_ session: Session, folder: URL, order: [Int]) throws {
         try checkScreenshotLocation(folder)
         let files = FileManager.default
         let folderInfo = try folder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])

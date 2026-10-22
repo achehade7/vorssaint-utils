@@ -120,7 +120,9 @@ struct MeetingNoteStore {
         return value.isEmpty ? nil : value.components(separatedBy: " #")[0]
     }
 
-    func prepare(_ input: MeetingNoteInput, topic requestedTopic: String) throws -> URL {
+    struct Prepared: Equatable { let file: URL; let created: Bool }
+
+    func prepare(_ input: MeetingNoteInput, topic requestedTopic: String) throws -> Prepared {
         let files = FileManager.default
         let folder = vault.appendingPathComponent("meetings", isDirectory: true)
         var isDirectory: ObjCBool = false
@@ -138,10 +140,10 @@ struct MeetingNoteStore {
                 continue
             }
             if let identity = input.identity,
-               Self.eventID(in: try String(contentsOf: file, encoding: .utf8)) == identity { return file }
+               Self.eventID(in: try String(contentsOf: file, encoding: .utf8)) == identity { return Prepared(file: file, created: false) }
             if file.lastPathComponent.lowercased() == destination.lastPathComponent.lowercased() { sameTopic = file }
         }
-        if let sameTopic { return sameTopic }
+        if let sameTopic { return Prepared(file: sameTopic, created: false) }
         let template = vault.appendingPathComponent("templates/Meeting.md")
         guard template.resolvingSymlinksInPath().path.hasPrefix(vault.resolvingSymlinksInPath().path + "/"),
               var text = try? String(contentsOf: template, encoding: .utf8),
@@ -165,10 +167,10 @@ struct MeetingNoteStore {
             if errno == EEXIST {
                 let info = try destination.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
                 guard info.isRegularFile == true, info.isSymbolicLink != true else { throw Failure.unsafe }
-                return destination
+                return Prepared(file: destination, created: false)
             }
             throw Failure.write
         }
-        return destination
+        return Prepared(file: destination, created: true)
     }
 }

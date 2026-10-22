@@ -5,10 +5,32 @@ import AppKit
 import SwiftUI
 import EventKit
 
-final class MeetingNoteService {
+final class MeetingNoteService: ObservableObject {
     static let shared = MeetingNoteService()
     private var panel: NSPanel?
     private var draft: MeetingNoteDraft?
+    @Published private(set) var activeNote: URL?
+    private var activeNoteEnd: Date?
+    private var expiry: Timer?
+
+    func openActiveNote() {
+        guard let activeNote, let activeNoteEnd, activeNoteEnd > Date() else { clearActiveNote(); return }
+        NotchService.shared.perform { NSWorkspace.shared.open(activeNote) }
+    }
+
+    private func clearActiveNote() {
+        expiry?.invalidate(); expiry = nil
+        activeNote = nil; activeNoteEnd = nil
+    }
+
+    private func keepShortcut(_ link: URL?, until end: Date) {
+        clearActiveNote()
+        guard let link, end > Date() else { return }
+        activeNote = link; activeNoteEnd = end
+        let timer = Timer(fire: end, interval: 0, repeats: false) { [weak self] _ in self?.clearActiveNote() }
+        expiry = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
 
     func show(_ event: NotchCalendarEvent) {
         guard allowed(event), draft?.saving != true else { return }
@@ -45,14 +67,15 @@ final class MeetingNoteService {
     private func confirm(_ event: NotchCalendarEvent, draft: MeetingNoteDraft) {
         draft.save(allowed: allowed(event)) { [weak self] file in
             guard let self else { return }
-            guard let file else { NotchService.shared.signalQuickCapture(success: false); return }
+            guard let prepared = file else { NotchService.shared.signalQuickCapture(success: false); return }
             self.close()
             if self.allowed(event), let meeting = event.meetingURL { NSWorkspace.shared.open(meeting) }
             var link = URLComponents()
             link.scheme = "obsidian"; link.host = "open"
-            link.queryItems = [URLQueryItem(name: "path", value: file.path)]
+            link.queryItems = [URLQueryItem(name: "path", value: prepared.file.path)]
+            self.keepShortcut(link.url, until: event.end)
             let text = MeetingNoteStrings.localized(L10n.shared.language)
-            _ = NotchService.shared.show(NotchNotice(event: .capture, title: "", detail: text.ready,
+            _ = NotchService.shared.show(NotchNotice(event: .capture, title: "", detail: prepared.created ? text.created : text.ready,
                                                     symbol: "doc.text", fileURL: link.url, meetingNote: true))
         }
     }

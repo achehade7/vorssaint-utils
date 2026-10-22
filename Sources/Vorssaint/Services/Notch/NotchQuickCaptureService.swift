@@ -38,6 +38,12 @@ final class NotchQuickCaptureService: ObservableObject {
     var isSelecting: Bool { selection != nil }
     private(set) var capturingGroup = false
     private var groupGeneration = UUID()
+    private var captureUndoIDs: [UUID] = []
+    private var undoPending = false
+    var canUndoScreenshot: Bool {
+        session != nil && !saving && pendingSessionImage == nil
+            && captureUndoIDs.last.map { id in images.contains { $0.id == id } } == true
+    }
     private var groupEscapeMonitor: Any?
     private var groupGlobalEscapeMonitor: Any?
 
@@ -51,14 +57,60 @@ final class NotchQuickCaptureService: ObservableObject {
         capturingGroup = true
         groupGeneration = UUID()
         groupEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53, self?.capturingGroup == true else { return event }
-            self?.pauseGroupCapture()
-            return nil
+            guard self?.capturingGroup == true else { return event }
+            if event.keyCode == 53 { self?.pauseGroupCapture(); return nil }
+            if Self.isUndoScreenshot(event) { self?.undoLastScreenshot(); return nil }
+            return event
         }
         groupGlobalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 { self?.pauseGroupCapture() }
         }
         captureRegion()
+    }
+
+    static func isUndoScreenshot(_ event: NSEvent) -> Bool {
+        event.keyCode == 6 && !event.isARepeat
+            && event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command
+    }
+
+    func undoLastScreenshot() {
+        if saving, capturingGroup { undoPending = true; return }
+        guard canUndoScreenshot, let session, let id = captureUndoIDs.last,
+              let attachment = images.first(where: { $0.id == id }), let file = attachment.file,
+              let number = Int(file.deletingPathExtension().lastPathComponent) else { return }
+        // Detach the old callback before cancelling; the editor stays hidden
+        // and a fresh selector follows the atomic file operation.
+        let controller = selection; selection = nil
+        controller?.cancel()
+        let store = store
+        sessionTimer?.invalidate(); sessionTimer = nil
+        saving = true; error = nil
+        io.async { [weak self] in
+            let result = Result { try store.removeSessionScreenshot(session, number: number) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.saving = false
+                switch result {
+                case .success(let updated):
+                    self.session = updated
+                    self.captureUndoIDs.removeAll { $0 == id }
+                    self.images = self.images.filter { $0.id != id }.map { item in
+                        guard let old = item.file, old.deletingLastPathComponent() == session.folder,
+                              let index = Int(old.deletingPathExtension().lastPathComponent), index > number else { return item }
+                        return Attachment(id: item.id, image: item.image,
+                                          file: old.deletingLastPathComponent().appendingPathComponent(String(format: "%02d.png", index - 1)))
+                    }
+                    if self.capturingGroup { self.continueGroupCapture() }
+                case .failure:
+                    self.endGroupCapture()
+                    self.error = .save
+                    NotchService.shared.openQuickCapture()
+                    NotchService.shared.signalQuickCapture(success: false)
+                }
+                self.undoPending = false
+                self.scheduleSessionClose()
+            }
+        }
     }
 
     func pauseGroupCapture() {
@@ -118,7 +170,7 @@ final class NotchQuickCaptureService: ObservableObject {
         guard !saving else { return }
         // A failed session image must remain available to Retry/Stop.
         guard pendingSessionImage == nil else { NotchService.shared.collapse(); return }
-        text = ""; images = []; error = nil
+        text = ""; images = []; error = nil; captureUndoIDs = []
         NotchService.shared.collapse()
     }
 
@@ -173,6 +225,7 @@ final class NotchQuickCaptureService: ObservableObject {
 
     func startSession() {
         guard session == nil, !saving, !isSelecting else { return }
+        captureUndoIDs = []; undoPending = false
         session = .init(startedAt: now(), label: sessionLabel)
         error = nil
         scheduleSessionClose()
@@ -250,20 +303,28 @@ final class NotchQuickCaptureService: ObservableObject {
                 self.saving = false
                 self.session = savedSession
                 if didSaveImage {
-                    if let savedAttachment { self.images.append(savedAttachment) }
+                    if let savedAttachment {
+                        self.images.append(savedAttachment)
+                        self.captureUndoIDs.append(savedAttachment.id)
+                    }
                     self.pendingSessionImage = nil; self.pendingCaptureAt = nil
                 }
                 switch result {
                 case .success:
                     if close {
+                        self.captureUndoIDs = []; self.undoPending = false
                         self.session = nil; self.sessionLabel = ""
                         if savedSession.count > 0 { NotchService.shared.signalQuickCapture(success: true) }
                     } else {
                         self.scheduleSessionClose()
-                        if self.capturingGroup { self.continueGroupCapture() }
+                        if self.undoPending {
+                            self.undoPending = false
+                            self.undoLastScreenshot()
+                        } else if self.capturingGroup { self.continueGroupCapture() }
                     }
                 case .failure:
                     self.endGroupCapture()
+                    self.undoPending = false
                     self.error = .save
                     NotchService.shared.openQuickCapture()
                     NotchService.shared.signalQuickCapture(success: false)
@@ -289,7 +350,7 @@ final class NotchQuickCaptureService: ObservableObject {
                 self.saving = false
                 switch result {
                 case .success:
-                    self.text = ""; self.images = []; self.error = nil
+                    self.text = ""; self.images = []; self.error = nil; self.captureUndoIDs = []
                     if NotchService.shared.showingQuickCapture { NotchService.shared.collapse() }
                     NotchService.shared.signalQuickCapture(success: true)
                 case .failure:
@@ -317,7 +378,7 @@ final class NotchQuickCaptureService: ObservableObject {
             freeze: true, includePointer: false, showLastRegion: false, hideVorssaintWindows: true,
             protectedWindowIDs: { NotchService.shared.captureChromeWindowIDs },
             purpose: capturingGroup
-                ? String(format: NotchQuickCaptureStrings.localized(L10n.shared.language).sessionCount, session?.count ?? 0) + " · Esc"
+                ? String(format: NotchQuickCaptureStrings.localized(L10n.shared.language).sessionCount, session?.count ?? 0) + " · ⌘Z · Esc"
                 : NotchQuickCaptureStrings.localized(L10n.shared.language).title,
             requiresDraggedRegion: true)
         selection = controller

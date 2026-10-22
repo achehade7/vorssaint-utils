@@ -17,7 +17,9 @@ struct SnippetLibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if library.template != nil {
+            if let draft = library.saveDraft {
+                SnippetSaveForm(draft: draft)
+            } else if library.template != nil {
                 SnippetTemplateForm()
             } else {
                 searchBar

@@ -79,7 +79,10 @@ try expect(MeetingNoteStore.purpose(input) == "14:00–14:30, A.C., A.B.", "Purp
 let unsafe = MeetingNoteStore.topic("../../Anwar / Andreas: \"check\" <x> | ? * [y] #test private@example.com +49 123 456789 https://example.com/private", people: people)
 try expect(!unsafe.contains("/") && !unsafe.contains(":") && !unsafe.hasPrefix(".") && !unsafe.contains("@") && !unsafe.contains("123"), "safe filename strips paths and contact data")
 try expect(MeetingNoteStore.topic(String(repeating: "é", count: 200), people: []).utf8.count <= 160, "length bounded in bytes")
-let note = try store.prepare(input, topic: topic)
+let firstPreparation = try store.prepare(input, topic: topic)
+try expect(firstPreparation.created, "new note reports created")
+let note = firstPreparation.file
+try expect(try !store.prepare(input, topic: topic).created, "existing note reports ready, not created")
 let body = try String(contentsOf: note, encoding: .utf8)
 try expect(note.lastPathComponent == "2026-10-22 A.B. one-on-one.md", "dated path")
 try expect(body.contains("date: 2026-10-22\n") && body.contains("project: []\n") && body.contains("topics: []\n") && body.contains("folded: false\n"), "template properties filled")
@@ -90,17 +93,17 @@ for forbidden in ["Anwar", "Chehade", "Andreas", "Braun", "@", "https://", "{{"]
     try expect(!body.contains(forbidden), "no raw personal data or placeholders")
 }
 let before = try Data(contentsOf: note)
-let reused = try store.prepare(input, topic: "Different topic")
+let reused = try store.prepare(input, topic: "Different topic").file
 try expect(reused == note, "same calendar_event wins despite topic change")
 try expect(try Data(contentsOf: note) == before, "existing note never overwritten")
 let renamed = root.appendingPathComponent("meetings/Already curated.md")
 try fm.moveItem(at: note, to: renamed)
-try expect(try store.prepare(input, topic: topic) == renamed, "same calendar_event reused without rename")
+try expect(try store.prepare(input, topic: topic).file == renamed, "same calendar_event reused without rename")
 let clash = root.appendingPathComponent("meetings/2026-10-22 Different topic.md")
 try "existing unrelated note".write(to: clash, atomically: true, encoding: .utf8)
-try expect(try store.prepare(input, topic: "Different topic") == renamed, "event lookup precedes date/topic collision")
+try expect(try store.prepare(input, topic: "Different topic").file == renamed, "event lookup precedes date/topic collision")
 let other = MeetingNoteInput(identity: "event-2", title: "Different topic", start: start, end: start.addingTimeInterval(60), people: [])
-try expect(try store.prepare(other, topic: "Different topic") == clash, "date/topic fallback reuses existing note")
+try expect(try store.prepare(other, topic: "Different topic").file == clash, "date/topic fallback reuses existing note")
 try expect(try String(contentsOf: clash, encoding: .utf8) == "existing unrelated note", "fallback never edits existing file")
 for value in ["plain-id", "'single-id'", "\"double-id\""] {
     try expect(MeetingNoteStore.eventID(in: "---\ncalendar_event: \(value)\n---\n") != nil, "reads supported YAML scalar")
@@ -108,9 +111,9 @@ for value in ["plain-id", "'single-id'", "\"double-id\""] {
 let manual = root.appendingPathComponent("meetings/Manual.md")
 try "---\ncalendar_event: manual-event\n---\nUnchanged".write(to: manual, atomically: true, encoding: .utf8)
 let manualInput = MeetingNoteInput(identity: "manual-event", title: "Planning", start: start, end: start, people: [])
-try expect(try store.prepare(manualInput, topic: "Planning") == manual, "manual calendar_event property is recognized")
+try expect(try store.prepare(manualInput, topic: "Planning").file == manual, "manual calendar_event property is recognized")
 let tomorrow = MeetingNoteInput(identity: MeetingNoteKey.google(externalIdentifier: "5kn4208capdumknrj3p8s9dfo0@google.com", start: start.addingTimeInterval(86400)), title: "Anwar / Andreas", start: start.addingTimeInterval(86400), end: start.addingTimeInterval(88200), people: people)
-let tomorrowNote = try store.prepare(tomorrow, topic: topic)
+let tomorrowNote = try store.prepare(tomorrow, topic: topic).file
 try expect(tomorrowNote != renamed && tomorrowNote.lastPathComponent.hasPrefix("2026-10-23"), "recurrence gets a note only for explicitly requested occurrence")
 // Map exact Jira properties, not all SAP keys to the same project.
 for name in ["sap-support", "abs"] { try fm.createDirectory(at: root.appendingPathComponent("projects/" + name), withIntermediateDirectories: true) }
@@ -118,7 +121,7 @@ try "---\njira: [SAP-531]\n---\n".write(to: root.appendingPathComponent("project
 try "---\njira:\n  - SAP-599\n---\n".write(to: root.appendingPathComponent("projects/abs/ticket.md"), atomically: true, encoding: .utf8)
 for (key, project) in [("SAP-531", "sap-support"), ("SAP-599", "abs"), ("SAP-999", "")] {
     let event = MeetingNoteInput(identity: key, title: key + " Review", start: start, end: start, people: [])
-    let file = try store.prepare(event, topic: event.title)
+    let file = try store.prepare(event, topic: event.title).file
     try expect(try String(contentsOf: file, encoding: .utf8).contains("project: [" + project + "]"), "project mapped from existing Jira property")
 }
 // Preview and Escape cannot write or trigger join callbacks.
@@ -141,19 +144,19 @@ denied.save(allowed: false) { file in precondition(file == nil) }
 try expect(denied.failed && !denied.saving, "expired/permission-revoked guard prevents write")
 let success = MeetingNoteDraft(input: input, store: store)
 var joined = 0
-success.save(allowed: true) { file in precondition(file == renamed); joined += 1 }
+success.save(allowed: true) { file in precondition(file?.file == renamed && file?.created == false); joined += 1 }
 success.save(allowed: true) { _ in joined += 100 }
 wait { !success.saving }
 try expect(joined == 1, "repeated Return during save completes only once")
 let noKey = MeetingNoteInput(identity: nil, title: "No external ID", start: start, end: start, people: [])
-let noKeyFile = try store.prepare(noKey, topic: noKey.title)
+let noKeyFile = try store.prepare(noKey, topic: noKey.title).file
 try expect(try MeetingNoteStore.eventID(in: String(contentsOf: noKeyFile, encoding: .utf8)) == nil, "no private identifier is written as fallback")
-try expect(try store.prepare(noKey, topic: noKey.title) == noKeyFile, "missing external ID still deduplicates by date/topic")
-try expect(try store.prepare(noKey, topic: "Another topic") != noKeyFile, "blank calendar_event never matches an unrelated note")
+try expect(try store.prepare(noKey, topic: noKey.title).file == noKeyFile, "missing external ID still deduplicates by date/topic")
+try expect(try store.prepare(noKey, topic: "Another topic").file != noKeyFile, "blank calendar_event never matches an unrelated note")
 // Template failure cannot publish a partial file.
 try "broken template".write(to: root.appendingPathComponent("templates/Meeting.md"), atomically: true, encoding: .utf8)
 let invalid = MeetingNoteInput(identity: "bad-template", title: "New topic", start: start, end: start, people: [])
-do { _ = try store.prepare(invalid, topic: invalid.title); fatalError("must reject invalid template") } catch { checks += 1 }
+do { _ = try store.prepare(invalid, topic: invalid.title).file; fatalError("must reject invalid template") } catch { checks += 1 }
 try expect(!fm.fileExists(atPath: root.appendingPathComponent("meetings/2026-10-22 New topic.md").path), "template failure creates no note")
 
 // Optional real-vault fixture, deleted by the Python harness after its checker runs.
@@ -161,7 +164,7 @@ if let path = ProcessInfo.processInfo.environment["MEETING_NOTE_CHECK_VAULT"] {
     let actual = MeetingNoteStore(vault: URL(fileURLWithPath: path))
     let fixture = MeetingNoteInput(identity: MeetingNoteKey.google(externalIdentifier: "00000000000000000000000000@google.com", start: start),
                                   title: "Island note validation", start: start, end: start.addingTimeInterval(1800), people: [])
-    let file = try actual.prepare(fixture, topic: fixture.title)
+    let file = try actual.prepare(fixture, topic: fixture.title).file
     print("VAULT_FIXTURE=" + file.path)
 }
 print("PASS: \(checks) meeting-note checks")

@@ -115,12 +115,13 @@ let help = row("snip save")
 help.run(nil)
 expect(help.keepsBarOpen && Store.standard.stored == nil, "missing name saves nothing")
 board.value = "DE00 TEST\nsecond line"
-let create = row("snip save iban")
+let create = row("snip keep iban")
 expect(board.reads == 0 && stored().isEmpty, "typing does not read or save the clipboard")
 expect(create.confirmationPrompt == nil, "new name needs no replacement confirmation")
 create.run(nil)
 expect(stored().count == 1 && stored()[0].replacement == board.value && !bar.isVisible, "save exact multiline clipboard and close")
 expect(stored()[0].trigger.isEmpty && stored()[0].showsInLibrary, "new snippet has no automatic trigger and appears in library")
+expect(stored()[0].expiresAt == nil && create.subtitle == "Keep permanently", "keep explicitly creates a permanent snippet")
 let id = stored()[0].id
 board.value = "other copy"
 expect(stored()[0].replacement != board.value, "ordinary copying cannot replace saved snippet")
@@ -149,7 +150,7 @@ expect(bar.runCommandReturn() && bar.revealed, "file reveal still works")
 var original = saved; original.trigger = ";iban"; original.folder = "Banking"
 Store.standard.stored = TextSnippetSupport.encode([original])
 board.value = "replacement"
-let replace = row("snip save IBAN")
+let replace = row("snip keep IBAN")
 expect(replace.confirmationPrompt != nil && stored()[0] == original, "case-insensitive duplicate requires confirmation and changes nothing before Return")
 replace.run(nil)
 expect(stored().count == 1 && stored()[0].id == id && stored()[0].replacement == "replacement", "confirmed replacement updates one identity")
@@ -159,7 +160,7 @@ board.value = nil
 row("snip save missing").run(nil)
 expect(Store.standard.stored == beforeEmpty && bar.isVisible && QuickToolHUD.message == "Copy some text first", "empty clipboard preserves library and field")
 board.value = "new"
-let stale = row("snip save IBAN")
+let stale = row("snip keep IBAN")
 var changed = stored()[0]; changed.replacement = "edited elsewhere"
 Store.standard.stored = TextSnippetSupport.encode([changed])
 stale.run(nil)
@@ -195,6 +196,43 @@ bar.mode = .search; bar.isVisible = true
 bar.selectedEntry = CommandBarEntry(id: "action.meet.fixture", title: "Meeting", subtitle: "", icon: .symbol("video"), run: { _ in })
 bar.meetingSearch.selectedID = "action.meet.fixture"
 expect(bar.runCommandReturn() && !bar.isVisible && MeetingNoteService.shared.opened == "action.meet.fixture", "Cmd-Return closes search and opens note preview for the selected meeting")
+// Temporary saves protect permanent names and normal saves promote temporary ones.
+AppFeature.available = true
+Store.standard.stored = TextSnippetSupport.encode([saved])
+board.value = "temporary text"
+let protected = row("snip save IBAN")
+let readsBeforeBlocked = board.reads
+protected.run(nil)
+expect(protected.id == "action.snippetSave.blocked" && stored() == [saved] && board.reads == readsBeforeBlocked,
+       "temporary save cannot replace a permanent name, even with different case")
+row("snip save temp").run(nil)
+expect(stored() == [saved], "temp without name saves nothing")
+row("snip save scratch").run(nil)
+let temporary = stored().first { $0.name == "scratch" }!
+expect(temporary.expiresAt == Calendar.current.dateInterval(of: .day, for: Date())!.end,
+       "temporary save expires at local midnight")
+expect(CommandBarSnippetCommands.preview(temporary).hasPrefix("Until midnight"), "temporary result identifies expiry")
+board.value = "kept forever"
+let promote = row("snip keep SCRATCH")
+expect(promote.confirmationPrompt != nil, "promotion keeps replacement confirmation")
+promote.run(nil)
+let permanent = stored().first { $0.id == temporary.id }!
+expect(permanent.expiresAt == nil && permanent.replacement == "kept forever", "keep promotes temporary identity")
+var expired = saved; expired.expiresAt = Date().addingTimeInterval(-1)
+let beforeExpired = board.value
+CommandBarSnippetCommands.copy(expired)
+expect(board.value == beforeExpired, "stale command row cannot copy an expired snippet")
+let beforeHelp = Store.standard.stored
+row("snip keep").run(nil)
+expect(Store.standard.stored == beforeHelp && bar.isVisible, "keep without a name saves nothing")
+row("snip save temp compatibility").run(nil)
+expect(stored().contains { $0.name == "compatibility" && $0.expiresAt != nil }, "previous explicit temp spelling still saves the intended name")
+let readsBeforeKeep = board.reads
+let previewOnly = row("snip keep Permanent with spaces")
+expect(previewOnly.title == "Permanent with spaces" && previewOnly.subtitle == "Keep permanently", "keep preserves names containing spaces")
+expect(board.reads == readsBeforeKeep, "typing keep does not read clipboard")
+previewOnly.run(nil)
+expect(stored().contains { $0.name == "Permanent with spaces" && $0.expiresAt == nil }, "keep saves names with spaces permanently")
 print("Snippet commands: \(checks) checks passed")
 '''
 service = 'Sources/Vorssaint/Services/CommandBar/CommandBarService.swift'
@@ -205,6 +243,7 @@ fixture = fixture.replace('// CATALOG', 'enum Catalog {\n' + method + '\n}')
 source = declaration(catalog, 'struct CommandBarEntry:')
 for path in ['Sources/Vorssaint/Services/Snippets/TextSnippetSupport.swift',
              'Sources/Vorssaint/Core/SnippetStrings.swift',
+             'Sources/Vorssaint/Core/SnippetCaptureStrings.swift',
              'Sources/Vorssaint/Services/CommandBar/CommandBarSnippetCommands.swift']:
     source += '\n' + (repo / path).read_text()
 with tempfile.TemporaryDirectory(prefix='snippet-command-tests-') as temporary:

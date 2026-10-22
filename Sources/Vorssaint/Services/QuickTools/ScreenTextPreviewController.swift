@@ -50,9 +50,24 @@ private struct ScreenTextPreview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(L10n.shared.s.ocrCopied, systemImage: "text.viewfinder")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color(red: 0.72, green: 0.52, blue: 1))
+            HStack {
+                Label(L10n.shared.s.ocrCopied, systemImage: "text.viewfinder")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                if AppFeature.textSnippets.isAvailable {
+                    Button {
+                        ScreenTextPreviewController.shared.close()
+                        SnippetLibraryService.shared.saveCapturedText(text)
+                    } label: {
+                        Label(SnippetCaptureStrings.localized(L10n.shared.language).save, systemImage: "text.badge.plus")
+                            .font(.system(size: 11, weight: .medium))
+                            .padding(.horizontal, 9).padding(.vertical, 5)
+                            .background(NotchNeonPalette.purple.opacity(0.12), in: Capsule())
+                            .overlay(Capsule().stroke(NotchNeonPalette.purple.opacity(0.3), lineWidth: 0.6))
+                    }.buttonStyle(.plain)
+                        .accessibilityIdentifier("ocr.saveSnippet")
+                }
+            }.foregroundStyle(NotchNeonPalette.purple)
             Text(String(text.prefix(2000)))
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.9))

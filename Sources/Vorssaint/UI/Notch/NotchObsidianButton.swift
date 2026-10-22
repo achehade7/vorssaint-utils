@@ -83,3 +83,23 @@ struct NotchObsidianButton: View {
     }
 
 }
+
+/// A separate shortcut leaves quick capture and its HOME right-click unchanged.
+struct NotchMeetingNoteButton: View {
+    @ObservedObject private var notes = MeetingNoteService.shared
+    var body: some View {
+        if notes.activeNote != nil {
+            Button { notes.openActiveNote() } label: {
+                HStack(spacing: 3) {
+                    MeetingNoteMark().frame(width: 12, height: 12)
+                    Image(systemName: "doc.text").font(.system(size: 10, weight: .medium))
+                }
+                .foregroundStyle(NotchNeonPalette.purple).padding(.horizontal, 6).frame(height: 26)
+                .background(NotchNeonPalette.purple.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+            }.buttonStyle(.plain)
+                .help(MeetingNoteStrings.localized(L10n.shared.language).title)
+                .accessibilityLabel(MeetingNoteStrings.localized(L10n.shared.language).title)
+                .accessibilityIdentifier("notch.meetingNote")
+        }
+    }
+}

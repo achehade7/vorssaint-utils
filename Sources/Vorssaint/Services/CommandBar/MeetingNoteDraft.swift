@@ -30,7 +30,7 @@ final class MeetingNoteDraft: ObservableObject {
         return true
     }
 
-    func save(allowed: Bool, completion: @escaping (URL?) -> Void) {
+    func save(allowed: Bool, completion: @escaping (MeetingNoteStore.Prepared?) -> Void) {
         guard !saving, !cancelled else { return }
         guard allowed else { failed = true; completion(nil); return }
         saving = true; failed = false
