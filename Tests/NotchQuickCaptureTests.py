@@ -32,10 +32,10 @@ func drain(_ interval: TimeInterval = 0.06) {
         RunLoop.main.run(until: Date().addingTimeInterval(0.002))
     }
 }
-func waitUntil(_ predicate: () -> Bool) {
+func waitUntil(_ message: @autoclosure () -> String = "asynchronous operation finishes", _ predicate: () -> Bool) {
     let deadline = Date().addingTimeInterval(5)
     while !predicate(), Date() < deadline { drain(0.01) }
-    expect(predicate(), "asynchronous operation finishes")
+    expect(predicate(), message())
 }
 func find(_ element: AnyObject, id: String) -> AnyObject? {
     if element.accessibilityIdentifier?() == id { return element }
@@ -92,11 +92,21 @@ let host = NSHostingView(rootView: content)
 host.frame = NSRect(x: 0, y: 0, width: 440, height: 298)
 window.contentView = host
 window.makeKeyAndOrderFront(nil); app.activate(ignoringOtherApps: true)
-drain(0.15)
+func editorState() -> String {
+    let editor = textView(in: host)
+    return "key=\(window.isKeyWindow), focused=\(window.firstResponder === editor), "
+        + "textMatches=\(editor?.string == draft.text), caret=\(String(describing: editor?.selectedRange())), "
+        + "selecting=\(draft.isSelecting)"
+}
 func focusEditor() -> NSTextView {
     window.makeKeyAndOrderFront(nil)
+    waitUntil("paragraph is ready before focusing: \(editorState())") {
+        guard let editor = textView(in: host) else { return false }
+        return window.isKeyWindow && editor.window === window && editor.isEditable && editor.string == draft.text
+    }
     let editor = textView(in: host)!
-    window.makeFirstResponder(editor)
+    expect(window.makeFirstResponder(editor) && window.firstResponder === editor,
+           "paragraph accepts keyboard focus: \(editorState())")
     editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
     return editor
 }
@@ -161,9 +171,16 @@ func openTextPreview() -> (NSWindow, NSTextView) {
 
 // Actual paragraph editing and command routing, with no capture of user windows.
 draft.text = "A thought about the capture flow."
-drain(); let editor = focusEditor(); editor.undoManager?.removeAllActions()
-key(5); key(15); key(17)
-expect(draft.text.hasSuffix("grt") && !draft.isSelecting, "bare G/R/T remain ordinary typing in the paragraph")
+let editor = focusEditor(); editor.undoManager?.removeAllActions()
+var expectedTyping = draft.text
+for (code, letter): (UInt16, String) in [(5, "g"), (15, "r"), (17, "t")] {
+    key(code)
+    expectedTyping += letter
+    waitUntil("ordinary \(letter) reaches the paragraph: \(editorState())") {
+        editor.string == expectedTyping && draft.text == expectedTyping
+    }
+    expect(!draft.isSelecting, "typing \(letter) without Command does not start capture")
+}
 let menu = NSMenu(); let editItem = NSMenuItem(); menu.addItem(editItem)
 let editMenu = NSMenu(title: "Edit"); editItem.submenu = editMenu
 editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
