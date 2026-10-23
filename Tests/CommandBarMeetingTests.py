@@ -222,7 +222,29 @@ precondition(search.rows().first?.id == "action.meet.empty", "late-join window d
 for language in AppLanguage.allCases {
     precondition(!MeetingNoteStrings.started(nil, language).isEmpty && MeetingNoteStrings.started("relative-time", language).contains("relative-time"), "all languages preserve the localized relative time")
 }
-print("Meeting command: ceiling countdowns, five-minute late join in meet/note, elapsed labels, exact identity, stale actions, cancellation and permission gates passed")
+let previousTimeZone = NSTimeZone.default
+NSTimeZone.default = TimeZone(identifier: "Europe/Berlin")!
+defer { NSTimeZone.default = previousTimeZone }
+let iso = ISO8601DateFormatter()
+for (nowText, startText, prefix) in [
+    ("2026-10-23T12:04:00+02:00", "2026-10-26T11:45:00+01:00", "in 3 days"),
+    ("2026-10-23T23:30:00+02:00", "2026-10-24T01:00:00+02:00", "in 1 day"),
+    ("2026-10-24T12:00:00+02:00", "2026-10-25T12:00:00+01:00", "in 1 day"),
+    ("2026-03-28T12:00:00+01:00", "2026-03-29T12:00:00+02:00", "in 1 day"),
+    ("2026-10-24T23:30:00+02:00", "2026-10-26T00:15:00+01:00", "in 2 days"),
+    ("2026-10-31T23:00:00+01:00", "2026-11-02T00:15:00+01:00", "in 2 days"),
+    ("2026-10-23T23:30:00+02:00", "2026-10-24T00:15:00+02:00", "in 45 min"),
+    ("2026-10-23T12:04:00+02:00", "2026-10-23T14:04:00+02:00", "in 2 hr")
+] {
+    meetingClock = iso.date(from: nowText)!
+    let starts = iso.date(from: startText)!
+    search.reset()
+    NotchCalendarService.shared.events = [NotchCalendarEvent(id: "calendar-day", start: starts, end: starts.addingTimeInterval(3600))]
+    _ = search.rows(); spin()
+    precondition(search.rows()[0].subtitle.hasPrefix(prefix), "meet uses calendar-day distance across midnight and DST while preserving short countdowns: \(nowText) → \(startText)")
+    precondition(search.rows(noteFilter: "")[0].subtitle.hasPrefix(prefix), "note uses the same calendar-aware label")
+}
+print("Meeting command: calendar-day labels across midnight/DST, ceiling countdowns, five-minute late join in meet/note, elapsed labels, exact identity, stale actions, cancellation and permission gates passed")
 '''
 with tempfile.TemporaryDirectory(prefix="meeting-command-tests-") as temporary:
     folder = Path(temporary)

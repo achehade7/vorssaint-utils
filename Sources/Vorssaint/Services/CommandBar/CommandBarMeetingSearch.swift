@@ -86,7 +86,11 @@ final class CommandBarMeetingSearch {
             } else if remaining < 3600 {
                 relative = formatter.localizedString(from: DateComponents(minute: Int(ceil(remaining / 60))))
             } else {
-                relative = formatter.localizedString(for: event.start, relativeTo: now)
+                let calendar = Calendar.current
+                let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
+                                                    to: calendar.startOfDay(for: event.start)).day ?? 0
+                relative = days > 0 ? formatter.localizedString(from: DateComponents(day: days))
+                    : formatter.localizedString(for: event.start, relativeTo: now)
             }
             return CommandBarEntry(id: (noteFilter == nil ? "action.meet." : "action.note.upcoming.") + event.id,
                                     title: event.title.isEmpty ? strings.untitled : event.title,
