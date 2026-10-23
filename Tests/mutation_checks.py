@@ -853,7 +853,7 @@ MUTATIONS = [
      "with confirmations off a successful action shows nothing"),
     ("upload shortcut publishes an edited capture's original", "screenshots",
      "Sources/Vorssaint/Services/QuickTools/ScreenshotService.swift",
-     "        withholdLatestCapture()\n        let editor = ScreenshotEditorController(capture: capture)",
+     "        if withholdingLatestCapture { withholdLatestCapture() }\n        let editor = ScreenshotEditorController(capture: capture)",
      "        let editor = ScreenshotEditorController(capture: capture)",
      "a capture that went through an editor is not published"),
     ("island link click publishes at once", "screenshots",

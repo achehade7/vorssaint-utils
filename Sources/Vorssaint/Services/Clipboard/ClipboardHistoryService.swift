@@ -93,6 +93,7 @@ final class ClipboardHistoryService: ObservableObject {
     private var copyInFlight = false
     private static let pasteboardTimeout: TimeInterval = 5
     private var panel: NSPanel?
+    private let quickActionsOwner = UUID()
     private var panelResizeObserver: NSObjectProtocol?
     private var panelSizeLimit: ClipboardPanelSizeLimit?
     private var keyMonitor: Any?
@@ -429,6 +430,17 @@ final class ClipboardHistoryService: ObservableObject {
     var selectedQuickEntry: ClipboardHistoryEntry? {
         let matches = filteredQuickEntries
         return matches.first { $0.id == quickSelectionID } ?? matches.first
+    }
+
+    var canShowQuickActions: Bool {
+        quickBatchCount == 0 && editingEntryID == nil
+            && selectedQuickEntry.map { SharedToolActions.supports(entry: $0) } == true
+    }
+
+    func showQuickActions() {
+        guard canShowQuickActions, let entry = selectedQuickEntry, let panel,
+              panel.isVisible, panel.attachedSheet == nil else { return }
+        SharedToolActions.present(entry: entry, from: panel, owner: quickActionsOwner)
     }
 
     func isQuickBatchSelected(_ entry: ClipboardHistoryEntry) -> Bool {
@@ -1294,6 +1306,7 @@ final class ClipboardHistoryService: ObservableObject {
         // back with its old count the next time the window opens.
         if let panel, let sheet = panel.attachedSheet { panel.endSheet(sheet) }
         panel?.orderOut(nil)
+        SharedToolActions.cancel(owner: quickActionsOwner)
         clearQuickBatchSelection()
     }
 
@@ -1516,6 +1529,11 @@ final class ClipboardHistoryService: ObservableObject {
             // mistaken for them). The list only claims them over the search
             // field per the support predicates.
             let key = event.charactersIgnoringModifiers?.lowercased()
+            if SharedActionShortcut.matches(event),
+               !event.isARepeat, self.canShowQuickActions {
+                self.showQuickActions()
+                return nil
+            }
             if modifiers == [.command], key == "c",
                ClipboardHistoryBatch.listOwnsCopyShortcut(batchCount: self.quickBatchCount) {
                 self.copySelectedQuickEntryOnly()
@@ -1557,7 +1575,8 @@ final class ClipboardHistoryService: ObservableObject {
         let mouseEvents: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseEvents) { [weak self, weak panel] event in
             guard let self, let panel, panel.isVisible else { return event }
-            if event.window !== panel, !Self.mouseIsInside(panel) {
+            if event.window !== panel, !SharedToolActions.owns(window: event.window, owner: self.quickActionsOwner),
+               !Self.mouseIsInside(panel) {
                 self.hideHistoryWindow()
             }
             return event

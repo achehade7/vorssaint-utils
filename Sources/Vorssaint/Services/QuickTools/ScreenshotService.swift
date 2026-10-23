@@ -637,12 +637,21 @@ final class ScreenshotService: ObservableObject {
         }
     }
 
-    func openEditor(with capture: ScreenshotSelectionController.Capture) {
+    func annotate(_ image: CGImage) {
+        guard AppFeature.screenshot.isAvailable,
+              image.width > 0, image.height > 0,
+              image.width <= ScreenshotSupport.scrollingCaptureMaximumPixels / image.height else { return }
+        let capture = ScreenshotSelectionController.Capture(image: image, scale: 1,
+            anchorRect: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        openEditor(with: capture, withholdingLatestCapture: false)
+    }
+
+    func openEditor(with capture: ScreenshotSelectionController.Capture,
+                    withholdingLatestCapture: Bool = true) {
         WindowActivationPolicy.retain()
-        // Any editor may be showing the latest capture, and what it exports
-        // is no longer the stored original, so the shortcut keeps that
-        // original back until a newer capture arrives.
-        withholdLatestCapture()
+        // An external shared-action image does not own the latest capture.
+        // Existing capture/editor routes retain their upload protection.
+        if withholdingLatestCapture { withholdLatestCapture() }
         let editor = ScreenshotEditorController(capture: capture)
         editors.append(editor)
         editor.show()

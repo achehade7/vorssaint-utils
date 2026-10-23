@@ -1664,6 +1664,7 @@ def main():
           + declaration(selection, "private final class PassThroughHostingView<")
               .replace("private final class", "final class", 1))
     write("NotchCaptureKeyboard.swift", "import Foundation\nimport Carbon.HIToolbox\n\nextension NotchCaptureKeyboardContract {\n"
+          + declaration("Sources/Vorssaint/Core/SharedActionShortcut.swift", "enum SharedActionShortcut {") + "\n"
           + "final class NotchService {\nstatic var shared = NotchService()\n"
           + "var presentationWindow: NSPanel? = NSPanel()\nvar acceptsSystemFeedback = true\n"
           + "var expanded = true\nvar selected = NotchModule.captures\nvar showingAppPanel = false\n"
@@ -1674,6 +1675,7 @@ def main():
           + declaration(preview, "    enum Action {")
           + "var keyMonitor: Any?\nvar closed = false\nvar shownInNotch = true\nlet presentationID = UUID()\n"
           + "var actions: [Action] = []\nfunc perform(_ action: Action) { actions.append(action) }\n"
+          + "var actionMenus = 0\nfunc showActions() { actionMenus += 1 }\n"
           + "func close() { closed = true }\nfunc attach(_ panel: NSPanel) { installKeyMonitor(for: panel) }\n"
           + declaration(preview, "    private func installKeyMonitor(for panel:")
           + "}\nfinal class Selection {\n"

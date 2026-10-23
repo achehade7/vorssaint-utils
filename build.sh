@@ -346,6 +346,9 @@ if (( TEST )); then
         Sources/Vorssaint/Core/MediaImageStrings.swift
         Sources/Vorssaint/Core/QuickToggleStrings.swift
         Sources/Vorssaint/Core/ScreenshotStrings.swift
+        Sources/Vorssaint/Core/SharedToolActionStrings.swift
+        Sources/Vorssaint/Core/SharedActionShortcut.swift
+        Sources/Vorssaint/UI/ToolAppearance.swift
         Sources/Vorssaint/Core/RecentCaptureStrings.swift
         Sources/Vorssaint/Core/RecorderStrings.swift
         Sources/Vorssaint/Core/RecorderShareStrings.swift

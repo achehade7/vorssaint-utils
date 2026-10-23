@@ -40,7 +40,7 @@ class ScreenshotService {
 }
 class Model { var sharing = false }
 class Controller {
- var closed = false, shownInNotch = true, browsingHistory = false, systemSharing = false
+ var closed = false, shownInNotch = true, browsingHistory = false, systemSharing = false, showingActions = false
  let historyID = UUID(), presentationID = UUID(), model = Model()
 HANDLER
 }
@@ -80,6 +80,8 @@ let sharing = Controller()
 sharing.model.sharing = true; sharing.browse(target)
 sharing.model.sharing = false; sharing.systemSharing = true; sharing.browse(target)
 precondition(RecentCaptureService.shared.pending.isEmpty, "sharing must hold its current capture")
+sharing.systemSharing = false; sharing.showingActions = true; sharing.browse(target)
+precondition(RecentCaptureService.shared.pending.isEmpty, "shared actions must retain their immutable source capture")
 print("Screenshot conveyor: selection, single pending load, click-away race, replacement race, missing image and share protection passed")
 '''
 with tempfile.TemporaryDirectory(prefix="island-conveyor-test-") as temporary:

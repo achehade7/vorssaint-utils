@@ -114,7 +114,7 @@ func reopen() {
     island.openQuickCapture(); draft.open()
     _ = focusEditor(); drain()
 }
-func key(_ code: UInt16, _ flags: NSEvent.ModifierFlags = [], target: NSWindow? = nil) {
+func key(_ code: UInt16, _ flags: NSEvent.ModifierFlags = [], target: NSWindow? = nil, characters supplied: String? = nil) {
     let destination = target ?? window
     let characters: String
     switch code {
@@ -125,12 +125,14 @@ func key(_ code: UInt16, _ flags: NSEvent.ModifierFlags = [], target: NSWindow? 
     case 1: characters = "s"
     case 6: characters = "z"
     case 13: characters = "w"
+    case 40: characters = "k"
+    case 50: characters = "`"
     default: characters = "\r"
     }
     for type in [NSEvent.EventType.keyDown, .keyUp] {
         let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: destination.windowNumber,
-            context: nil, characters: characters, charactersIgnoringModifiers: characters,
+            context: nil, characters: supplied ?? characters, charactersIgnoringModifiers: supplied ?? characters,
             isARepeat: false, keyCode: code)!
         app.sendEvent(event)
     }
@@ -145,7 +147,7 @@ func fit(_ state: String) {
     drain(); host.layoutSubtreeIfNeeded()
     expect(host.fittingSize.height <= 298, state + " fits the island height")
     let surface = window.convertToScreen(host.convert(host.bounds, to: nil)).insetBy(dx: -1, dy: -1)
-    for id in ["text", "region", "ocr", "undo", "discard", "save", "count"] {
+    for id in ["text", "region", "ocr", "undo", "discard", "save", "count", "actions"] {
         guard let element = find(host, id: "notch.quickCapture." + id),
               let frame = element.accessibilityFrame?(), !frame.isEmpty else {
             preconditionFailure(state + " has visible " + id)
@@ -339,6 +341,171 @@ expect(draft.text.isEmpty && draft.images.isEmpty && draft.extracts.isEmpty && d
 expect(window.isVisible, "main Cmd-W is consumed before native Window Close")
 let afterMainClose = try String(contentsOf: note, encoding: .utf8)
 expect(afterMainClose == afterPreviewSave, "main-editor Cmd-W does not publish the discarded draft")
+
+// The actual shared menu hands selected or complete editor text to Snip without
+// changing capture state, native undo, or the clipboard.
+func actionWindow() -> NSWindow? {
+    app.windows.first { $0.isVisible && $0.title == SharedToolActionStrings.actions }
+}
+func nativeViews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(nativeViews) }
+func chooseAction(_ action: SharedToolActions.Action) {
+    waitUntil("capture opens the shared action menu") { actionWindow() != nil }
+    let menu = actionWindow()!
+    let button = nativeViews(menu.contentView!).compactMap { $0 as? NSButton }.first { $0.title == action.title }
+    expect(button != nil, "shared capture menu offers " + action.title)
+    button!.performClick(nil); drain()
+    expect(actionWindow() == nil, "choosing a shared action closes only the menu")
+}
+final class ForwardedCommandK: NSObject {
+    var count = 0
+    @objc func receive(_ sender: Any?) { count += 1 }
+}
+let forwardedCommandK = ForwardedCommandK()
+let commandK = NSMenuItem(title: "Fixture editor command", action: #selector(ForwardedCommandK.receive(_:)), keyEquivalent: "k")
+commandK.target = forwardedCommandK
+editMenu.addItem(commandK)
+reopen()
+let actionText = "Private thought\nselected café 👩🏽‍💻\nKeep the whole capture"
+draft.text = actionText
+let actionEditor = focusEditor()
+actionEditor.undoManager?.removeAllActions()
+actionEditor.insertText(" + correction", replacementRange: actionEditor.selectedRange())
+actionEditor.breakUndoCoalescing(); drain()
+let correctedThought = actionText + " + correction"
+let selectedText = "selected café 👩🏽‍💻"
+let chosenRange = (actionEditor.string as NSString).range(of: selectedText)
+actionEditor.setSelectedRange(chosenRange)
+let savesBeforeActions = island.signals.count
+let clipboardBeforeActions = NSPasteboard.general.changeCount
+key(50, .option)
+waitUntil { actionWindow() != nil }
+expect(draft.text == correctedThought && island.showingQuickCapture, "Option-backtick retains the complete draft")
+actionEditor.insertText(" later edit", replacementRange: NSRange(location: (actionEditor.string as NSString).length, length: 0))
+actionEditor.breakUndoCoalescing(); drain()
+chooseAction(.saveSnippet)
+expect(SnippetLibraryService.shared.received.last == selectedText,
+       "Snip receives the exact selected Unicode snapshot even after the source changes")
+expect(draft.text == correctedThought + " later edit" && island.signals.count == savesBeforeActions,
+       "sending selected text to Snip does not save or change the capture")
+_ = focusEditor(); key(6, .command)
+expect(draft.text == correctedThought, "shared text handoff preserves the most recent native undo")
+key(6, .command)
+expect(draft.text == actionText, "shared text handoff preserves preceding typing undo")
+_ = focusEditor()
+expect(press(host, id: "notch.quickCapture.actions"), "thought Actions button is reachable")
+chooseAction(.saveSnippet)
+expect(SnippetLibraryService.shared.received.last == actionText,
+       "without a selection the thought Actions button sends the whole current field to Snip")
+_ = focusEditor(); actionEditor.setSelectedRange(chosenRange)
+key(40, .command)
+expect(actionWindow() == nil && forwardedCommandK.count == 1,
+       "Cmd-K reaches the normal application command from the thought editor")
+let captureBridge = nativeViews(host).compactMap { $0 as? NotchQuickCaptureUndoKeys.Area }.first!
+for modifiers: NSEvent.ModifierFlags in [[], .command, .control, [.option, .shift], [.option, .control], [.option, .command]] {
+    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+        characters: "`", charactersIgnoringModifiers: "`", isARepeat: false, keyCode: 50)!
+    expect(!captureBridge.handle(event) && actionWindow() == nil,
+           "only exact Option-backtick belongs to capture Actions")
+}
+key(50)
+expect(draft.text == (actionText as NSString).replacingCharacters(in: chosenRange, with: "`"),
+       "ordinary backtick remains native text input")
+key(6, .command)
+expect(draft.text == actionText, "ordinary backtick keeps native undo")
+// Exercise the rewritten accent as actual keyboard events sent only to this
+// fixture process. Its tag must survive AppKit delivery to the local monitor.
+_ = focusEditor(); app.activate(ignoringOtherApps: true)
+actionEditor.breakUndoCoalescing()
+let accentSource = CGEventSource(stateID: .privateState)!
+accentSource.userData = SharedActionShortcut.accentEventTag
+for down in [true, false] {
+    let event = CGEvent(keyboardEventSource: accentSource, virtualKey: 50, keyDown: down)!
+    event.flags = .maskAlternate
+    expect(!SharedActionShortcut.matches(NSEvent(cgEvent: event)!), "tagged accent is excluded from local Actions")
+    event.postToPid(ProcessInfo.processInfo.processIdentifier)
+}
+drain()
+for down in [true, false] {
+    let event = CGEvent(keyboardEventSource: nil, virtualKey: 14, keyDown: down)!
+    event.flags = []
+    event.postToPid(ProcessInfo.processInfo.processIdentifier)
+}
+waitUntil("tagged grave accent reaches native capture text: \(actionEditor.string)") {
+    actionEditor.string == actionText + "è" && draft.text == actionText + "è"
+}
+expect(actionWindow() == nil, "remapped Control-Option-backtick composes an accent without opening Actions")
+actionEditor.breakUndoCoalescing(); key(6, .command)
+expect(draft.text == actionText, "native grave-accent typing keeps text undo")
+actionEditor.setSelectedRange(chosenRange)
+key(50, .option); waitUntil { actionWindow() != nil }
+key(53, target: actionWindow()!)
+expect(actionWindow() == nil && window.firstResponder === actionEditor
+       && actionEditor.selectedRange() == chosenRange && draft.text == actionText,
+       "menu Escape restores the thought focus and selection without hiding the capture")
+actionEditor.setMarkedText("漢", selectedRange: NSRange(location: 1, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+let compositionKey = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .option,
+    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+    characters: "`", charactersIgnoringModifiers: "`", isARepeat: false, keyCode: 50)!
+expect(actionEditor.hasMarkedText() && !captureBridge.handle(compositionKey) && actionEditor.hasMarkedText(),
+       "capture Actions forwards the composition key without altering the marked text")
+key(50, .option)
+expect(actionWindow() == nil && window.firstResponder === actionEditor,
+       "native input-method handling retains ownership of Option-backtick")
+actionEditor.unmarkText(); drain()
+let sheet = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 140, height: 80), styleMask: [.titled], backing: .buffered, defer: false)
+window.beginSheet(sheet)
+key(50, .option)
+expect(actionWindow() == nil, "an attached sheet prevents capture Option-backtick routing")
+window.endSheet(sheet); sheet.orderOut(nil); _ = focusEditor()
+selectorWindow.makeKeyAndOrderFront(nil); selectorWindow.makeFirstResponder(foreignEditor)
+key(50, .option, target: selectorWindow)
+expect(actionWindow() == nil, "Option-backtick in an unrelated editor cannot open capture actions")
+selectorWindow.orderOut(nil); _ = focusEditor()
+key(50, .option); waitUntil { actionWindow() != nil }
+let textBeforeHide = draft.text
+draft.hide()
+draft.showTextActions(in: window, editor: actionEditor) // A queued button request arriving after hide.
+drain()
+expect(actionWindow() == nil && draft.text == textBeforeHide, "hiding closes owned actions and retains the draft")
+reopen(); key(50, .option); waitUntil { actionWindow() != nil }
+draft.discard()
+draft.showTextActions(in: window, editor: actionEditor) // A queued request cannot outlive its draft.
+drain()
+expect(actionWindow() == nil && draft.text.isEmpty, "discard closes owned actions and invalidates the draft")
+
+reopen(); draft.text = "Thought retained with OCR actions"
+recognition = .success("OCR selected phrase\nKeep the OCR remainder")
+draft.receiveTextImage(image, capturedAt: clock); waitUntil { draft.pendingCount == 0 }; drain()
+let (actionPreview, actionOCR) = openTextPreview()
+let ocrBeforeActions = draft.extracts[0]
+actionOCR.setSelectedRange((actionOCR.string as NSString).range(of: "selected phrase"))
+key(40, .command, target: actionPreview)
+expect(actionWindow() == nil && forwardedCommandK.count == 2,
+       "Cmd-K reaches the normal application command from the OCR editor")
+key(50, .option, target: actionPreview)
+waitUntil { actionWindow() != nil }
+expect(currentPreviewWindow() === actionPreview, "OCR preview remains open while its shared actions are visible")
+chooseAction(.saveSnippet)
+expect(SnippetLibraryService.shared.received.last == "selected phrase"
+       && draft.extracts[0].text == ocrBeforeActions.text && draft.extracts[0].id == ocrBeforeActions.id,
+       "OCR Option-backtick sends only the selected text to Snip and retains the editable extract")
+actionPreview.makeKeyAndOrderFront(nil); actionPreview.makeFirstResponder(actionOCR)
+actionOCR.setSelectedRange(NSRange(location: (actionOCR.string as NSString).length, length: 0))
+expect(press(actionPreview.contentView!, id: "notch.quickCapture.previewActions"), "OCR preview Actions button is reachable")
+chooseAction(.before)
+expect(ClipboardDiffService.shared.received.last?.0 == ocrBeforeActions.text,
+       "OCR Actions button snapshots the whole current field without a selection")
+actionPreview.makeKeyAndOrderFront(nil); actionPreview.makeFirstResponder(actionOCR)
+key(50, .option, target: actionPreview); waitUntil { actionWindow() != nil }
+key(13, .command, target: actionPreview)
+waitUntil { currentPreviewWindow() == nil }
+expect(actionWindow() == nil && draft.extracts[0].text == ocrBeforeActions.text
+       && draft.text == "Thought retained with OCR actions", "closing the OCR editor cancels its menu and retains the capture")
+expect(NSPasteboard.general.changeCount == clipboardBeforeActions && island.signals.count == savesBeforeActions,
+       "thought and OCR shared actions never copy automatically or publish the capture")
+draft.discard()
 
 // The icon's secondary-click listener remains limited to its own visible window.
 window.orderOut(nil)

@@ -6,7 +6,7 @@ import SwiftUI
 
 final class ScreenCompareBackground: NSView {
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
+        ToolAppearance.background.setFill()
         bounds.fill()
     }
 }
@@ -33,10 +33,10 @@ final class ScreenCompareSourceView: NSView {
         label.font = .systemFont(ofSize: 12, weight: .semibold)
         label.textColor = accent
         detail.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        detail.textColor = .secondaryLabelColor
+        detail.textColor = ToolAppearance.secondaryText
         detail.lineBreakMode = .byTruncatingMiddle
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for button in [capture, open] { button.bezelStyle = .texturedRounded; button.controlSize = .small }
+        for button in [capture, open] { ToolAppearance.style(button) }
         open.toolTip = openTitle
         open.setAccessibilityLabel(openTitle)
         for view in [label, detail, capture, open] {
@@ -135,7 +135,7 @@ final class ScreenCompareCanvas: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        (NSColor.textBackgroundColor.blended(withFraction: 0.04, of: .labelColor) ?? .controlBackgroundColor).setFill()
+        ToolAppearance.surface.setFill()
         bounds.fill()
         guard before != nil || after != nil else {
             let symbol = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: nil)!
@@ -143,15 +143,15 @@ final class ScreenCompareCanvas: NSView {
             symbol.draw(in: symbolRect, from: .zero, operation: .sourceOver, fraction: 0.4, respectFlipped: true, hints: nil)
             let paragraph = NSMutableParagraphStyle(); paragraph.alignment = .center
             (placeholder as NSString).draw(in: NSRect(x: 36, y: bounds.midY + 2, width: bounds.width - 72, height: 64),
-                withAttributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: paragraph])
+                withAttributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: ToolAppearance.secondaryText, .paragraphStyle: paragraph])
             return
         }
         let rect = imageRect
         // A light checker gives transparent images a stable visible backing.
-        NSColor.controlBackgroundColor.setFill(); rect.fill()
+        ToolAppearance.raised.setFill(); rect.fill()
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: rect).addClip()
-        NSColor.separatorColor.withAlphaComponent(0.2).setFill()
+        ToolAppearance.border.withAlphaComponent(0.45).setFill()
         for y in stride(from: rect.minY, to: rect.maxY, by: 12) {
             for x in stride(from: rect.minX, to: rect.maxX, by: 12) where Int((x - rect.minX) / 12 + (y - rect.minY) / 12) % 2 == 0 {
                 NSRect(x: x, y: y, width: 12, height: 12).fill()
@@ -180,7 +180,7 @@ final class ScreenCompareCanvas: NSView {
         } else if let image = before ?? after { drawImage(image, in: rect) }
         let paragraph = NSMutableParagraphStyle(); paragraph.alignment = .left
         let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-            .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: paragraph]
+            .foregroundColor: ToolAppearance.secondaryText, .paragraphStyle: paragraph]
         if before != nil { (beforeTitle as NSString).draw(at: CGPoint(x: rect.minX, y: rect.minY - 19), withAttributes: attributes) }
         if let after, before == nil || (before?.width == after.width && before?.height == after.height) {
             let width = (afterTitle as NSString).size(withAttributes: attributes).width

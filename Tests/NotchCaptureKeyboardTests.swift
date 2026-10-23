@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Vorssaint
 
 import Foundation
+import CoreGraphics
 import Carbon.HIToolbox
 
 /// Production monitor bodies run against plain value doubles. No windows are
@@ -48,7 +49,9 @@ enum NotchCaptureKeyboardContract {
         let keyCode: UInt16
         var modifierFlags: ModifierFlags = []
         var type: EventType = .keyDown
+        var isARepeat = false
         var charactersIgnoringModifiers: String?
+        var cgEvent: CGEvent?
         static var handler: ((Self) -> Self?)?
         static var monitoredTypes: EventTypeMask = []
         static func addLocalMonitorForEvents(matching: EventTypeMask, handler: @escaping (Self) -> Self?) -> Any? {
@@ -93,6 +96,12 @@ enum NotchCaptureKeyboardTests {
                 let forwarded = Event.handler?(event) != nil
                 suite.expect(forwarded == !accepts && preview.actions == (accepts ? [action] : []), label)
             }
+            let menuCount = preview.actionMenus
+            let menu = Event(window: panel, keyCode: UInt16(kVK_ANSI_Grave), modifierFlags: .option,
+                             charactersIgnoringModifiers: "`")
+            suite.expect((Event.handler?(menu) == nil) == accepts
+                         && preview.actionMenus == menuCount + (accepts ? 1 : 0),
+                         "shared actions follow the same preview ownership boundary")
             let wasClosed = preview.closed
             preview.actions = []
             let close = Event(window: panel, keyCode: UInt16(kVK_ANSI_W), modifierFlags: .command,
@@ -144,6 +153,29 @@ enum NotchCaptureKeyboardTests {
                                    charactersIgnoringModifiers: "w")
         suite.expect(Event.handler?(unrelatedClose) != nil && !preview.closed,
                      "Command W leaves unrelated windows alone")
+        for (character, key, opens) in [("`", kVK_ANSI_Grave, true), ("~", kVK_ANSI_Grave, true),
+                                       ("`", kVK_ANSI_K, false), ("k", kVK_ANSI_K, false)] {
+            for flags in 0..<32 {
+                let before = preview.actionMenus
+                let accepts = opens && flags & ~Event.ModifierFlags.capsLock.rawValue
+                    == Event.ModifierFlags.option.rawValue
+                let event = Event(window: panel, keyCode: UInt16(key), modifierFlags: .init(rawValue: flags),
+                                  charactersIgnoringModifiers: character)
+                suite.expect((Event.handler?(event) == nil) == accepts
+                             && preview.actionMenus == before + (accepts ? 1 : 0),
+                             "Actions uses physical backtick with exact Option and ignores additional modifiers")
+            }
+        }
+        let repeatedActions = Event(window: panel, keyCode: UInt16(kVK_ANSI_Grave), modifierFlags: .option,
+                                    isARepeat: true, charactersIgnoringModifiers: "`")
+        let beforeRepeatedActions = preview.actionMenus
+        suite.expect(Event.handler?(repeatedActions) != nil && preview.actionMenus == beforeRepeatedActions,
+                     "holding Option-backtick does not repeatedly reopen Actions")
+        let accentEvent = CGEvent(source: nil)!
+        accentEvent.setIntegerValueField(.eventSourceUserData, value: Contract.SharedActionShortcut.accentEventTag)
+        let accent = Event(window: panel, keyCode: UInt16(kVK_ANSI_Grave), modifierFlags: .option, cgEvent: accentEvent)
+        suite.expect(Event.handler?(accent) != nil && preview.actionMenus == beforeRepeatedActions,
+                     "remapped grave accent passes through preview without opening Actions")
         for (character, key, closes) in [("w", kVK_ANSI_W, true), ("W", kVK_ANSI_W, true),
                                          ("w", kVK_ANSI_Z, true), ("z", kVK_ANSI_W, false),
                                          ("é", kVK_ANSI_W, false), ("ц", kVK_ANSI_W, true),

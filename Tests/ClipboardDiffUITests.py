@@ -94,6 +94,22 @@ func capture(_ window: NSWindow, _ name: String, size: NSSize = NSSize(width: 98
             let start = input.convert(input.textContainerOrigin, to: content).x
             let gutterEdge = input.gutter!.convert(input.gutter!.bounds, to: content).maxX
             expect(start >= gutterEdge, "\(name) first source character and placeholder stay clear of the gutter in \(label)")
+            if name == "correction" || name == "shared-actions" {
+                // These short fixtures leave the middle of each pane empty.
+                // Check the rendered surface, not only invisible layout frames.
+                let point = input.convert(NSPoint(x: input.visibleRect.midX, y: input.visibleRect.midY), to: content)
+                let x = Int(point.x * CGFloat(bitmap.pixelsWide) / content.bounds.width)
+                let y = Int((content.bounds.height - point.y) * CGFloat(bitmap.pixelsHigh) / content.bounds.height)
+                let actual = bitmap.colorAt(x: x, y: y)!.usingColorSpace(.sRGB)!
+                let panes = editors(window)
+                let dividerX = (panes[0].enclosingScrollView!.frame.maxX + panes[1].enclosingScrollView!.frame.minX) / 2
+                let border = bitmap.colorAt(x: Int(dividerX * CGFloat(bitmap.pixelsWide) / content.bounds.width), y: y)!.usingColorSpace(.sRGB)!
+                // Compare pixels from the same native bitmap so the display's
+                // color profile/HDR conversion cannot alter the expectation.
+                let contrast = abs(actual.redComponent - border.redComponent) +
+                    abs(actual.greenComponent - border.greenComponent) + abs(actual.blueComponent - border.blueComponent)
+                expect(contrast > 0.08, "\(name) editor surface is not obscured by its divider in \(label)")
+            }
         }
         expect(editors(window).allSatisfy { $0.visibleRect.width > 150 && $0.visibleRect.height > 150 },
                "\(name) keeps both editors useful in \(label) appearance")
@@ -473,8 +489,96 @@ drain()
 expect(editors(reopened).allSatisfy { $0.string.isEmpty } && summary(reopened).stringValue == strings.missing,
        "closing cancels pending formatting/comparison delivery and discards unsaved edits")
 reopened.close()
+
+// Shared actions pass owned text directly, retaining both native drafts and undo.
+let handedBefore = "{\n  \"invoiceId\": \"INV-2048\",\n  \"status\": \"pending\",\n  \"amount\": 120.00\n}\r\n"
+let handedAfter = "{\n  \"invoiceId\": \"INV-2048\",\n  \"status\": \"posted\",\n  \"amount\": 128.50\n}\r\n"
+service.receive(handedBefore, asBefore: true, name: "Invoice payload")
+let handed = window(), handedInputs = editors(handed)
+expect(handedInputs[0].string == handedBefore && handedInputs[1].string.isEmpty && settled(handed),
+       "a new handoff starts its requested side with exact content and an empty opposite side")
+let handoffUndo = handedInputs[0].undoManager!
+handoffUndo.removeAllActions()
+handed.makeFirstResponder(handedInputs[1])
+edit(handedInputs[1], handedAfter)
+handedInputs[1].breakUndoCoalescing()
+expect(settled(handed) && handoffUndo.canUndo, "opposite pane has its own accepted native edit")
+let oppositeSelection = NSRange(location: 4, length: 6)
+handedInputs[1].setSelectedRange(oppositeSelection)
+let incoming = handedBefore.replacingOccurrences(of: "pending", with: "reviewed")
+func respondToReplacement(_ window: NSWindow, replacing: Bool) {
+    expect(until { window.attachedSheet != nil }, "occupied pane presents a replacement sheet")
+    let sheet = window.attachedSheet!
+    let title = replacing ? SharedToolActionStrings.replace : SharedToolActionStrings.cancel
+    let control = views(sheet.contentView!).compactMap { $0 as? NSButton }.first { $0.title == title }
+    expect(control != nil, "replacement sheet has the localized requested action")
+    control!.performClick(nil)
+    expect(until { window.attachedSheet == nil }, "replacement decision closes its sheet")
+}
+service.receive(incoming, asBefore: true, name: "Review payload")
+respondToReplacement(handed, replacing: false)
+expect(handedInputs[0].string == handedBefore && handedInputs[1].string == handedAfter,
+       "Cancel retains both complete comparison drafts")
+expect(views(handed.contentView!).compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("Invoice payload") },
+       "Cancel retains the current source name")
+handoffUndo.undo()
+expect(handedInputs[1].string.isEmpty && handedInputs[0].string == handedBefore,
+       "cancelled handoff leaves the opposite pane's preceding edit undoable")
+handoffUndo.redo()
+expect(settled(handed) && handedInputs[1].string == handedAfter, "cancelled handoff preserves native redo")
+handedInputs[1].setSelectedRange(oppositeSelection)
+service.receive(incoming, asBefore: true, name: "Review payload")
+respondToReplacement(handed, replacing: true)
+expect(settled(handed) && handedInputs[0].string == incoming && handedInputs[1].string == handedAfter,
+       "confirmed handoff replaces only the requested pane")
+expect(window() === handed && editors(handed)[0] === handedInputs[0] && editors(handed)[1] === handedInputs[1],
+       "handoff keeps the same window and native editor instances")
+expect(handedInputs[1].selectedRange() == oppositeSelection, "handoff preserves the opposite selection")
+handoffUndo.undo()
+expect(handedInputs[0].string == handedBefore && handedInputs[1].string == handedAfter && settled(handed),
+       "one native undo restores replaced content without changing the opposite pane")
+expect(views(handed.contentView!).compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("Invoice payload") },
+       "native undo also restores the replaced source identity")
+handoffUndo.undo()
+expect(handedInputs[0].string == handedBefore && handedInputs[1].string.isEmpty,
+       "the opposite edit remains next in the unchanged undo history")
+handoffUndo.redo(); handoffUndo.redo()
+expect(handedInputs[0].string == incoming && handedInputs[1].string == handedAfter && settled(handed),
+       "native redo restores both independent operations")
+expect(views(handed.contentView!).compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("Review payload") },
+       "native redo restores the incoming source identity")
+let actionName = handoffUndo.undoActionName
+service.receive(incoming, asBefore: true, name: "Duplicate delivery")
+expect(handed.attachedSheet == nil && handoffUndo.undoActionName == actionName,
+       "identical content does not prompt or add an undo action")
+service.receive("stale request", asBefore: true, name: nil)
+expect(until { handed.attachedSheet != nil }, "late-completion guard begins with an occupied-side prompt")
+edit(handedInputs[0], "newer native edit")
+respondToReplacement(handed, replacing: true)
+expect(handedInputs[0].string == "newer native edit" && handedInputs[1].string == handedAfter,
+       "a pending replacement cannot overwrite text changed since its confirmation snapshot")
+service.receive("disabled while pending", asBefore: true, name: "Unavailable source")
+AppFeature.enabled = false
+respondToReplacement(handed, replacing: true)
+expect(handedInputs[0].string == "newer native edit" && handedInputs[1].string == handedAfter,
+       "disabling clipboard history while confirmation is pending prevents the handoff")
+AppFeature.enabled = true
+handed.close()
+service.receive(handedAfter, asBefore: false, name: "Updated payload")
+let receivedAfter = window(), receivedInputs = editors(receivedAfter)
+expect(receivedInputs[0].string.isEmpty && receivedInputs[1].string == handedAfter && settled(receivedAfter),
+       "a new After handoff leaves Before empty")
+service.receive(handedBefore, asBefore: true, name: "Invoice payload")
+expect(receivedAfter.attachedSheet == nil && receivedInputs[0].string == handedBefore && receivedInputs[1].string == handedAfter && settled(receivedAfter),
+       "an empty target accepts a handoff immediately and preserves opposite text")
+capture(receivedAfter, "shared-actions")
+receivedInputs[0].undoManager!.undo()
+expect(receivedInputs[0].string.isEmpty && receivedInputs[1].string == handedAfter,
+       "handoff into an empty pane remains natively undoable")
+receivedAfter.close()
 AppFeature.enabled = false
 service.show()
+service.receive("disabled handoff", asBefore: true, name: nil)
 expect(!app.windows.contains { $0.isVisible && $0.title == strings.title }, "disabled feature cannot open")
 expect(NSPasteboard.general.changeCount == clipboardChangeCount, "comparison and editing never mutate the system clipboard")
 print("PASS: \(checks) native clipboard diff checks; screenshots: /tmp/clipboard-diff-*.png")
@@ -491,6 +595,8 @@ with tempfile.TemporaryDirectory(prefix='clipboard-diff-ui-') as directory:
     formatter.write_text('import Foundation\n' + support[start:end])
     sources = [
         'Core/ClipboardDiffStrings.swift',
+        'Core/SharedToolActionStrings.swift',
+        'UI/ToolAppearance.swift',
         'Services/Clipboard/ClipboardDiff.swift',
         'Services/Clipboard/ClipboardDiffEditor.swift',
         'Services/Clipboard/ClipboardDiffService.swift',

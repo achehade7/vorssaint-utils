@@ -144,6 +144,7 @@ final class CommandBarService: ObservableObject {
     private let hotkey = QuickToolHotkey(id: 20)
     private var rowHotkeys: [QuickToolHotkey] = []
     private var panel: NSPanel?
+    private let contentActionsOwner = UUID()
     private var keyMonitor: Any?
     private var outsideClickMonitor: Any?
     private var localClickMonitor: Any?
@@ -572,6 +573,7 @@ final class CommandBarService: ObservableObject {
     }
 
     func hide() {
+        SharedToolActions.cancel(owner: contentActionsOwner)
         // Cleared first, so the island closing under the bar does not close it again.
         let presented = presentation
         presentation = .window
@@ -2145,7 +2147,7 @@ final class CommandBarService: ObservableObject {
 
     /// A row by its id, from the catalog first and from what is on screen
     /// otherwise: the clipboard and the calculator build rows that never enter
-    /// the index, and ⌘K on one of those used to open an empty list.
+    /// the index, and Actions on one of those used to open an empty list.
     func entry(withID id: String) -> CommandBarEntry? {
         entriesByID[id] ?? rows.first { $0.id == id }
     }
@@ -2172,13 +2174,16 @@ final class CommandBarService: ObservableObject {
         return actions(for: entry)
     }
 
-    /// Whether the selected row has anything to offer here. A clipboard item
-    /// is a passing thing with no lasting id, so it is not in the index and
-    /// there is nothing to pin, name or hide about it: the bar says so by not
-    /// offering the panel at all instead of opening an empty one.
+    private func clipboardEntry(for entry: CommandBarEntry) -> ClipboardHistoryEntry? {
+        guard entry.id.hasPrefix("clipboard."),
+              let id = UUID(uuidString: String(entry.id.dropFirst("clipboard.".count))) else { return nil }
+        return ClipboardHistoryService.shared.entries.first { $0.id == id }
+    }
+
     var canOpenActions: Bool {
-        guard case .search = mode, let entry = selectedEntry, !entry.isAnswer,
-              entriesByID[entry.id] != nil else { return false }
+        guard case .search = mode, let entry = selectedEntry, !entry.isAnswer else { return false }
+        if let item = clipboardEntry(for: entry) { return SharedToolActions.supports(entry: item) }
+        guard entriesByID[entry.id] != nil else { return false }
         return !actions(for: entry).isEmpty
     }
 
@@ -2621,6 +2626,12 @@ final class CommandBarService: ObservableObject {
 
     func openActions() {
         guard canOpenActions, let entry = selectedEntry else { return }
+        if let item = clipboardEntry(for: entry) {
+            let source = presentation == .island ? NotchService.shared.presentationWindow : panel
+            guard let source else { return }
+            SharedToolActions.present(entry: item, from: source, owner: contentActionsOwner)
+            return
+        }
         savedQuery = query
         mode = .actions(entryID: entry.id)
         actionIndex = 0
@@ -3598,6 +3609,11 @@ final class CommandBarService: ObservableObject {
 
             let navigationModifiers = event.modifierFlags
                 .intersection([.command, .option, .shift, .control])
+            if !event.isARepeat, panel.attachedSheet == nil,
+               SharedActionShortcut.matches(event) {
+                self.openActions()
+                return nil
+            }
             if event.modifierFlags.contains(.command) {
                 // `characters` is the Command-aware key macOS resolves: it
                 // follows remapped Latin layouts and supplies the positional
@@ -3619,9 +3635,6 @@ final class CommandBarService: ObservableObject {
                     self.hide()
                     SettingsRouter.shared.page = .commandBar
                     appDelegate()?.openSettingsWindow()
-                    return nil
-                case "k":
-                    self.openActions()
                     return nil
                 case "p":
                     if let entry = self.selectedEntry, !entry.isAnswer,
@@ -3737,7 +3750,8 @@ final class CommandBarService: ObservableObject {
         let mouseEvents: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseEvents) { [weak self, weak panel] event in
             guard let self, let panel, panel.isVisible else { return event }
-            if event.window !== panel, !Self.mouseIsInside(panel) {
+            if event.window !== panel, !Self.mouseIsInside(panel),
+               !SharedToolActions.owns(window: event.window, owner: self.contentActionsOwner) {
                 self.hide()
             }
             return event

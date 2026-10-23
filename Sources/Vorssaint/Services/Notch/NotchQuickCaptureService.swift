@@ -69,6 +69,7 @@ final class NotchQuickCaptureService: ObservableObject {
     private var attempt: Store.AppendAttempt?
     private var selection: ScreenshotSelectionController?
     private var selectionToken: UUID?
+    private let textActionsOwner = UUID()
     private var dragIsText = false
     private var editorHidden = false
     private var groupGeneration = UUID()
@@ -119,6 +120,7 @@ final class NotchQuickCaptureService: ObservableObject {
     }
 
     func stop() {
+        cancelTextActions()
         cleanup?.cancel(); cleanup = nil
         cancelSelection()
         keys.stop()
@@ -211,6 +213,7 @@ final class NotchQuickCaptureService: ObservableObject {
     }
 
     func hide() {
+        cancelTextActions()
         editorHidden = true
         pauseSelection()
         keys.stop()
@@ -226,6 +229,7 @@ final class NotchQuickCaptureService: ObservableObject {
     }
 
     private func resetDraft() {
+        cancelTextActions()
         draftID = nil
         cancelSelection(); keys.stop()
         operations.removeAll(); pendingCount = 0; meetingToken = nil
@@ -244,6 +248,20 @@ final class NotchQuickCaptureService: ObservableObject {
         if error != .uncertain { error = nil }
         advanceSave()
     }
+
+    func showTextActions(in window: NSWindow, editor: NSTextView) {
+        guard !editorHidden, draftID != nil, canEdit, window.isVisible, window.attachedSheet == nil,
+              editor.window === window, !editor.isFieldEditor, !editor.hasMarkedText() else { return }
+        let source = editor.string as NSString
+        let range = editor.selectedRange()
+        let snapshot = range.length > 0 && range.location != NSNotFound && NSMaxRange(range) <= source.length
+            ? source.substring(with: range) : editor.string
+        guard !snapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        SharedToolActions.present(content: .text(snapshot), title: String(snapshot.prefix(80)),
+                                  from: window, owner: textActionsOwner)
+    }
+
+    func cancelTextActions() { SharedToolActions.cancel(owner: textActionsOwner) }
 
     private func advanceSave() {
         guard saving, !publishing else { return }

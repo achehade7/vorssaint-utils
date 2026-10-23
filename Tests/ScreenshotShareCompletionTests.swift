@@ -108,6 +108,7 @@ enum ScreenshotShareCompletionTests {
 
     class State {
         typealias UserDefaults = SharingDefaults
+        var showingActions = false
         var systemSharing = false
         var pointerInside = false
         var onClose: () -> Void = {}
@@ -589,6 +590,19 @@ enum ScreenshotShareCompletionTests {
         edited.uploadLastCapture()
         suite.expect(edited.uploads == 1 && edited.uploadedCaptures == [5],
                      "a newer capture can be uploaded again")
+        let externalEditor = Uploader()
+        externalEditor.beginLatestCapture(91)
+        let latestID = externalEditor.latestCaptureID
+        let latestToken = externalEditor.latestCaptureToken
+        externalEditor.openEditor(with: 77, withholdingLatestCapture: false)
+        suite.expect(externalEditor.latestCaptureID == latestID
+                     && externalEditor.latestCaptureToken == latestToken
+                     && !externalEditor.latestCaptureWithheld && !ScreenshotLastCaptureStore.isWithheld,
+                     "shared-action annotation preserves the unrelated latest capture and its upload identity")
+        externalEditor.editorDidClose(externalEditor.editors[0])
+        externalEditor.uploadLastCapture()
+        suite.expect(externalEditor.uploadedCaptures == [91],
+                     "closing an external annotation leaves the original latest capture shareable")
         let discarded = Uploader()
         discarded.beginLatestCapture(6)
         discarded.discardLatestCapture(UUID())

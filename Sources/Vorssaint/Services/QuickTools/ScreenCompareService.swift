@@ -58,10 +58,59 @@ final class ScreenCompareService: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Accepts an immutable image directly; the other side remains available
+    /// for comparison and neither the clipboard nor a source file is read.
+    func receive(_ image: CGImage, asBefore: Bool, name: String? = nil) {
+        guard AppFeature.screenshot.isAvailable else { return }
+        show()
+        guard ScreenCompareModel.validSize(width: image.width, height: image.height) else {
+            fail(strings[.tooLarge]); return
+        }
+        let current = asBefore ? before : after
+        guard let current, current !== image else {
+            acceptHandoff(image, name: name, isBefore: asBefore)
+            return
+        }
+        guard let panel, panel.attachedSheet == nil else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = SharedToolActionStrings.replaceTitle(side: asBefore ? diffStrings.before : diffStrings.after)
+        alert.informativeText = SharedToolActionStrings.replaceMessage
+        alert.addButton(withTitle: SharedToolActionStrings.replace)
+        alert.addButton(withTitle: SharedToolActionStrings.cancel)
+        alert.beginSheetModal(for: panel) { [weak self, weak panel] response in
+            guard response == .alertFirstButtonReturn, let self, let panel,
+                  self.panel === panel, panel.isVisible, AppFeature.screenshot.isAvailable,
+                  (asBefore ? self.before : self.after) === current else { return }
+            self.acceptHandoff(image, name: name, isBefore: asBefore)
+        }
+    }
+
+    private func acceptHandoff(_ image: CGImage, name: String?, isBefore: Bool) {
+        if isBefore {
+            beforeLoadGeneration += 1
+            beforeLoad?.cancel(); beforeLoadWork?.cancel()
+            beforeLoad = nil; beforeLoadWork = nil
+            cancelPendingCapture()
+        } else {
+            afterLoadGeneration += 1
+            afterLoad?.cancel(); afterLoadWork?.cancel()
+            afterLoad = nil; afterLoadWork = nil
+            cancelCapture()
+        }
+        // Region capture is a shared pair operation: a late Before can clear
+        // After, so it cannot outlive this newer explicit handoff.
+        let selector = selection
+        selection = nil
+        selector?.cancel()
+        accept(image, name: name ?? "\(image.width) × \(image.height)", isBefore: isBefore)
+    }
+
     private func makePanel() {
         let panel = ScreenComparePanel(contentRect: NSRect(x: 0, y: 0, width: 960, height: 650),
             styleMask: [.titled, .closable, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = strings[.title]
+        ToolAppearance.configure(panel)
         panel.isReleasedWhenClosed = false
         panel.level = .floating
         panel.hidesOnDeactivate = false
@@ -70,9 +119,9 @@ final class ScreenCompareService: NSObject, NSWindowDelegate {
         panel.delegate = self
         let content = ScreenCompareBackground()
         let beforeSource = ScreenCompareSourceView(title: diffStrings.before, captureTitle: strings[.captureBefore],
-            openTitle: strings[.openImage], accent: .systemOrange)
+            openTitle: strings[.openImage], accent: ToolAppearance.before)
         let afterSource = ScreenCompareSourceView(title: diffStrings.after, captureTitle: strings[.captureAfter],
-            openTitle: strings[.openImage], accent: .systemBlue)
+            openTitle: strings[.openImage], accent: ToolAppearance.after)
         beforeSource.capture.target = self; beforeSource.capture.action = #selector(captureBefore)
         afterSource.capture.target = self; afterSource.capture.action = #selector(captureAfter)
         beforeSource.open.target = self; beforeSource.open.action = #selector(openBefore)
@@ -103,20 +152,20 @@ final class ScreenCompareService: NSObject, NSWindowDelegate {
         tolerance.controlSize = .small; tolerance.identifier = .init("screenCompare.tolerance")
         tolerance.toolTip = strings[.toleranceHint]; tolerance.setAccessibilityLabel(strings[.tolerance])
         let toleranceLabel = NSTextField(labelWithString: strings[.tolerance])
-        toleranceLabel.font = .systemFont(ofSize: 11); toleranceLabel.textColor = .secondaryLabelColor
+        toleranceLabel.font = .systemFont(ofSize: 11); toleranceLabel.textColor = ToolAppearance.secondaryText
         let toleranceValue = NSTextField(labelWithString: "0")
         toleranceValue.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
         toleranceValue.alignment = .right
         let clear = NSButton(image: NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: strings[.clear])!,
             target: self, action: #selector(clear))
-        clear.bezelStyle = .texturedRounded; clear.controlSize = .small
+        ToolAppearance.style(clear)
         clear.toolTip = strings[.clear]; clear.setAccessibilityLabel(strings[.clear])
         clear.identifier = .init("screenCompare.clear")
         let controls = NSStackView(views: [mode, wipe, toleranceLabel, tolerance, toleranceValue, clear])
         controls.orientation = .horizontal; controls.spacing = 10; controls.alignment = .centerY
         let summary = NSTextField(wrappingLabelWithString: strings[.empty])
         summary.font = .systemFont(ofSize: 11)
-        summary.textColor = .secondaryLabelColor
+        summary.textColor = ToolAppearance.secondaryText
         summary.maximumNumberOfLines = 2
         summary.identifier = .init("screenCompare.summary")
         for view in [sourceRow, canvas, controls, summary] {
@@ -410,7 +459,7 @@ final class ScreenCompareService: NSObject, NSWindowDelegate {
         beforeSource?.detail.toolTip = beforeName; afterSource?.detail.toolTip = afterName
         beforeSource?.capture.isEnabled = captureTask == nil
         afterSource?.capture.isEnabled = region != nil && before != nil && captureTask == nil
-        summary?.textColor = errorMessage == nil ? .secondaryLabelColor : .labelColor
+        summary?.textColor = errorMessage == nil ? ToolAppearance.secondaryText : ToolAppearance.text
         summary?.font = .systemFont(ofSize: 11, weight: errorMessage == nil ? .regular : .medium)
         if let errorMessage { summary?.stringValue = errorMessage }
         else if isComparing || captureTask != nil || beforeLoad != nil || afterLoad != nil { summary?.stringValue = diffStrings.loading }

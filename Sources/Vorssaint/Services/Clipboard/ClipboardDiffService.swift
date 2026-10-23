@@ -13,6 +13,10 @@ final class ClipboardDiffService: NSObject, NSWindowDelegate, NSTextViewDelegate
     private var generation = 0
     private var beforeText: ClipboardDiffTextView?
     private var afterText: ClipboardDiffTextView?
+    private var beforeLabel: NSTextField?
+    private var afterLabel: NSTextField?
+    private var beforeName: String?
+    private var afterName: String?
     private var summary: NSTextField?
     private var position: NSTextField?
     private var previousButton: NSButton?
@@ -22,6 +26,74 @@ final class ClipboardDiffService: NSObject, NSWindowDelegate, NSTextViewDelegate
     private var comparison: ClipboardDiff.Comparison?
     private var currentChange: Int?
     private var synchronizing = false
+
+    /// Direct handoff from a selected item. The other draft and clipboard stay intact.
+    func receive(_ text: String, asBefore: Bool, name: String?) {
+        guard AppFeature.clipboardHistory.isAvailable else { return }
+        guard let panel, let editor = asBefore ? beforeText : afterText else {
+            show(pair: .init(older: asBefore ? text : "", newer: asBefore ? "" : text),
+                 beforeName: asBefore ? name : nil, afterName: asBefore ? nil : name)
+            if !asBefore { self.panel?.makeFirstResponder(afterText) }
+            return
+        }
+        panel.makeKeyAndOrderFront(nil)
+        guard panel.attachedSheet == nil else { return }
+        guard editor.string != text else { return }
+        let previous = editor.string
+        if previous.isEmpty {
+            replace(editor, with: text, name: name)
+            return
+        }
+        let diff = ClipboardDiffStrings.localized(L10n.shared.language)
+        let alert = NSAlert()
+        alert.messageText = SharedToolActionStrings.replaceTitle(side: asBefore ? diff.before : diff.after)
+        alert.informativeText = SharedToolActionStrings.replaceMessage
+        alert.addButton(withTitle: SharedToolActionStrings.replace)
+        alert.addButton(withTitle: SharedToolActionStrings.cancel)
+        alert.beginSheetModal(for: panel) { [weak self, weak panel, weak editor] response in
+            guard response == .alertFirstButtonReturn, AppFeature.clipboardHistory.isAvailable,
+                  let self, let panel, let editor,
+                  self.panel === panel, editor.string == previous else { return }
+            self.replace(editor, with: text, name: name)
+        }
+    }
+
+    private func replace(_ editor: ClipboardDiffTextView, with text: String, name: String?) {
+        // End typing coalescence before the separate native replacement action.
+        beforeText?.breakUndoCoalescing(); afterText?.breakUndoCoalescing()
+        let undo = editor.undoManager
+        undo?.beginUndoGrouping()
+        editor.insertText(text, replacementRange: NSRange(location: 0, length: (editor.string as NSString).length))
+        editor.breakUndoCoalescing()
+        setSourceName(name, isBefore: editor.isBefore, undo: undo)
+        undo?.endUndoGrouping()
+        undo?.setActionName(SharedToolActionStrings.replace)
+        panel?.makeFirstResponder(editor)
+    }
+
+    private func setSourceName(_ name: String?, isBefore: Bool, undo: UndoManager?) {
+        let previous = isBefore ? beforeName : afterName
+        guard previous != name else { return }
+        undo?.registerUndo(withTarget: self) { [weak undo, weak panel] service in
+            guard let panel, service.panel === panel else { return }
+            service.setSourceName(previous, isBefore: isBefore, undo: undo)
+        }
+        if isBefore { beforeName = name } else { afterName = name }
+        if let label = isBefore ? beforeLabel : afterLabel { Self.setLabel(label, isBefore: isBefore, name: name) }
+    }
+
+    private static func setLabel(_ label: NSTextField, isBefore: Bool, name: String?) {
+        let strings = ClipboardDiffStrings.localized(L10n.shared.language)
+        let text = (isBefore ? "−  " + strings.before : "+  " + strings.after) + (name.map { " · " + $0 } ?? "")
+        let title = NSMutableAttributedString(string: text, attributes: [.foregroundColor: ToolAppearance.secondaryText])
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingMiddle
+        title.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: title.length))
+        title.addAttribute(.foregroundColor, value: isBefore ? ToolAppearance.before : ToolAppearance.after,
+                           range: NSRange(location: 0, length: 1))
+        label.attributedStringValue = title
+        label.toolTip = text
+    }
 
     func show(pair suppliedPair: ClipboardDiff.Pair? = nil, beforeName: String? = nil, afterName: String? = nil) {
         guard AppFeature.clipboardHistory.isAvailable else { return }
@@ -38,52 +110,47 @@ final class ClipboardDiffService: NSObject, NSWindowDelegate, NSTextViewDelegate
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.minSize = NSSize(width: 620, height: 360)
         panel.delegate = self
+        ToolAppearance.configure(panel)
         let content = ClipboardDiffBackground()
-        let beforeLabel = NSTextField(labelWithString: "−  " + strings.before + (beforeName.map { " · " + $0 } ?? ""))
-        let afterLabel = NSTextField(labelWithString: "+  " + strings.after + (afterName.map { " · " + $0 } ?? ""))
-        for (label, color) in [(beforeLabel, NSColor.systemOrange), (afterLabel, NSColor.systemBlue)] {
-            label.font = .systemFont(ofSize: 13, weight: .semibold)
+        let beforeLabel = NSTextField(labelWithString: ""), afterLabel = NSTextField(labelWithString: "")
+        for label in [beforeLabel, afterLabel] {
+            label.font = .systemFont(ofSize: 11, weight: .medium)
+            label.textColor = ToolAppearance.secondaryText
             label.lineBreakMode = .byTruncatingMiddle
             label.maximumNumberOfLines = 1
             label.cell?.usesSingleLineMode = true
-            label.toolTip = label.stringValue
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            let title = NSMutableAttributedString(string: label.stringValue)
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineBreakMode = .byTruncatingMiddle
-            title.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: title.length))
-            title.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: 1))
-            label.attributedStringValue = title
         }
+        Self.setLabel(beforeLabel, isBefore: true, name: beforeName)
+        Self.setLabel(afterLabel, isBefore: false, name: afterName)
         let (beforeScroll, beforeText) = Self.editor(label: strings.before, isBefore: true)
         let (afterScroll, afterText) = Self.editor(label: strings.after, isBefore: false)
         let format = NSButton(title: "JSON", target: self, action: #selector(formatJSON(_:)))
-        format.bezelStyle = .texturedRounded
-        format.controlSize = .small
-        format.font = .systemFont(ofSize: 11)
+        ToolAppearance.style(format)
         format.toolTip = strings.before + " + " + strings.after + ": " + strings.formatJSON
         format.identifier = NSUserInterfaceItemIdentifier("diff.formatJSON")
         format.setAccessibilityLabel(format.toolTip)
         beforeText.placeholder = strings.pasteHint; afterText.placeholder = strings.pasteHint
-        let topRule = NSBox(), middleRule = NSBox(), bottomRule = NSBox()
-        for rule in [topRule, middleRule, bottomRule] { rule.boxType = .separator }
-        // NSBox infers separator orientation from its initial frame. A zero
-        // frame supplies a horizontal intrinsic height and collapses the panes.
-        middleRule.setFrameSize(NSSize(width: 1, height: panel.frame.height))
+        let toolbarRule = ClipboardDiffRule(), topRule = ClipboardDiffRule()
+        let middleRule = ClipboardDiffRule(), bottomRule = ClipboardDiffRule()
         let summary = NSTextField(wrappingLabelWithString: strings.missing)
         summary.identifier = NSUserInterfaceItemIdentifier("diff.summary")
-        summary.font = .systemFont(ofSize: 12)
-        summary.textColor = .secondaryLabelColor
+        summary.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        summary.textColor = ToolAppearance.text
         summary.maximumNumberOfLines = 2
+        let hint = NSTextField(labelWithString: SharedToolActionStrings.editableHint)
+        hint.font = .systemFont(ofSize: 10)
+        hint.textColor = ToolAppearance.secondaryText
+        hint.lineBreakMode = .byTruncatingTail
+        hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let position = NSTextField(labelWithString: "")
         position.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        position.textColor = .secondaryLabelColor
+        position.textColor = ToolAppearance.secondaryText
         position.alignment = .center
         let previous = NSButton(image: NSImage(systemSymbolName: "chevron.up", accessibilityDescription: strings.previousChange)!, target: self, action: #selector(previousChange))
         let next = NSButton(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: strings.nextChange)!, target: self, action: #selector(nextChange))
         for (button, label, identifier) in [(previous, strings.previousChange, "diff.previous"), (next, strings.nextChange, "diff.next")] {
-            button.bezelStyle = .texturedRounded
-            button.controlSize = .small
+            ToolAppearance.style(button)
             button.imagePosition = .imageOnly
             button.toolTip = label
             button.setAccessibilityLabel(label)
@@ -92,20 +159,33 @@ final class ClipboardDiffService: NSObject, NSWindowDelegate, NSTextViewDelegate
         }
         previous.keyEquivalent = "\u{f700}"; previous.keyEquivalentModifierMask = [.option, .command]
         next.keyEquivalent = "\u{f701}"; next.keyEquivalentModifierMask = [.option, .command]
-        for view in [beforeLabel, afterLabel, beforeScroll, afterScroll, topRule, middleRule, bottomRule, summary, position, previous, next, format] {
+        for view in [beforeLabel, afterLabel, beforeScroll, afterScroll, toolbarRule, topRule, middleRule, bottomRule, summary, hint, position, previous, next, format] {
             view.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(view)
         }
         NSLayoutConstraint.activate([
-            beforeLabel.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
-            beforeLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            summary.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
+            summary.centerYAnchor.constraint(equalTo: content.topAnchor, constant: 26),
+            summary.trailingAnchor.constraint(lessThanOrEqualTo: format.leadingAnchor, constant: -16),
+            next.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+            next.centerYAnchor.constraint(equalTo: summary.centerYAnchor),
+            next.widthAnchor.constraint(equalToConstant: 28),
+            previous.trailingAnchor.constraint(equalTo: next.leadingAnchor, constant: -6),
+            previous.centerYAnchor.constraint(equalTo: next.centerYAnchor),
+            previous.widthAnchor.constraint(equalToConstant: 28),
+            format.trailingAnchor.constraint(equalTo: previous.leadingAnchor, constant: -8),
+            format.centerYAnchor.constraint(equalTo: summary.centerYAnchor),
+            toolbarRule.topAnchor.constraint(equalTo: content.topAnchor, constant: 51),
+            toolbarRule.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            toolbarRule.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            toolbarRule.heightAnchor.constraint(equalToConstant: 1),
+            beforeLabel.centerYAnchor.constraint(equalTo: toolbarRule.bottomAnchor, constant: 20),
+            beforeLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
             beforeLabel.trailingAnchor.constraint(lessThanOrEqualTo: beforeScroll.trailingAnchor, constant: -16),
             afterLabel.topAnchor.constraint(equalTo: beforeLabel.topAnchor),
-            afterLabel.leadingAnchor.constraint(equalTo: afterScroll.leadingAnchor, constant: 20),
-            afterLabel.trailingAnchor.constraint(lessThanOrEqualTo: format.leadingAnchor, constant: -12),
-            format.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            format.centerYAnchor.constraint(equalTo: beforeLabel.centerYAnchor),
-            topRule.topAnchor.constraint(equalTo: content.topAnchor, constant: 47),
+            afterLabel.leadingAnchor.constraint(equalTo: afterScroll.leadingAnchor, constant: 18),
+            afterLabel.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -18),
+            topRule.topAnchor.constraint(equalTo: toolbarRule.bottomAnchor, constant: 40),
             topRule.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             topRule.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             topRule.heightAnchor.constraint(equalToConstant: 1),
@@ -115,7 +195,7 @@ final class ClipboardDiffService: NSObject, NSWindowDelegate, NSTextViewDelegate
             beforeScroll.bottomAnchor.constraint(equalTo: bottomRule.topAnchor),
             middleRule.leadingAnchor.constraint(equalTo: beforeScroll.trailingAnchor),
             middleRule.widthAnchor.constraint(equalToConstant: 1),
-            middleRule.topAnchor.constraint(equalTo: topRule.bottomAnchor),
+            middleRule.topAnchor.constraint(equalTo: toolbarRule.bottomAnchor),
             middleRule.bottomAnchor.constraint(equalTo: bottomRule.topAnchor),
             afterScroll.leadingAnchor.constraint(equalTo: middleRule.trailingAnchor),
             afterScroll.trailingAnchor.constraint(equalTo: content.trailingAnchor),
@@ -124,18 +204,12 @@ final class ClipboardDiffService: NSObject, NSWindowDelegate, NSTextViewDelegate
             bottomRule.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             bottomRule.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             bottomRule.heightAnchor.constraint(equalToConstant: 1),
-            bottomRule.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -52),
-            summary.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
-            summary.centerYAnchor.constraint(equalTo: bottomRule.bottomAnchor, constant: 26),
-            summary.trailingAnchor.constraint(lessThanOrEqualTo: position.leadingAnchor, constant: -12),
-            next.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            next.centerYAnchor.constraint(equalTo: summary.centerYAnchor),
-            next.widthAnchor.constraint(equalToConstant: 28),
-            previous.trailingAnchor.constraint(equalTo: next.leadingAnchor, constant: -6),
-            previous.centerYAnchor.constraint(equalTo: next.centerYAnchor),
-            previous.widthAnchor.constraint(equalToConstant: 28),
-            position.trailingAnchor.constraint(equalTo: previous.leadingAnchor, constant: -8),
-            position.centerYAnchor.constraint(equalTo: next.centerYAnchor),
+            bottomRule.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -40),
+            hint.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            hint.centerYAnchor.constraint(equalTo: bottomRule.bottomAnchor, constant: 20),
+            hint.trailingAnchor.constraint(lessThanOrEqualTo: position.leadingAnchor, constant: -12),
+            position.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+            position.centerYAnchor.constraint(equalTo: hint.centerYAnchor),
             position.widthAnchor.constraint(equalToConstant: 56),
         ])
         panel.contentView = content
@@ -145,6 +219,8 @@ final class ClipboardDiffService: NSObject, NSWindowDelegate, NSTextViewDelegate
         }
         self.panel = panel
         self.beforeText = beforeText; self.afterText = afterText
+        self.beforeLabel = beforeLabel; self.afterLabel = afterLabel
+        self.beforeName = beforeName; self.afterName = afterName
         self.summary = summary; self.position = position
         previousButton = previous; nextButton = next
         formatButton = format
@@ -163,6 +239,7 @@ final class ClipboardDiffService: NSObject, NSWindowDelegate, NSTextViewDelegate
     private static func editor(label: String, isBefore: Bool) -> (NSScrollView, ClipboardDiffTextView) {
         let scroll = NSScrollView()
         scroll.borderType = .noBorder
+        scroll.backgroundColor = ToolAppearance.surface
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
         let text = ClipboardDiffTextView(isBefore: isBefore, label: label)
@@ -367,6 +444,8 @@ final class ClipboardDiffService: NSObject, NSWindowDelegate, NSTextViewDelegate
         formatWork?.cancel(); formatWork = nil
         NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: nil)
         beforeText = nil; afterText = nil; summary = nil; position = nil
+        beforeLabel = nil; afterLabel = nil
+        beforeName = nil; afterName = nil
         previousButton = nil; nextButton = nil; comparison = nil; currentChange = nil
         formatButton = nil; formatError = nil
         panel?.contentView = nil
@@ -382,7 +461,14 @@ private final class ClipboardDiffPanel: NSPanel {
 private final class ClipboardDiffBackground: NSView {
     override var isOpaque: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
+        ToolAppearance.background.setFill()
         dirtyRect.fill()
+    }
+}
+
+private final class ClipboardDiffRule: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        ToolAppearance.border.setFill()
+        dirtyRect.intersection(bounds).fill()
     }
 }

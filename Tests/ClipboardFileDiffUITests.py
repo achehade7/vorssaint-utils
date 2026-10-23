@@ -104,8 +104,10 @@ for size in [NSSize(width: 980, height: 650), NSSize(width: 620, height: 440)] {
     let jsonFrame = json.convert(json.bounds, to: content)
     expect(beforeFrame.width > 100 && afterFrame.width > 100, "filenames retain useful header width")
     expect(beforeFrame.height <= 20 && afterFrame.height <= 20, "long filenames remain one line clear of the editor divider")
-    expect(abs(jsonFrame.midY - beforeFrame.midY) <= 2, "JSON remains aligned with the header baseline")
-    expect(beforeFrame.maxX < afterFrame.minX && afterFrame.maxX + 8 <= jsonFrame.minX, "long filenames never collide with the other pane or JSON")
+    let summaryFrame = summary(named).convert(summary(named).bounds, to: content)
+    expect(abs(jsonFrame.midY - summaryFrame.midY) <= 2, "JSON remains aligned with the toolbar status")
+    expect(beforeFrame.maxX < afterFrame.minX && !beforeFrame.intersects(jsonFrame) && !afterFrame.intersects(jsonFrame),
+           "long filenames never collide with the other pane or toolbar controls")
     expect(beforeLabel.lineBreakMode == .byTruncatingMiddle && afterLabel.lineBreakMode == .byTruncatingMiddle, "filename truncation retains meaningful ends")
     expect(beforeLabel.toolTip?.contains(beforeName) == true && afterLabel.toolTip?.contains(afterName) == true, "full filenames remain available in tooltips")
 }
@@ -135,7 +137,7 @@ with tempfile.TemporaryDirectory(prefix='clipboard-file-diff-ui-') as temporary:
     end = support.index('/// How large a picture', start)
     formatter = folder / 'ClipboardJSONFormat.swift'
     formatter.write_text('import Foundation\n' + support[start:end])
-    sources = ['Core/ClipboardDiffStrings.swift', 'Services/Clipboard/ClipboardDiff.swift',
+    sources = ['Core/ClipboardDiffStrings.swift', 'Core/SharedToolActionStrings.swift', 'UI/ToolAppearance.swift', 'Services/Clipboard/ClipboardDiff.swift',
                'Services/Clipboard/ClipboardDiffEditor.swift', 'Services/Clipboard/ClipboardDiffService.swift']
     binary = folder / 'editor'
     subprocess.run(['swiftc', *[str(repo / 'Sources/Vorssaint' / source) for source in sources], str(formatter), str(main), '-o', str(binary)], check=True)

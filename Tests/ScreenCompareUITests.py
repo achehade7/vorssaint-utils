@@ -35,6 +35,7 @@ final class ScreenshotSelectionController {
     var protectedWindowIDs: Set<CGWindowID> { [666] }
     init(freeze: Bool, includePointer: Bool, showLastRegion: Bool, hideVorssaintWindows: Bool, protectedWindowIDs: @escaping () -> Set<CGWindowID> = { [] }, purpose: String?, mode: Mode, requiresDraggedRegion: Bool) { Self.hidesContentWindows = hideVorssaintWindows }
     func begin(completion: @escaping (Outcome) -> Void) { completion(Self.next) }
+    func cancel() {}
 }
 enum ScreenshotCaptureEngine {
     static var next: CGImage?
@@ -229,6 +230,45 @@ service.captureBefore()
 expect(until { service.hasPendingCapture }, "changed-scale fixture starts with a saved Before")
 service.captureAfter()
 expect(summary() == strings[.displayChanged] && !service.hasPendingCapture, "display scale change requires a new Before instead of clamping the region")
+service.clear(); service.show()
+service.receive(before, asBefore: true, name: "handoff-before")
+service.receive(after, asBefore: false, name: "handoff-after")
+expect(until { canvas().overlay != nil }, "direct image handoffs produce a comparison")
+expect(canvas().before === before && canvas().after === after, "direct handoffs retain exact image identities on both sides")
+service.receive(after, asBefore: true)
+expect(until { window().attachedSheet != nil }, "replacing a nonempty different image requires confirmation")
+expect(canvas().before === before && canvas().after === after, "opening replacement confirmation changes neither image")
+window().endSheet(window().attachedSheet!, returnCode: .alertSecondButtonReturn)
+expect(until { window().attachedSheet == nil }, "cancel closes replacement confirmation")
+expect(canvas().before === before, "cancel keeps the target image")
+service.receive(after, asBefore: true)
+expect(until { window().attachedSheet != nil }, "feature-disable fixture opens confirmation")
+AppFeature.enabled = false
+window().endSheet(window().attachedSheet!, returnCode: .alertFirstButtonReturn)
+drain()
+expect(canvas().before === before && canvas().after === after, "disabling screenshot capture before confirming keeps both images")
+AppFeature.enabled = true
+service.receive(after, asBefore: true)
+expect(until { window().attachedSheet != nil }, "replacement can be retried after cancellation")
+window().endSheet(window().attachedSheet!, returnCode: .alertFirstButtonReturn)
+expect(until { canvas().before === after }, "confirmed handoff replaces only the chosen side")
+expect(canvas().after === after, "confirmed Before handoff preserves After")
+service.receive(after, asBefore: true)
+expect(window().attachedSheet == nil, "handing off the same image does not prompt again")
+service.receive(before, asBefore: true)
+expect(until { window().attachedSheet != nil }, "stale-target fixture opens confirmation")
+let staleSheet = window().attachedSheet!
+service.clear()
+window().endSheet(staleSheet, returnCode: .alertFirstButtonReturn)
+drain()
+expect(canvas().before == nil && canvas().after == nil, "late confirmation cannot repopulate a cleared comparison")
+service.loadImage(beforeURL, isBefore: true)
+service.receive(after, asBefore: true)
+service.loadImage(afterURL, isBefore: false)
+expect(until { canvas().after != nil && canvas().overlay != nil }, "opposite-side import remains independent of a direct handoff")
+drain(0.3)
+expect(canvas().before === after, "older target-side import cannot overwrite the newer direct image")
+capture("shared-handoff", size: NSSize(width: 660, height: 430))
 service.show()
 service.loadImage(afterURL, isBefore: false)
 window().close()
@@ -248,7 +288,7 @@ with tempfile.TemporaryDirectory(prefix='screen-compare-ui-') as directory:
     main = folder / 'main.swift'
     main.write_text(fixture)
     executable = folder / 'check'
-    sources = ['Core/ClipboardDiffStrings.swift', 'Core/ScreenCompareStrings.swift',
+    sources = ['Core/ClipboardDiffStrings.swift', 'Core/ScreenCompareStrings.swift', 'Core/SharedToolActionStrings.swift', 'UI/ToolAppearance.swift',
                'Services/QuickTools/ScreenCompareModel.swift', 'Services/QuickTools/ScreenCompareService.swift',
                'UI/ScreenCompare/ScreenCompareView.swift']
     subprocess.run(['swiftc', *[str(repo / 'Sources/Vorssaint' / source) for source in sources], str(main), '-o', str(executable)], check=True)

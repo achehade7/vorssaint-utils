@@ -42,6 +42,8 @@ final class ScreenshotQuickPreviewController {
     private let shareFile: () -> URL?
     private let shareAnchor = ShelfSharePickerAnchor.Anchor()
     private var systemSharing = false
+    private let actionsOwner = UUID()
+    private var showingActions = false
     private let onClose: () -> Void
     private let model = ScreenshotQuickPreviewModel()
     private var panel: ScreenshotQuickPreviewPanel?
@@ -112,6 +114,7 @@ final class ScreenshotQuickPreviewController {
             deleteSharedLink: { [weak self] in self?.deleteSharedLink() },
             showQR: { [weak self] in self?.showQRResult() },
             copyText: { [weak self] in self?.copyText() },
+            showActions: { [weak self] in self?.showActions() },
             dismiss: { [weak self] in self?.close() },
             hoverChanged: { [weak self] inside in self?.hoverChanged(inside) },
             showsDismissButton: presentationPolicy.showsDismissButton,
@@ -179,7 +182,7 @@ final class ScreenshotQuickPreviewController {
     }
 
     private func browse(_ entry: RecentCaptureEntry) {
-        guard !closed, shownInNotch, !browsingHistory, !model.sharing, !systemSharing,
+        guard !closed, shownInNotch, !browsingHistory, !model.sharing, !systemSharing, !showingActions,
               entry.id != historyID else { return }
         browsingHistory = true
         RecentCaptureService.shared.screenshot(for: entry) { [weak self] capture in
@@ -262,6 +265,8 @@ final class ScreenshotQuickPreviewController {
     func close() {
         guard !closed else { return }
         closed = true
+        SharedToolActions.cancel(owner: actionsOwner)
+        showingActions = false
         dismissWork?.cancel()
         dismissWork = nil
         if let keyMonitor {
@@ -275,6 +280,27 @@ final class ScreenshotQuickPreviewController {
             NotchService.shared.removeCapture(id: presentationID)
         }
         onClose()
+    }
+
+    private func showActions() {
+        guard !closed, !showingActions, !model.sharing, !systemSharing,
+              !model.deletingShare, !browsingHistory,
+              AppFeature.screenshot.isAvailable else { return }
+        let window: NSWindow?
+        if shownInNotch {
+            guard NotchService.shared.isCaptureVisible(id: presentationID) else { return }
+            window = NotchService.shared.presentationWindow
+        } else { window = panel }
+        guard let window, window.isVisible, window.attachedSheet == nil else { return }
+        dismissWork?.cancel(); dismissWork = nil
+        showingActions = true
+        SharedToolActions.present(content: .image(capture.image), title: strings.pageTitle,
+                                  from: window, owner: actionsOwner,
+                                  onAnnotate: { [weak self] in self?.perform(.edit) }) { [weak self] in
+            guard let self, !self.closed else { return }
+            self.showingActions = false
+            self.scheduleAutoDismiss()
+        }
     }
 
     private func perform(_ requested: Action) {
@@ -462,7 +488,7 @@ final class ScreenshotQuickPreviewController {
     }
 
     private func scheduleAutoDismiss() {
-        guard !closed, !pointerInside, !systemSharing, !model.sharing, !model.deletingShare,
+        guard !closed, !pointerInside, !systemSharing, !showingActions, !model.sharing, !model.deletingShare,
               let dismissDuration = autoDismissDuration
         else { return }
         dismissWork?.cancel()
@@ -479,6 +505,10 @@ final class ScreenshotQuickPreviewController {
                   !ShortcutCapture.isCapturing else { return event }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let key = Int(event.keyCode)
+            if !event.isARepeat, SharedActionShortcut.matches(event) {
+                self.showActions()
+                return nil
+            }
             if flags.intersection([.command, .option, .shift, .control]) == .command {
                 let text = event.charactersIgnoringModifiers?.folding(
                     options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
@@ -558,6 +588,7 @@ private struct ScreenshotQuickPreviewView: View {
     let deleteSharedLink: () -> Void
     let showQR: () -> Void
     let copyText: () -> Void
+    var showActions: () -> Void = {}
     let dismiss: () -> Void
     let hoverChanged: (Bool) -> Void
     let showsDismissButton: Bool
@@ -625,6 +656,7 @@ private struct ScreenshotQuickPreviewView: View {
             }
             if !embedded { Spacer(minLength: 4) }
             if embedded {
+                sharedActionsButton
                 Button {
                     perform(.pin)
                 } label: {
@@ -651,8 +683,11 @@ private struct ScreenshotQuickPreviewView: View {
             Image(systemName: "xmark")
                 .font(.system(size: 11, weight: .semibold))
                 .frame(width: 24, height: 24)
-                .background(.regularMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
+                .background {
+                    if embedded { Circle().fill(.regularMaterial) }
+                    else { Circle().fill(Color(nsColor: ToolAppearance.raised)) }
+                }
+                .overlay(Circle().strokeBorder(embedded ? Color.primary.opacity(0.12) : Color(nsColor: ToolAppearance.border), lineWidth: 1))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -682,13 +717,34 @@ private struct ScreenshotQuickPreviewView: View {
             Image(systemName: symbol)
                 .font(.system(size: 11, weight: .semibold))
                 .frame(width: 24, height: 24)
-                .background(.regularMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
+                .foregroundStyle(Color(nsColor: ToolAppearance.text))
+                .background(Color(nsColor: ToolAppearance.raised), in: Circle())
+                .overlay(Circle().strokeBorder(Color(nsColor: ToolAppearance.border), lineWidth: 1))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .screenshotSafeHelp(title)
         .accessibilityLabel(title)
+    }
+
+    private var sharedActionsButton: some View {
+        Button(action: showActions) {
+            HStack(spacing: 4) {
+                Text(SharedToolActionStrings.actions)
+                Text(SharedActionShortcut.displayString).font(.system(size: 9, weight: .medium, design: .monospaced))
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .lineLimit(1).minimumScaleFactor(0.75)
+            .padding(.horizontal, embedded ? 6 : 8)
+            .frame(height: embedded ? 28 : 24)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(embedded ? Color.primary : Color(nsColor: ToolAppearance.accent))
+        .background(embedded ? Color.white.opacity(0.08) : Color(nsColor: ToolAppearance.raised),
+                    in: RoundedRectangle(cornerRadius: 7))
+        .screenshotSafeHelp(SharedToolActionStrings.actions + "  (" + SharedActionShortcut.displayString + ")")
+        .accessibilityLabel(SharedToolActionStrings.actions)
+        .accessibilityIdentifier("screenshot.sharedActions")
     }
 
     private var preview: some View {
@@ -722,11 +778,11 @@ private struct ScreenshotQuickPreviewView: View {
                             .scaledToFit()
                             .frame(maxWidth: showsConveyor ? 290 : 320, maxHeight: showsConveyor ? 118 : 138)
                             .frame(width: embedded ? nil : 320, height: showsConveyor ? 118 : 138)
-                            .background(showsConveyor ? Color.black : Color.black.opacity(0.12))
+                            .background(embedded ? (showsConveyor ? Color.black : Color.black.opacity(0.12)) : Color(nsColor: ToolAppearance.background))
                             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                                    .strokeBorder(embedded ? Color.primary.opacity(0.12) : Color(nsColor: ToolAppearance.border), lineWidth: 1)
                             )
                     }
                     .buttonStyle(.plain)
@@ -741,6 +797,9 @@ private struct ScreenshotQuickPreviewView: View {
                         // longer languages, so Copy text, share and pin ride on the
                         // thumbnail there instead of squeezing Save, Copy and Edit.
                         if !embedded { thumbnailButtons }
+                    }
+                    .overlay(alignment: .bottomLeading) {
+                        if !embedded { sharedActionsButton.padding(6) }
                     }
                 }
                 .padding(.top, showsConveyor ? 10 : 0)
@@ -776,13 +835,13 @@ private struct ScreenshotQuickPreviewView: View {
                    showingLink: model.sharedRecord != nil).height)
         .background {
             if !embedded {
-                RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.regularMaterial)
+                RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(nsColor: ToolAppearance.surface))
             }
         }
         .overlay {
             if !embedded {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+                    .strokeBorder(Color(nsColor: ToolAppearance.border), lineWidth: 1)
             }
         }
         .onHover(perform: previewHoverChanged)
@@ -870,7 +929,7 @@ private struct ScreenshotQuickPreviewView: View {
         }
         .padding(.horizontal, 9)
         .frame(width: embedded ? nil : 320, height: 48)
-        .background(Color.primary.opacity(0.055),
+        .background(embedded ? Color.primary.opacity(0.055) : Color(nsColor: ToolAppearance.raised),
                     in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -979,9 +1038,10 @@ private struct ScreenshotPreviewActionStyle: ViewModifier {
                 .background(prominent ? Color.white.opacity(0.14) : .clear,
                             in: RoundedRectangle(cornerRadius: 8))
         } else if prominent {
-            content.buttonStyle(.borderedProminent)
+            content.buttonStyle(.borderedProminent).tint(Color(nsColor: ToolAppearance.accent))
         } else {
-            content.buttonStyle(.bordered)
+            content.buttonStyle(.bordered).tint(Color(nsColor: ToolAppearance.raised))
+                .foregroundStyle(Color(nsColor: ToolAppearance.text))
         }
     }
 }

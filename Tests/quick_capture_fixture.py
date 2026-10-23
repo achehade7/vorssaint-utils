@@ -36,9 +36,9 @@ final class Permissions {
     func requestScreenRecording() { requests += 1 }
 }
 enum AppFeature {
-    case screenOCR
+    case screenOCR, clipboardHistory, textSnippets, screenshot
     static var ocrAvailable = true
-    var isAvailable: Bool { Self.ocrAvailable }
+    var isAvailable: Bool { self == .screenOCR ? Self.ocrAvailable : true }
 }
 enum AppLanguage: String, CaseIterable {
     case enUS = "en-US", ptBR = "pt-BR", tr, ru, es, sk, de, fr, it, ja, ko, uk
@@ -122,6 +122,54 @@ final class ScreenshotSelectionController {
 }
 '''
 
+ACTION_DESTINATIONS = r'''
+extension NSScreen {
+    var displayID: CGDirectDisplayID { deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0 }
+}
+struct ClipboardHistoryEntry {
+    enum Kind { case text, image, files }
+    var text: String
+    var kind = Kind.text
+    var imageFile: String? = nil
+    var preview: String { text }
+}
+enum ClipboardImageStore { static func imageData(named: String) -> Data? { nil } }
+final class PayloadInspectorService {
+    static let shared = PayloadInspectorService()
+    var received: [String] = []
+    func receive(_ text: String) { received.append(text) }
+}
+final class ClipboardDiffService {
+    static let shared = ClipboardDiffService()
+    var received: [(String, Bool)] = []
+    func receive(_ text: String, asBefore: Bool, name: String?) { received.append((text, asBefore)) }
+}
+final class SnippetLibraryService {
+    static let shared = SnippetLibraryService()
+    var received: [String] = []
+    func saveCapturedText(_ text: String) { received.append(text) }
+}
+final class ScreenshotService {
+    static let shared = ScreenshotService()
+    func annotate(_ image: CGImage) { preconditionFailure("unexpected screenshot handoff") }
+}
+final class ScreenCompareService {
+    static let shared = ScreenCompareService()
+    func receive(_ image: CGImage, asBefore: Bool, name: String?) { preconditionFailure("unexpected image comparison") }
+}
+enum ExtractedTextController {
+    static func show(image: CGImage) { preconditionFailure("unexpected OCR window") }
+}
+'''
+
+HEADLESS_ACTIONS = r'''
+enum SharedToolActions {
+    enum Content { case text(String) }
+    static func present(content: Content, title: String, from window: NSWindow, owner: UUID) {}
+    static func cancel(owner: UUID) {}
+}
+'''
+
 
 def run(code, include_view=False, arguments=None):
     sources = [
@@ -130,18 +178,23 @@ def run(code, include_view=False, arguments=None):
         'Services/Notch/NotchQuickCaptureMeetings.swift',
         'Services/Notch/NotchQuickCaptureKeyTracker.swift',
         'Core/NotchQuickCaptureStrings.swift',
+        'Core/SharedToolActionStrings.swift',
+        'Core/SharedActionShortcut.swift',
         'Services/CommandBar/MeetingNoteStore.swift',
         'Core/MeetingNotePerson.swift',
     ]
     view = ''
     if include_view:
+        sources += ['Services/QuickTools/SharedToolActions.swift', 'Core/SnippetCaptureStrings.swift',
+                    'Core/AppKitExtensions.swift', 'UI/ToolAppearance.swift']
         full = (REPO / 'Sources/Vorssaint/UI/Notch/NotchQuickCaptureView.swift').read_text()
         view = full[full.index('struct NotchQuickCaptureView:'):full.index('struct NotchQuickCapturePulse:')]
         view += full[full.index('struct NotchObsidianRightClick:'):]
     with tempfile.TemporaryDirectory(prefix='quick-capture-fixture-') as temporary:
         folder = Path(temporary)
         source = folder / 'main.swift'
-        source.write_text(STUBS + '\n' + view + '\n' + code)
+        source.write_text(STUBS + '\n' + (ACTION_DESTINATIONS if include_view else HEADLESS_ACTIONS)
+                          + '\n' + view + '\n' + code)
         binary = folder / 'checks'
         subprocess.run(['xcrun', 'swiftc', '-target', 'arm64-apple-macosx14.0', '-sdk',
                         '/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk', '-Xfrontend',

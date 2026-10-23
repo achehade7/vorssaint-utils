@@ -19,6 +19,7 @@ enum ScreenshotPreviewHoverTests {
     class State {
         var pointerInside = false
         var systemSharing = false
+        var showingActions = false
         var dismissWork: DispatchWorkItem?
         var autoDismissDuration: TimeInterval? = 12
         var closed = false
@@ -109,6 +110,19 @@ enum ScreenshotPreviewHoverTests {
             sharingController.scheduleAutoDismiss()
             DispatchQueue.main.advance(duration)
             suite.expect(sharingController.closed, "a cancelled share sheet resumes the dismissal delay")
+
+            DispatchQueue.main = NotchScreenRefreshContract.Scheduler()
+            let menuController = Controller()
+            menuController.autoDismissDuration = duration
+            menuController.showingActions = true
+            menuController.hoverChanged(false)
+            DispatchQueue.main.advance(duration)
+            suite.expect(!menuController.closed && DispatchQueue.main.pending == 0,
+                         "shared actions outside the preview pause automatic dismissal")
+            menuController.showingActions = false
+            menuController.scheduleAutoDismiss()
+            DispatchQueue.main.advance(duration)
+            suite.expect(menuController.closed, "closing shared actions resumes the normal dismissal interval")
         }
 
         DispatchQueue.main = NotchScreenRefreshContract.Scheduler()

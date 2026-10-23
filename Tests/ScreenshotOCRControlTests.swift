@@ -93,19 +93,21 @@ enum ScreenshotOCRControlTests {
                 let model = ScreenshotQuickPreviewModel()
                 model.qr = "test QR"
                 var presses = 0
+                var actionPresses = 0
                 var browsed: [UUID] = []
                 let view = ScreenshotQuickPreviewView(
                     image: image, strings: strings, model: model, perform: { _ in },
                     dragItem: { NSItemProvider() }, share: { _ in }, systemShare: {},
                     shareAnchor: ShelfSharePickerAnchor.Anchor(), copySharedLink: {},
                     deleteSharedLink: {}, showQR: {}, copyText: { presses += 1 },
+                    showActions: { actionPresses += 1 },
                     dismiss: {}, hoverChanged: { _ in }, showsDismissButton: true,
                     embedded: embedded, historyID: embedded ? newest.id : nil,
                     browseHistory: { browsed.append($0.id) })
                 let host = NSHostingView(rootView: VStack(spacing: 0) {
-                    if embedded { view.toolbar }
+                    if embedded { view.toolbar.fixedSize() }
                     view
-                }.defaultAppStorage(defaults))
+                }.background(embedded ? Color.black : Color.clear).defaultAppStorage(defaults))
                 let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 350, height: 210),
                                       styleMask: [.borderless], backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false
@@ -113,6 +115,10 @@ enum ScreenshotOCRControlTests {
                 host.frame = NSRect(x: 0, y: 0, width: 350, height: 210)
                 defer { window.contentView = nil; window.close() }
                 settle(host)
+                let actions = buttons(host, label: SharedToolActionStrings.actions)
+                suite.expect(actions.count == 1 && (actions[0].accessibilityPerformPress?() ?? false)
+                             && actionPresses == 1,
+                             "\(language.rawValue) embedded=\(embedded): visible Actions opens the source's shared menu")
                 suite.expect(buttons(host, label: strings.copyTextButton).isEmpty,
                              "\(language.rawValue) embedded=\(embedded): OCR button is absent when disabled")
                 if embedded {
@@ -156,6 +162,23 @@ enum ScreenshotOCRControlTests {
                 FeatureRuntime.shared.available = false
                 suite.expect(embedded ? withOCR > withoutOCR : withOCR == withoutOCR,
                              "\(language.rawValue) embedded=\(embedded): only the island toolbar makes room for the OCR button")
+                if embedded {
+                    suite.expect(withOCR <= 350,
+                                 "\(language.rawValue): Actions fits with every existing island toolbar control (\(withOCR)pt)")
+                }
+                if language == .enUS {
+                    FeatureRuntime.shared.available = true
+                    for (label, name) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                        window.appearance = NSAppearance(named: name)
+                        settle(host)
+                        if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                            host.cacheDisplay(in: host.bounds, to: bitmap)
+                            let destination = URL(fileURLWithPath: "/tmp/screenshot-actions-\(embedded ? "island" : "floating")-\(label).png")
+                            try? bitmap.representation(using: .png, properties: [:])?.write(to: destination)
+                        }
+                    }
+                    FeatureRuntime.shared.available = false
+                }
             }
         }
     }

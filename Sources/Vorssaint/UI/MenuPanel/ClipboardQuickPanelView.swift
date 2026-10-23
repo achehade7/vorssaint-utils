@@ -314,6 +314,16 @@ struct ClipboardQuickPanelView: View {
             }
             .font(.system(size: 10.5, weight: .medium))
             .foregroundStyle(.secondary)
+            Button { history.showQuickActions() } label: {
+                HStack(spacing: 6) {
+                    Text(SharedToolActionStrings.actions)
+                    Text(SharedActionShortcut.displayString).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(previewIsEditing || !history.canShowQuickActions)
+            .accessibilityIdentifier("clipboard.actions")
+            .accessibilityLabel(SharedToolActionStrings.actions)
         }
         .controlSize(.small)
         .padding(.horizontal, 12)

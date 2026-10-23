@@ -70,7 +70,7 @@ final class ClipboardDiffTextView: NSTextView {
     weak var gutter: ClipboardDiffGutter?
     var selectedChange: Range<Int>? { didSet { needsDisplay = true; gutter?.needsDisplay = true } }
     var diffLayout: ClipboardDiffLayoutManager { layoutManager as! ClipboardDiffLayoutManager }
-    var changeColor: NSColor { isBefore ? .systemOrange : .systemBlue }
+    var changeColor: NSColor { isBefore ? ToolAppearance.before : ToolAppearance.after }
 
     init(isBefore: Bool, label: String) {
         self.isBefore = isBefore
@@ -91,16 +91,18 @@ final class ClipboardDiffTextView: NSTextView {
         smartInsertDeleteEnabled = false
         usesFindPanel = true
         font = .monospacedSystemFont(ofSize: 13, weight: .regular)
-        textColor = .textColor; backgroundColor = .textBackgroundColor
-        insertionPointColor = .textColor
+        textColor = ToolAppearance.text; backgroundColor = ToolAppearance.surface
+        insertionPointColor = ToolAppearance.accent
+        selectedTextAttributes = [.backgroundColor: ToolAppearance.accent.withAlphaComponent(0.26),
+                                  .foregroundColor: ToolAppearance.text]
         let paragraph = NSMutableParagraphStyle()
         paragraph.minimumLineHeight = ClipboardDiffLayoutManager.rowHeight
         paragraph.maximumLineHeight = ClipboardDiffLayoutManager.rowHeight
         paragraph.defaultTabInterval = 4 * (" " as NSString).size(withAttributes: [.font: font!]).width
         paragraph.tabStops = []
         defaultParagraphStyle = paragraph
-        typingAttributes = [.font: font!, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph]
-        textContainerInset = NSSize(width: 12, height: 16)
+        typingAttributes = [.font: font!, .foregroundColor: ToolAppearance.text, .paragraphStyle: paragraph]
+        textContainerInset = NSSize(width: 12, height: 12)
         isHorizontallyResizable = true; isVerticallyResizable = true
         maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         container.widthTracksTextView = false
@@ -159,7 +161,7 @@ final class ClipboardDiffTextView: NSTextView {
         for row in diffRows {
             guard let line = source(in: row) else { continue }
             for range in line.changedRanges where range.length > 0 {
-                diffLayout.addTemporaryAttribute(.backgroundColor, value: changeColor.withAlphaComponent(0.28), forCharacterRange: range)
+                diffLayout.addTemporaryAttribute(.backgroundColor, value: changeColor.withAlphaComponent(0.22), forCharacterRange: range)
                 // AppKit underlines every glyph, including far offscreen ones.
                 // Large replacements retain the strong fill and +/- gutter;
                 // reserve the additional underline for precise, smaller edits.
@@ -192,11 +194,11 @@ final class ClipboardDiffTextView: NSTextView {
             let row = diffRows[index]
             let band = NSRect(x: rect.minX, y: rowY(index), width: rect.width, height: height)
             if source(in: row) == nil {
-                NSColor.quaternaryLabelColor.withAlphaComponent(0.12).setFill(); band.fill()
+                ToolAppearance.raised.withAlphaComponent(0.45).setFill(); band.fill()
                 let path = NSBezierPath()
                 path.setLineDash([2, 4], count: 2, phase: 0)
                 path.move(to: NSPoint(x: band.minX, y: band.midY)); path.line(to: NSPoint(x: band.maxX, y: band.midY))
-                NSColor.separatorColor.setStroke(); path.stroke()
+                ToolAppearance.border.setStroke(); path.stroke()
             } else if row.kind != .same {
                 changeColor.withAlphaComponent(0.09).setFill(); band.fill()
             }
@@ -207,7 +209,7 @@ final class ClipboardDiffTextView: NSTextView {
         super.draw(dirtyRect)
         if string.isEmpty && !presentationCurrent {
             (placeholder as NSString).draw(at: NSPoint(x: textContainerOrigin.x, y: textContainerOrigin.y + 4),
-                                          withAttributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.placeholderTextColor])
+                                          withAttributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: ToolAppearance.secondaryText])
         }
         guard presentationCurrent, let container = textContainer else { return }
         // Visible symbols reveal changed spaces, tabs and line endings; these
@@ -244,7 +246,7 @@ final class ClipboardDiffTextView: NSTextView {
                         let glyph = diffLayout.glyphIndexForCharacter(at: offset)
                         let x = diffLayout.location(forGlyphAt: glyph).x
                         (symbol as NSString).draw(at: NSPoint(x: x + textContainerOrigin.x, y: rowY(index) + 4),
-                                                 withAttributes: [.font: font!, .foregroundColor: NSColor.secondaryLabelColor])
+                                                 withAttributes: [.font: font!, .foregroundColor: ToolAppearance.secondaryText])
                     }
                 }
             }
@@ -274,7 +276,7 @@ final class ClipboardDiffGutter: NSRulerView {
     }
     required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func drawHashMarksAndLabels(in rect: NSRect) {
-        NSColor.textBackgroundColor.setFill(); bounds.fill()
+        ToolAppearance.surface.setFill(); bounds.fill()
         guard let editor else { return }
         let count = editor.presentationCurrent ? editor.diffRows.count : editor.diffLayout.starts.count
         for index in 0..<count {
@@ -283,8 +285,14 @@ final class ClipboardDiffGutter: NSRulerView {
             guard y + 24 >= rect.minY, y <= rect.maxY else { continue }
             let row = editor.presentationCurrent ? editor.diffRows[index] : nil
             let source = row.flatMap { editor.source(in: $0) }
+            if let row, row.kind != .same, source != nil {
+                editor.changeColor.withAlphaComponent(0.09).setFill()
+                NSRect(x: bounds.minX, y: y, width: bounds.width, height: 24).fill()
+                editor.changeColor.setFill()
+                NSRect(x: 0, y: y, width: 2, height: 24).fill()
+            }
             let number = row == nil ? String(index + 1) : source.map { String($0.number) } ?? "–"
-            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor]
+            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: ToolAppearance.secondaryText]
             let width = (number as NSString).size(withAttributes: attributes).width
             (number as NSString).draw(at: NSPoint(x: 39 - width, y: y + 5), withAttributes: attributes)
             if let row, row.kind != .same, source != nil {
@@ -299,7 +307,7 @@ final class ClipboardDiffGutter: NSRulerView {
                 editor.changeColor.setStroke(); marker.stroke()
             }
             if editor.selectedChange?.contains(index) == true {
-                editor.changeColor.setFill(); NSRect(x: 2, y: y + 2, width: 3, height: 20).fill()
+                ToolAppearance.accent.setFill(); NSRect(x: 2, y: y + 2, width: 3, height: 20).fill()
             }
         }
     }

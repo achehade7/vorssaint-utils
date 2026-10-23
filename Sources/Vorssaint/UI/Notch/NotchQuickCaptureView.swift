@@ -10,6 +10,8 @@ struct NotchQuickCaptureView: View {
     @FocusState private var focused: Bool
     @FocusState private var extractFocused: Bool
     @State private var preview: Preview?
+    @State private var actionsRequest = UUID()
+    @State private var previewActionsRequest = UUID()
     private var text: NotchQuickCaptureStrings { .localized(l10n.language) }
 
     private enum Preview: Identifiable {
@@ -27,6 +29,10 @@ struct NotchQuickCaptureView: View {
             HStack(spacing: 8) {
                 Text(text.title).foregroundStyle(NotchNeonPalette.purple)
                 Spacer(minLength: 0)
+                Button(SharedToolActionStrings.actions + " " + SharedActionShortcut.displayString) { actionsRequest = UUID() }
+                    .buttonStyle(.plain).foregroundStyle(NotchNeonPalette.purple)
+                    .disabled(!draft.canEdit || draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("notch.quickCapture.actions")
                 if draft.pendingCount > 0 || draft.saving {
                     ProgressView().controlSize(.mini).accessibilityLabel(text.pending)
                 }
@@ -111,8 +117,9 @@ struct NotchQuickCaptureView: View {
         .padding(.top, service.geometry.safeContentTop)
         .padding(.bottom, NotchLayout.bottomInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(NotchQuickCaptureUndoKeys(draft: draft))
+        .background(NotchQuickCaptureUndoKeys(draft: draft, actionsRequest: actionsRequest))
         .onAppear { draft.open(); focused = true }
+        .onDisappear { draft.cancelTextActions() }
         .onChange(of: draft.saving) { if !draft.saving { focused = true } }
         .popover(item: $preview) { item in previewContent(item) }
         .onExitCommand { if preview != nil { preview = nil } else { draft.hide() } }
@@ -273,6 +280,13 @@ struct NotchQuickCaptureView: View {
                 case .extract: Text(text.textExtract)
                 }
                 Spacer()
+                if case .extract(let id) = item {
+                    Button(SharedToolActionStrings.actions + " " + SharedActionShortcut.displayString) { previewActionsRequest = UUID() }
+                        .buttonStyle(.plain)
+                        .disabled(!draft.canEdit || (draft.extracts.first { $0.id == id }?.text ?? "")
+                            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("notch.quickCapture.previewActions")
+                }
                 Button { preview = nil } label: { Image(systemName: "xmark") }
                     .buttonStyle(.plain).accessibilityLabel(text.close)
             }
@@ -301,7 +315,8 @@ struct NotchQuickCaptureView: View {
         }
         .padding(14).frame(width: 560, height: 360)
         .background(.black.opacity(0.96)).environment(\.colorScheme, .dark)
-        .background(NotchQuickCaptureUndoKeys(draft: draft, closePreview: { preview = nil }))
+        .background(NotchQuickCaptureUndoKeys(draft: draft, closePreview: { preview = nil }, actionsRequest: previewActionsRequest))
+        .onDisappear { draft.cancelTextActions() }
         .onExitCommand { preview = nil }
     }
 }
@@ -311,17 +326,30 @@ struct NotchQuickCaptureView: View {
 struct NotchQuickCaptureUndoKeys: NSViewRepresentable {
     let draft: NotchQuickCaptureService
     var closePreview: (() -> Void)? = nil
+    var actionsRequest: UUID? = nil
     func makeNSView(context: Context) -> Area {
-        let view = Area(); view.draft = draft; view.closePreview = closePreview; return view
+        let view = Area(); view.draft = draft; view.closePreview = closePreview
+        view.actionsRequest = actionsRequest; return view
     }
     func updateNSView(_ view: Area, context: Context) {
         view.draft = draft; view.closePreview = closePreview
+        if view.actionsRequest != actionsRequest {
+            view.actionsRequest = actionsRequest
+            let request = actionsRequest
+            // Showing a panel changes native focus. Wait until SwiftUI has
+            // completed this update before changing the window hierarchy.
+            DispatchQueue.main.async { [weak view] in
+                guard let view, view.actionsRequest == request else { return }
+                view.showActions(requireFocusedEditor: false)
+            }
+        }
     }
     static func dismantleNSView(_ view: Area, coordinator: ()) { view.stop() }
 
     final class Area: NSView {
         weak var draft: NotchQuickCaptureService?
         var closePreview: (() -> Void)?
+        var actionsRequest: UUID?
         private var monitor: Any?
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func viewDidMoveToWindow() {
@@ -335,6 +363,10 @@ struct NotchQuickCaptureUndoKeys: NSViewRepresentable {
         func handle(_ event: NSEvent) -> Bool {
             guard let window, window.isVisible, !isHiddenOrHasHiddenAncestor,
                   window.attachedSheet == nil, event.window === window else { return false }
+            if event.type == .keyDown, !event.isARepeat,
+               SharedActionShortcut.matches(event) {
+                return showActions(requireFocusedEditor: true)
+            }
             if let closePreview {
                 guard event.type == .keyDown, !event.isARepeat else { return false }
                 let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
@@ -349,7 +381,24 @@ struct NotchQuickCaptureUndoKeys: NSViewRepresentable {
             }
             return draft?.handleKey(event, selecting: false) == true
         }
-        func stop() { if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil }
+        @discardableResult func showActions(requireFocusedEditor: Bool) -> Bool {
+            guard let window, window.isVisible, window.attachedSheet == nil,
+                  !isHiddenOrHasHiddenAncestor, let draft, draft.canEdit else { return false }
+            func editor(in view: NSView) -> NSTextView? {
+                if let text = view as? NSTextView, !text.isFieldEditor { return text }
+                return view.subviews.lazy.compactMap { editor(in: $0) }.first
+            }
+            let focused = window.firstResponder as? NSTextView
+            guard let text = focused.flatMap({ $0.isFieldEditor ? nil : $0 })
+                    ?? (requireFocusedEditor ? nil : window.contentView.flatMap { editor(in: $0) }),
+                  !text.hasMarkedText() else { return false }
+            draft.showTextActions(in: window, editor: text)
+            return true
+        }
+        func stop() {
+            if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
+            draft?.cancelTextActions()
+        }
         deinit { stop() }
     }
 }

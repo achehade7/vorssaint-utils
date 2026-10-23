@@ -4,6 +4,8 @@
 """Exercise the production AppKit inspector in its own process; never send global keys."""
 from pathlib import Path
 import subprocess
+import os
+import sys
 import tempfile
 
 repo = Path(__file__).resolve().parents[1]
@@ -99,6 +101,54 @@ func capture(_ window: NSWindow, _ name: String, width: CGFloat = 920, height: C
             let button = view(window, id, NSButton.self)
             expect(button.convert(button.bounds, to: content).maxX <= content.bounds.maxX, "\(id) stays inside \(name) in \(label)")
         }
+        if segment.selectedSegment == 0 {
+            let detail = view(window, "detail", NSView.self)
+            let tree = view(window, "tree", NSOutlineView.self)
+            let treeFrame = tree.enclosingScrollView!.convert(tree.enclosingScrollView!.bounds, to: content)
+            expect(treeFrame.maxX <= detail.frame.minX && detail.frame.width >= 286,
+                   "tree and readable detail pane stay separate at \(width) in \(label)")
+            let path = view(window, "path", NSTextField.self)
+            expect(path.alignmentRect(forFrame: path.frame).maxX <= detail.bounds.maxX - 18,
+                   "monospaced path stays within detail pane")
+        }
+    }
+}
+func paneWidths(_ window: NSWindow, width: CGFloat) -> (tree: CGFloat, detail: CGFloat) {
+    window.setContentSize(NSSize(width: width, height: 650))
+    drain()
+    let content = window.contentView!
+    content.layoutSubtreeIfNeeded()
+    let tree = view(window, "tree", NSOutlineView.self).enclosingScrollView!
+    let detail = view(window, "detail", NSView.self)
+    expect(abs(content.bounds.width - width) < 1, "inspector can reach requested content width \(width)")
+    expect(detail.frame.width >= tree.frame.width,
+           "value detail is at least as wide as navigation at \(width)")
+    expect(tree.frame.width >= 260 && tree.frame.width <= 421,
+           "navigation remains readable and capped at wide sizes")
+    return (tree.frame.width, detail.frame.width)
+}
+func color(_ text: NSTextView, token: String) -> NSColor {
+    let range = (text.string as NSString).range(of: token)
+    expect(range.location != NSNotFound, "detail contains token \(token)")
+    let color = text.textStorage!.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor
+    expect(color != nil, "detail has a foreground color for \(token)")
+    return color!
+}
+func verifyJSONColors(_ window: NSWindow) {
+    let detail = view(window, "value", NSTextView.self)
+    for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+        window.appearance = NSAppearance(named: appearance)
+        drain()
+        window.effectiveAppearance.performAsCurrentDrawingAppearance {
+            let property = color(detail, token: "\"status\"").usingColorSpace(.deviceRGB)!
+            let string = color(detail, token: "approved").usingColorSpace(.deviceRGB)!
+            let number = color(detail, token: "1.2300e+4").usingColorSpace(.deviceRGB)!
+            let boolean = color(detail, token: "false").usingColorSpace(.deviceRGB)!
+            expect(!property.isEqual(string) && !property.isEqual(number) && !property.isEqual(boolean),
+                   "property names differ from scalar values in \(appearance.rawValue)")
+            expect(!string.isEqual(number) && !number.isEqual(boolean) && !string.isEqual(boolean),
+                   "string, numeric and boolean values remain distinguishable in \(appearance.rawValue)")
+        }
     }
 }
 let json = #"{"orders":[{"id":900719925474099312345,"amount":1.2300e+4,"status":"approved","paid":false},{"id":900719925474099312346,"status":"pending"}],"environment":"Q","body":"{\"status\":\"ok\",\"count\":2}"}"#
@@ -114,6 +164,20 @@ expect(view(first, "copyValue", NSButton.self).isEnabled && view(first, "copyPat
 checkCopies(first, value: "1.2300e+4", path: #"$["orders"][0]["amount"]"#)
 capture(first, "json")
 capture(first, "json-small", width: 640, height: 460)
+_ = paneWidths(first, width: 640)
+let normalPanes = paneWidths(first, width: 920)
+let widePanes = paneWidths(first, width: 1500)
+expect(widePanes.detail - normalPanes.detail > 500 && widePanes.tree - normalPanes.tree < 80,
+       "widening the inspector gives almost all extra room to the value detail")
+expect(select(first, #"$["orders"][0]"#), "composite JSON object can be inspected")
+let composite = #"{"id":900719925474099312345,"amount":1.2300e+4,"status":"approved","paid":false}"#
+expect(view(first, "value", NSTextView.self).string == composite,
+       "colored composite detail keeps original spelling and numeric precision")
+verifyJSONColors(first)
+checkCopies(first, value: composite, path: #"$["orders"][0]"#)
+capture(first, "json-composite")
+capture(first, "json-wide", width: 1500, height: 650)
+capture(first, "json-composite-small", width: 640, height: 460)
 
 let search = view(first, "search", NSSearchField.self)
 search.stringValue = "approved"
@@ -128,6 +192,11 @@ search.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChang
 expect(until { tree.numberOfRows > 0 }, "clearing search restores the tree")
 expect(select(first, #"$["body"]"#), "embedded string is selectable")
 expect(view(first, "openJSON", NSButton.self).isEnabled, "embedded JSON offers explicit drill-in")
+let rawEmbedded = view(first, "value", NSTextView.self)
+expect(rawEmbedded.string == #"{"status":"ok","count":2}"#,
+       "embedded JSON string remains decoded text until explicit drill-in")
+expect(color(rawEmbedded, token: "status").isEqual(color(rawEmbedded, token: "ok")),
+       "embedded JSON text does not acquire structural highlighting before drill-in")
 view(first, "openJSON", NSButton.self).performClick(nil)
 expect(until { view(first, "back", NSButton.self).isEnabled }, "drill-in offers Back")
 expect(until { tree.numberOfRows == 3 }, "escaped JSON becomes a tree")
@@ -211,9 +280,71 @@ service.show(text: "")
 let reopened = window()
 expect(until { summary(reopened) == strings.empty } && view(reopened, "source", NSTextView.self).string.isEmpty, "closed-window results never enter a reopened inspector")
 reopened.close()
+
+// Action handoff preserves current editor/undo until replacement is confirmed.
+let incoming = #"{"incoming":"selected clipboard item"}"#
+service.receive("")
+let emptyDestination = window()
+service.receive(json)
+let handoff = window()
+expect(!emptyDestination.isVisible && handoff.attachedSheet == nil
+       && view(handoff, "source", NSTextView.self).string == json,
+       "empty inspector receives source directly without replacement confirmation")
+expect(settled(handoff), "handoff opens a fresh inspector")
+mode(handoff, 1)
+let handoffSource = view(handoff, "source", NSTextView.self)
+handoffSource.undoManager!.removeAllActions()
+handoffSource.undoManager!.beginUndoGrouping()
+edit(handoff, #"{"draft":"edited source"}"#)
+handoffSource.undoManager!.endUndoGrouping()
+handoffSource.setSelectedRange(NSRange(location: 2, length: 5))
+let handoffSelection = handoffSource.selectedRange(), draftText = handoffSource.string
+service.receive(draftText)
+expect(window() === handoff && handoff.attachedSheet == nil && handoffSource.selectedRange() == handoffSelection
+       && handoffSource.undoManager!.canUndo, "same incoming source preserves window, selection and undo without prompt")
+service.receive(incoming)
+expect(until { handoff.attachedSheet != nil } && handoffSource.string == draftText,
+       "different incoming payload requires confirmation before changing edited source")
+let cancelledSheet = handoff.attachedSheet!
+service.receive(#"{"later":"another handoff"}"#)
+expect(handoff.attachedSheet === cancelledSheet && handoffSource.string == draftText,
+       "another handoff cannot replace pending confirmation or current editor")
+handoff.endSheet(cancelledSheet, returnCode: .alertSecondButtonReturn)
+expect(until { handoff.attachedSheet == nil } && handoffSource.string == draftText
+       && handoffSource.undoManager!.canUndo, "Cancel preserves editor text and native undo")
+service.receive(incoming)
+expect(until { handoff.attachedSheet != nil }, "replacement can be requested again after cancellation")
+handoff.endSheet(handoff.attachedSheet!, returnCode: .alertFirstButtonReturn)
+expect(until { !handoff.isVisible && app.windows.contains { $0.isVisible && $0.title == strings.title } },
+       "confirmed handoff replaces the inspector once")
+let accepted = window()
+expect(view(accepted, "source", NSTextView.self).string == incoming && settled(accepted),
+       "confirmed handoff installs exact incoming source")
+mode(accepted, 1)
+service.receive(json)
+expect(until { accepted.attachedSheet != nil }, "second replacement prompts for current source")
+edit(accepted, #"{"newer":"edit while confirmation was open"}"#)
+let newest = view(accepted, "source", NSTextView.self).string
+accepted.endSheet(accepted.attachedSheet!, returnCode: .alertFirstButtonReturn)
+expect(until { accepted.attachedSheet == nil } && window() === accepted
+       && view(accepted, "source", NSTextView.self).string == newest,
+       "stale confirmation cannot overwrite source edited after the prompt")
+service.receive(json)
+expect(until { accepted.attachedSheet != nil }, "close-race fixture has an outstanding replacement")
+accepted.close()
+service.receive(incoming)
+let afterClose = window()
+expect(settled(afterClose) && view(afterClose, "source", NSTextView.self).string == incoming,
+       "closed-editor confirmation cannot affect a newly opened inspector")
+AppFeature.enabled = false
+service.receive(json)
+expect(afterClose.attachedSheet == nil && view(afterClose, "source", NSTextView.self).string == incoming,
+       "disabled clipboard feature cannot hand off into an existing inspector")
+afterClose.close()
 AppFeature.enabled = false
 service.show(text: json)
 expect(!app.windows.contains { $0.isVisible }, "unavailable clipboard feature cannot open inspector")
+expect(NSPasteboard.general.changeCount == pasteboardCount, "handoff and confirmation never write the system clipboard")
 print("PASS: \(modelChecks) payload model and \(suite.checks - modelChecks) native UI checks; screenshots /tmp/payload-inspector-*.png")
 '''
 with tempfile.TemporaryDirectory(prefix="payload-inspector-ui-") as directory:
@@ -224,8 +355,15 @@ with tempfile.TemporaryDirectory(prefix="payload-inspector-ui-") as directory:
     sources = [
         "Sources/Vorssaint/Services/Clipboard/PayloadInspector.swift",
         "Sources/Vorssaint/Services/Clipboard/PayloadInspectorService.swift",
+        "Sources/Vorssaint/Services/Clipboard/PayloadInspectorHighlighting.swift",
         "Sources/Vorssaint/Core/PayloadInspectorStrings.swift",
+        "Sources/Vorssaint/Core/SharedToolActionStrings.swift",
+        "Sources/Vorssaint/UI/ToolAppearance.swift",
         "Tests/PayloadInspectorTests.swift",
     ]
     subprocess.run(["swiftc", *[str(repo / path) for path in sources], str(main), "-o", str(executable)], check=True)
-    subprocess.run([str(executable)], check=True, timeout=120)
+    if "--compile-only" not in sys.argv:
+        preferences = folder / "preferences"
+        preferences.mkdir()
+        subprocess.run([str(executable)], check=True, timeout=120,
+                       env={**os.environ, "CFFIXED_USER_HOME": str(preferences)})
