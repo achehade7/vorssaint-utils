@@ -40,9 +40,13 @@ enum NotchDestinationContract {
     enum QuickLauncherService { static var shared = QuickLauncherContract.Launcher() }
     enum MenuPanelFocus {
         static let shared = Focus()
+        enum Section { case keepAwake }
+        enum Target: Equatable { case normal, section(Section) }
+        struct Request { let target: Target }
         final class Focus {
             var normalRequests = 0
-            func showNormalPanel() { normalRequests += 1 }
+            var request: Request?
+            func showNormalPanel() { normalRequests += 1; request = Request(target: .normal) }
         }
     }
     final class Timer {
@@ -207,6 +211,7 @@ enum NotchDestinationContract {
         countdownContracts(defaults: defaults, suite: suite)
         stepBackContracts(suite)
         swipeBackContracts(suite)
+        keepAwakeBackContracts(suite)
         // A page opened while the Command Bar is in the island takes its place.
         let barHost = Service()
         barHost.expanded = true
@@ -324,6 +329,35 @@ enum NotchDestinationContract {
         page.open(.music)
         suite.expect(!page.expanded && page.captureControlsExpansions == 1,
                      "opening a page while the capture controls are up expands them instead")
+    }
+
+    private static func keepAwakeBackContracts(_ suite: TestSuite) {
+        let previousRequest = MenuPanelFocus.shared.request
+        defer { MenuPanelFocus.shared.request = previousRequest }
+        let service = Service()
+        service.open(sections: true)
+        service.sectionQuery = "old search"
+        service.sectionRow = 2
+        MenuPanelFocus.shared.request = .init(target: .section(.keepAwake))
+        service.open(.controls, appPanel: true)
+        service.goBack()
+        suite.expect(service.expanded && service.showingSections && !service.showingAppPanel,
+                     "Back from the focused awake card returns Home without exposing Controls")
+        suite.expect(MenuPanelFocus.shared.request?.target == .normal
+                     && service.sectionQuery.isEmpty && service.sectionRow == 0
+                     && service.highlightedSection == service.selected,
+                     "returning Home clears the awake-only focus and stale gallery search")
+        service.openAppPanel()
+        service.goBack()
+        suite.expect(service.expanded && service.selected == .controls
+                     && !service.showingSections && !service.showingAppPanel,
+                     "Back from the ordinary app panel keeps its existing Controls destination")
+        MenuPanelFocus.shared.request = .init(target: .section(.keepAwake))
+        service.open(.system, metric: .cpu)
+        service.goBack()
+        suite.expect(service.expanded && service.selected == .system
+                     && service.selectedMetric == nil && !service.showingSections,
+                     "a stale awake focus does not redirect an unrelated metric's Back action")
     }
 
     /// Escape steps back through what the island shows, then closes it.

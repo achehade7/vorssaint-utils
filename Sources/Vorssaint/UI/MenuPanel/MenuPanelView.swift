@@ -2785,9 +2785,8 @@ struct KeepAwakeCard: View {
                         statusLine
                         Spacer(minLength: 4)
                     }
-                    Toggle(l10n.s.keepAwakeTitle, isOn: activeBinding)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
+                    KeepAwakeSwitch(title: l10n.s.keepAwakeTitle, isOn: activeBinding,
+                                    identifier: "keepAwake.session")
                 }
 
                 // One click starts (or switches) a session; clicking the
@@ -2828,15 +2827,15 @@ struct KeepAwakeCard: View {
 
                 if showsOptions {
                     optionsDisclosure
-
-                    Divider()
-
-                    optionRow(title: l10n.s.clamshellTitle,
-                              caption: clamshellCaption,
-                              isOn: $awake.clamshellPreferred,
-                              disabled: awake.clamshellSetupInProgress,
-                              captionIsError: awake.clamshellSetupFailed)
                 }
+
+                Divider()
+
+                optionRow(title: l10n.s.clamshellTitle,
+                          caption: clamshellCaption,
+                          isOn: $awake.clamshellPreferred,
+                          disabled: awake.clamshellSetupInProgress,
+                          captionIsError: awake.clamshellSetupFailed)
             }
             .panelCard()
         }
@@ -3201,10 +3200,7 @@ struct KeepAwakeCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 8)
-            Toggle(title, isOn: isOn)
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .labelsHidden()
+            KeepAwakeSwitch(title: title, isOn: isOn, identifier: "keepAwake.clamshell", controlSize: .mini)
                 .disabled(disabled)
         }
     }
@@ -3218,6 +3214,45 @@ struct KeepAwakeCard: View {
         if hours > 0 { return String(format: "%d h %02d min", hours, minutes) }
         if minutes > 0 { return String(format: "%d min %02d s", minutes, seconds) }
         return "\(seconds) s"
+    }
+}
+
+/// Use AppKit's complete switch control in the island's separately hosted card.
+/// SwiftUI's switch can leave just its track visible in this presentation.
+private struct KeepAwakeSwitch: NSViewRepresentable {
+    let title: String
+    @Binding var isOn: Bool
+    let identifier: String
+    var controlSize: NSControl.ControlSize = .regular
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeNSView(context: Context) -> NSSwitch {
+        let control = NSSwitch()
+        control.target = context.coordinator
+        control.action = #selector(Coordinator.changed(_:))
+        control.setContentHuggingPriority(.required, for: .horizontal)
+        control.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return control
+    }
+
+    func updateNSView(_ control: NSSwitch, context: Context) {
+        context.coordinator.isOn = $isOn
+        control.controlSize = controlSize
+        control.state = isOn ? .on : .off
+        control.isEnabled = isEnabled
+        control.setAccessibilityLabel(title)
+        control.setAccessibilityIdentifier(identifier)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSwitch, context: Context) -> CGSize? {
+        nsView.intrinsicContentSize
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(isOn: $isOn) }
+    final class Coordinator: NSObject {
+        var isOn: Binding<Bool>
+        init(isOn: Binding<Bool>) { self.isOn = isOn }
+        @objc func changed(_ control: NSSwitch) { isOn.wrappedValue = control.state == .on }
     }
 }
 

@@ -8,8 +8,12 @@ import tempfile
 
 repo = Path(__file__).resolve().parents[1]
 source = (repo / "Sources/Vorssaint/Services/CommandBar/CommandBarMeetingSearch.swift").read_text()
+# Advance row rendering and activation across the exact five-minute boundary.
+source = source.replace("Date()", "meetingClock")
+strings = (repo / "Sources/Vorssaint/Core/MeetingNoteStrings.swift").read_text()
 fixture = r'''
 import Foundation
+var meetingClock = Date()
 struct NotchCalendarEvent {
     var id = UUID().uuidString
     var allDay = false
@@ -28,7 +32,6 @@ final class MeetingNoteService {
     var prepared: [String] = []
     func show(_ event: NotchCalendarEvent, joining: Bool) { precondition(!joining); prepared.append(event.id) }
 }
-enum MeetingNoteStrings { struct Text { let title = "Meeting note" }; static func localized(_ language: L10n.Language) -> Text { Text() } }
 enum NotchCalendarSupport {
     static var enabled = true
     static func isEnabled() -> Bool { enabled }
@@ -51,14 +54,15 @@ enum EKEventStore {
     static var status = Status.fullAccess
     static func authorizationStatus(for kind: Kind) -> Status { status }
 }
-enum L10n { static let shared = Self(); var language: Language { .init() }; struct Language { var rawValue = "en-US" }; init() { self = .instance }; case instance }
+enum AppLanguage: String, CaseIterable { case enUS = "en-US", ptBR = "pt-BR", tr, ru, es, sk, de, fr, it, ja, ko, uk, zhHans = "zh-Hans", zhTW = "zh-TW", zhHK = "zh-HK" }
+struct L10n { static var shared = Self(); var language = AppLanguage.enUS }
 enum FeatureStrings {
     struct Strings {
         let title = "Calendar", description = "Setup", allow = "Allow", permission = "Permission"
         let noMeetingLink = "No call", openCalendar = "Open Calendar", untitled = "Untitled", ongoing = "Happening now", noResultsTitle = "No results"
     }
-    static func notchCalendar(_ language: L10n.Language) -> Strings { Strings() }
-    static func commandBar(_ language: L10n.Language) -> Strings { Strings() }
+    static func notchCalendar(_ language: AppLanguage) -> Strings { Strings() }
+    static func commandBar(_ language: AppLanguage) -> Strings { Strings() }
 }
 final class NotchService {
     enum Module { case calendar }
@@ -129,7 +133,7 @@ NotchCalendarService.shared.events = [
 _ = search.rows(); spin()
 let choices = search.rows()
 precondition(choices.count == 3 && Set(choices.map(\.id)).count == 3, "overlapping events remain separate selectable rows")
-precondition(choices.prefix(2).allSatisfy { $0.subtitle.contains("Happening now") }, "ongoing meetings are labelled")
+precondition(choices.prefix(2).allSatisfy { $0.subtitle.hasPrefix("Just started") }, "just-started meetings are labelled")
 precondition(choices[2].title == "Next" && search.rows().count == 3, "bare meet offers the next three joinable meetings")
 precondition(search.noteEvent(entryID: choices[0].id)?.id == "a", "Cmd-Return resolves the selected meeting only")
 precondition(search.noteEvent(entryID: "action.meet.empty") == nil, "placeholder cannot prepare a note")
@@ -164,12 +168,66 @@ precondition(search.noteEvent(entryID: filtered[0].id) == nil, "Cmd-Return does 
 EKEventStore.status = .denied
 filtered[0].run(nil)
 precondition(MeetingNoteService.shared.prepared.count == 1, "stale note result respects revoked permission")
-print("Meeting command: preview, explicit join, cancellation, empty/expired results and permission gates passed")
+EKEventStore.status = .fullAccess
+let clock = Date(timeIntervalSince1970: 1_800_000_000)
+meetingClock = clock
+search.reset()
+NotchCalendarService.shared.events = [NotchCalendarEvent(id: "rounding", title: "In 80 seconds",
+    start: clock.addingTimeInterval(80), end: clock.addingTimeInterval(1800))]
+_ = search.rows(); spin()
+precondition(search.rows()[0].subtitle.hasPrefix("in 2 min"), "80 remaining seconds round up to two minutes")
+precondition(search.rows(noteFilter: "")[0].subtitle.hasPrefix("in 2 min"), "note uses the same ceiling countdown")
+
+search.reset()
+NotchCalendarService.shared.events = [
+    NotchCalendarEvent(id: "old", title: "Older ongoing", start: clock.addingTimeInterval(-301), end: clock.addingTimeInterval(1800)),
+    NotchCalendarEvent(id: "late", title: "Late join", start: clock.addingTimeInterval(-300), end: clock.addingTimeInterval(1800)),
+    NotchCalendarEvent(id: "next", title: "Upcoming", start: clock.addingTimeInterval(120), end: clock.addingTimeInterval(1800)),
+    NotchCalendarEvent(id: "ended", title: "Ended", start: clock.addingTimeInterval(-60), end: clock)
+]
+_ = search.rows(); spin()
+let lateMeet = search.rows(), lateNote = search.rows(noteFilter: "")
+precondition(lateMeet.map(\.id) == ["action.meet.late", "action.meet.next"], "meet keeps the exact five-minute late-join boundary and excludes older or ended events")
+precondition(lateNote.map(\.id) == ["action.note.upcoming.late", "action.note.upcoming.next"], "note keeps the same late-join window")
+precondition(lateMeet[0].subtitle.hasPrefix("Started 5 min. ago") && lateNote[0].subtitle.hasPrefix("Started 5 min. ago"), "late suggestions state when the meeting started")
+precondition(search.noteEvent(entryID: lateMeet[0].id)?.id == "late", "late Cmd-Return preserves the exact calendar occurrence")
+let joinedBefore = NSWorkspace.shared.opened.count, preparedBefore = MeetingNoteService.shared.prepared.count
+lateMeet[0].run(nil); lateNote[0].run(nil)
+precondition(NSWorkspace.shared.opened.count == joinedBefore + 1 && MeetingNoteService.shared.prepared.last == "late", "late rows retain their explicit join and note actions")
+meetingClock = clock.addingTimeInterval(0.001)
+precondition(search.rows().map(\.id) == ["action.meet.next"] && search.rows(noteFilter: "").map(\.id) == ["action.note.upcoming.next"], "both lists stop suggesting the occurrence after five minutes")
+precondition(search.noteEvent(entryID: lateMeet[0].id) == nil, "expired late suggestion cannot prepare through Cmd-Return")
+lateMeet[0].run(nil); lateNote[0].run(nil)
+precondition(NSWorkspace.shared.opened.count == joinedBefore + 1 && MeetingNoteService.shared.prepared.count == preparedBefore + 1, "stale late rows cannot activate after their suggestion window")
+meetingClock = clock
+for seconds in [0.001, 59.999, 60, 60.001, 80, 120, 120.001, 3599.999] {
+    search.reset()
+    NotchCalendarService.shared.events = [NotchCalendarEvent(id: "round", start: clock.addingTimeInterval(seconds), end: clock.addingTimeInterval(7200))]
+    _ = search.rows(); spin()
+    let prefix = "in \(Int(ceil(seconds / 60))) min"
+    precondition(search.rows()[0].subtitle.hasPrefix(prefix) && search.rows(noteFilter: "")[0].subtitle.hasPrefix(prefix), "both commands round upcoming fractional minutes upward at each boundary")
+}
+for seconds in [0.0, -0.001, -59.999, -60, -299.999] {
+    search.reset()
+    NotchCalendarService.shared.events = [NotchCalendarEvent(id: "recent", start: clock.addingTimeInterval(seconds), end: clock.addingTimeInterval(7200))]
+    _ = search.rows(); spin()
+    let prefix = seconds > -60 ? "Just started" : "Started \(Int(-seconds / 60)) min. ago"
+    precondition(search.rows()[0].subtitle.hasPrefix(prefix) && search.rows(noteFilter: "")[0].subtitle.hasPrefix(prefix), "both commands clearly label the elapsed time since starting")
+}
+search.reset()
+NotchCalendarService.shared.events = [NotchCalendarEvent(id: "note-only", title: "Local discussion", start: clock.addingTimeInterval(-120), end: clock.addingTimeInterval(1800), meetingURL: nil)]
+_ = search.rows(noteFilter: "local"); spin()
+precondition(search.rows(noteFilter: "local").first?.id == "action.note.upcoming.note-only", "a recent meeting without a call URL still supports note preparation")
+precondition(search.rows().first?.id == "action.meet.empty", "late-join window does not invent missing call URLs")
+for language in AppLanguage.allCases {
+    precondition(!MeetingNoteStrings.started(nil, language).isEmpty && MeetingNoteStrings.started("relative-time", language).contains("relative-time"), "all languages preserve the localized relative time")
+}
+print("Meeting command: ceiling countdowns, five-minute late join in meet/note, elapsed labels, exact identity, stale actions, cancellation and permission gates passed")
 '''
 with tempfile.TemporaryDirectory(prefix="meeting-command-tests-") as temporary:
     folder = Path(temporary)
     swift = folder / "main.swift"
-    swift.write_text(source + "\n" + fixture)
+    swift.write_text(source + "\n" + strings + "\n" + fixture)
     binary = folder / "test"
     subprocess.run(["swiftc", str(swift), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)

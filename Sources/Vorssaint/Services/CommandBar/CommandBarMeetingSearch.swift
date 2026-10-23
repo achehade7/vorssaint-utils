@@ -25,7 +25,12 @@ final class CommandBarMeetingSearch {
     func noteEvent(entryID: String) -> NotchCalendarEvent? {
         guard NotchCalendarSupport.isEnabled(),
               EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return nil }
-        return events.first { "action.meet." + $0.id == entryID && $0.end > Date() && $0.meetingURL != nil }
+        let now = Date()
+        return events.first { "action.meet." + $0.id == entryID && Self.isSuggested($0, now: now) && $0.meetingURL != nil }
+    }
+
+    private static func isSuggested(_ event: NotchCalendarEvent, now: Date) -> Bool {
+        !event.allDay && event.end > now && event.start.timeIntervalSince(now) >= -300
     }
 
     func rows(limit: Int = 3, noteFilter: String? = nil) -> [CommandBarEntry] {
@@ -60,7 +65,7 @@ final class CommandBarMeetingSearch {
         }
         let now = Date()
         let meetings = NotchCalendarSupport.upcoming(events, now: now)
-            .filter { event in !event.allDay && (noteFilter != nil || event.meetingURL != nil)
+            .filter { event in Self.isSuggested(event, now: now) && (noteFilter != nil || event.meetingURL != nil)
                 && (noteFilter.map { CommandBarNoteSearch.matches(event.title, filter: $0) } ?? true) }.prefix(limit)
         guard !meetings.isEmpty else {
             return [CommandBarEntry(id: "action.meet.empty", title: noteFilter == nil ? strings.noMeetingLink : FeatureStrings.commandBar(L10n.shared.language).noResultsTitle,
@@ -69,19 +74,25 @@ final class CommandBarMeetingSearch {
         }
         return meetings.map { event in
             let start = DateFormatter.localizedString(from: event.start, dateStyle: .short, timeStyle: .short)
+            let remaining = event.start.timeIntervalSince(now)
+            let formatter = RelativeDateTimeFormatter()
+            formatter.locale = Locale(identifier: L10n.shared.language.rawValue)
+            formatter.unitsStyle = .short
             let relative: String
-            if event.start <= now { relative = strings.ongoing }
-            else {
-                let formatter = RelativeDateTimeFormatter()
-                formatter.locale = Locale(identifier: L10n.shared.language.rawValue)
-                formatter.unitsStyle = .short
+            if remaining <= 0 {
+                let minutes = Int(-remaining / 60)
+                let elapsed = minutes == 0 ? nil : formatter.localizedString(from: DateComponents(minute: -minutes))
+                relative = MeetingNoteStrings.started(elapsed, L10n.shared.language)
+            } else if remaining < 3600 {
+                relative = formatter.localizedString(from: DateComponents(minute: Int(ceil(remaining / 60))))
+            } else {
                 relative = formatter.localizedString(for: event.start, relativeTo: now)
             }
             return CommandBarEntry(id: (noteFilter == nil ? "action.meet." : "action.note.upcoming.") + event.id,
                                     title: event.title.isEmpty ? strings.untitled : event.title,
                                     subtitle: relative + " · " + start + " · " + (noteFilter == nil ? (event.meetingURL?.host ?? "") : MeetingNoteStrings.localized(L10n.shared.language).title),
                                     icon: .symbol(noteFilter == nil ? "video" : "doc.text"), countsUsage: false, run: { _ in
-                guard NotchCalendarSupport.isEnabled(), event.end > Date(),
+                guard NotchCalendarSupport.isEnabled(), Self.isSuggested(event, now: Date()),
                       EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
                 if noteFilter != nil { MeetingNoteService.shared.show(event, joining: false) }
                 else if let url = event.meetingURL { NSWorkspace.shared.open(url) }

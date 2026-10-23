@@ -3,6 +3,24 @@
 
 struct MeetingNoteStrings {
     let title: String, join: String, ready: String, created: String, failed: String
+    static func started(_ elapsed: String?, _ language: AppLanguage) -> String {
+        switch language {
+        case .enUS: return elapsed.map { "Started \($0)" } ?? "Just started"
+        case .ptBR: return elapsed.map { "Começou \($0)" } ?? "Acabou de começar"
+        case .tr: return elapsed.map { "Başladı: \($0)" } ?? "Az önce başladı"
+        case .ru: return elapsed.map { "Началось \($0)" } ?? "Только что началось"
+        case .es: return elapsed.map { "Empezó \($0)" } ?? "Acaba de empezar"
+        case .sk: return elapsed.map { "Začalo sa \($0)" } ?? "Práve sa začalo"
+        case .de: return elapsed.map { "Begonnen: \($0)" } ?? "Gerade begonnen"
+        case .fr: return elapsed.map { "A commencé \($0)" } ?? "Vient de commencer"
+        case .it: return elapsed.map { "Iniziata \($0)" } ?? "Appena iniziata"
+        case .ja: return elapsed.map { "\($0)に開始" } ?? "開始したばかり"
+        case .ko: return elapsed.map { "\($0) 시작" } ?? "방금 시작"
+        case .uk: return elapsed.map { "Почалося \($0)" } ?? "Щойно почалося"
+        case .zhHans: return elapsed.map { "开始于\($0)" } ?? "刚刚开始"
+        case .zhTW, .zhHK: return elapsed.map { "開始於\($0)" } ?? "剛剛開始"
+        }
+    }
     static func readFailure(_ language: AppLanguage) -> String {
         switch language {
         case .enUS: return "Could not read meeting notes"

@@ -2211,6 +2211,14 @@ final class NotchService: ObservableObject {
     }
 
     func goBack() {
+        if showingAppPanel, MenuPanelFocus.shared.request?.target == .section(.keepAwake) {
+            MenuPanelFocus.shared.showNormalPanel()
+            sectionQuery = ""
+            sectionRow = 0
+            highlightedSection = selected
+            open(sections: true)
+            return
+        }
         let changesPresentation = selectedMetric != nil || showingAppPanel
         mutatePresentation(transitionContent: changesPresentation ? .replace : .none) { selectedMetric = nil; showingAppPanel = false }
         syncVisibleConsumers()

@@ -4,6 +4,7 @@
 """Native island cup routing; no power assertions or user preferences changed."""
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 repo = Path(__file__).resolve().parents[1]
@@ -33,7 +34,7 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
 enum AppFeature { case keepAwake; static var available = true; var isAvailable: Bool { Self.available } }
 enum PanelSectionID: CaseIterable { case keepAwake, brightness, mixer, system, network, disk, power, fanControl, utilities, controls, toggles, wallpaper; var isAvailable: Bool { AppFeature.available } }
 enum MetricDetailKind { case system }
-enum NotchModule { case controls }
+enum NotchModule { case controls, clipboard }
 enum PanelLayout { static var shown = false; static func isVisibleInPanel(_ id: PanelSectionID) -> Bool { shown } }
 FOCUS_TYPES
 final class NotchService {
@@ -45,7 +46,20 @@ final class NotchService {
     var refreshed = 0
     func refreshPresentation() { refreshed += 1 }
     AWAKE_HEIGHT
-    func open(_ module: NotchModule, appPanel: Bool) { if module == .controls && appPanel { opened += 1; showingAppPanel = true } }
+    var selected = NotchModule.controls
+    var selectedMetric: MetricDetailKind?
+    var sectionQuery = "", sectionRow = 0
+    var highlightedSection: NotchModule?
+    enum Transition { case replace, none }
+    func mutatePresentation(transitionContent: Transition, _ action: () -> Void) { action() }
+    func syncVisibleConsumers() {}
+    func provideHapticFeedback() {}
+    func open(_ module: NotchModule? = nil, appPanel: Bool = false, sections: Bool = false) {
+        if let module { selected = module }
+        if selected == .controls && appPanel { opened += 1 }
+        showingAppPanel = appPanel; showingSections = sections; selectedMetric = nil
+    }
+    GO_BACK
     var detailTitle: String { DETAIL_TITLE; return "Other" }
     OPEN_KEEP_AWAKE
     func activateQuickAction(_ action: QuickAction) {
@@ -61,7 +75,7 @@ final class KeepAwakeManager: ObservableObject {
 }
 final class L10n: ObservableObject {
     static let shared = L10n(); let s = Strings()
-    struct Strings { let keepAwakeTitle = "Keep awake" }
+    struct Strings { let keepAwakeTitle = "Keep awake", obBack = "Back" }
 }
 enum NotchLayout { static let shortcutHeight: CGFloat = 80 }
 enum NotchNeonPalette { static let amber = Color.orange }
@@ -76,6 +90,7 @@ struct NotchRollingDigits: ViewModifier {
 TILE
 RIGHT_CLICK
 AWAKE_BUTTON
+BACK_BUTTON
 enum QuickAction { case keepAwake }
 struct QuickCup: View {
     let service = NotchService.shared
@@ -102,6 +117,42 @@ struct Visibility {
     VISIBILITY
 }
 
+// These state-routing assertions run without opening any window. All handlers
+// below are extracted from the production service, not reimplemented here.
+let navigation = NotchService.shared
+navigation.selected = .clipboard
+navigation.showingSections = true
+navigation.sectionQuery = "old search"; navigation.sectionRow = 2
+navigation.openKeepAwake()
+expect(navigation.showingAppPanel && !navigation.showingSections && MenuPanelFocus.shared.request?.target == .section(.keepAwake),
+       "opening coffee from Home enters the focused awake card")
+navigation.goBack()
+expect(navigation.showingSections && !navigation.showingAppPanel && navigation.selectedMetric == nil,
+       "Back from coffee returns Home, not the Controls page")
+expect(MenuPanelFocus.shared.request?.target == .normal && navigation.sectionQuery.isEmpty && navigation.sectionRow == 0,
+       "coffee Back clears only transient focus and Home search state")
+navigation.showingSections = false
+navigation.selected = .clipboard
+navigation.selectedMetric = .system
+navigation.goBack()
+expect(navigation.selected == .clipboard && navigation.selectedMetric == nil && !navigation.showingSections,
+       "normal metric Back keeps its existing page destination")
+navigation.open(.controls, appPanel: true)
+MenuPanelFocus.shared.showNormalPanel()
+navigation.goBack()
+expect(navigation.selected == .controls && !navigation.showingAppPanel && !navigation.showingSections,
+       "ordinary full-panel Back still returns to Controls")
+navigation.goBack()
+expect(navigation.selected == .controls && !navigation.showingSections,
+       "ordinary Controls navigation is unchanged")
+navigation.opened = 0
+navigation.showingAppPanel = false; navigation.showingSections = false
+navigation.selected = .controls; navigation.selectedMetric = nil
+if CommandLine.arguments.contains("--navigation-only") {
+    print("PASS: \(checks) awake Back/Home navigation checks")
+    exit(0)
+}
+
 let session = CGSessionCopyCurrentDictionary() as? [String: Any]
 guard session?["CGSSessionScreenIsLocked"] as? Bool != true else {
     fputs("ERROR: Native Keep Awake clicks require an unlocked Mac. No input was sent.\n", stderr)
@@ -117,9 +168,11 @@ defer { app.perform(setter, with: previous, with: attribute) }
 private let host = NSHostingView(rootView: HStack(spacing: 20) {
     NotchAwakeButton().frame(width: 92, height: 80)
     QuickCup().frame(width: 92, height: 80)
+    NotchBandBackButton(title: "Keep awake", action: NotchService.shared.goBack)
+        .frame(width: 120, height: 80).accessibilityIdentifier("awake.back")
 }.background(Color.black).preferredColorScheme(.dark))
-host.frame = NSRect(x: 0, y: 0, width: 204, height: 80)
-let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 204, height: 80), styleMask: [.titled], backing: .buffered, defer: false)
+host.frame = NSRect(x: 0, y: 0, width: 344, height: 80)
+let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 344, height: 80), styleMask: [.titled], backing: .buffered, defer: false)
 window.contentView = host; window.makeKeyAndOrderFront(nil)
 app.activate(ignoringOtherApps: true)
 func drain() {
@@ -217,6 +270,11 @@ AppFeature.available = false
 NotchService.shared.openKeepAwake()
 NotchService.shared.activateQuickAction(.keepAwake)
 expect(NotchService.shared.opened == 3, "unavailable Keep Awake cannot open its card through either route")
+AppFeature.available = true
+NotchService.shared.openKeepAwake()
+expect(press(host, identifier: "awake.back"), "production Back button accepts native Accessibility press")
+expect(NotchService.shared.showingSections && !NotchService.shared.showingAppPanel && MenuPanelFocus.shared.request?.target == .normal,
+       "native awake Back button returns Home with its transient card focus cleared")
 for listener in listeners { listener.stop() }
 window.orderOut(nil)
 
@@ -287,6 +345,7 @@ swift = swift.replace("TILE", "\n".join(declaration(controls, marker) for marker
 swift = swift.replace("RIGHT_CLICK", declaration(
     "Sources/Vorssaint/UI/Notch/NotchQuickCaptureView.swift", "struct NotchObsidianRightClick:"))
 swift = swift.replace("AWAKE_BUTTON", declaration(controls, "private struct NotchAwakeButton:"))
+swift = swift.replace("BACK_BUTTON", declaration("Sources/Vorssaint/UI/Notch/NotchComponents.swift", "struct NotchBandBackButton:"))
 quick_source = (repo / "Sources/Vorssaint/UI/Notch/NotchQuickAccessView.swift").read_text()
 quick_handler = declaration("Sources/Vorssaint/Services/Notch/NotchService.swift", "func activateQuickAction(")
 swift = swift.replace("QUICK_PRIMARY_HANDLER", next(line.split("case .keepAwake:", 1)[1].strip()
@@ -299,6 +358,7 @@ swift = swift.replace("VISIBILITY", declaration(panel, "private func isSectionVi
 swift = swift.replace("KEEP_AWAKE_ONLY", declaration(panel, "private var keepAwakeOnly:").replace("private var", "var", 1))
 swift = swift.replace("EMBEDDED_PANEL", declaration(panel, "private func embeddedPanel("))
 swift = swift.replace("AWAKE_HEIGHT", declaration("Sources/Vorssaint/Services/Notch/NotchService.swift", "func updateKeepAwakeCardHeight("))
+swift = swift.replace("GO_BACK", declaration("Sources/Vorssaint/Services/Notch/NotchService.swift", "func goBack()"))
 detail = declaration("Sources/Vorssaint/Services/Notch/NotchService.swift", "var detailTitle:")
 start = detail.index("if showingAppPanel {")
 end, depth = detail.index("{", start) + 1, 1
@@ -313,4 +373,4 @@ with tempfile.TemporaryDirectory(prefix="notch-keep-awake-ui-") as temporary:
     subprocess.run(["xcrun", "swiftc", "-target", "arm64-apple-macosx14.0", "-sdk",
                     "/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk", "-Xfrontend",
                     "-interface-compiler-version", "-Xfrontend", "6.3.2", str(source), "-o", str(binary)], check=True)
-    subprocess.run([str(binary)], check=True)
+    subprocess.run([str(binary), *sys.argv[1:]], check=True)
