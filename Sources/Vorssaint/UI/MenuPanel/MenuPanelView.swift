@@ -179,10 +179,38 @@ struct MenuPanelView: View {
         }
     }
 
+    private var keepAwakeOnly: Bool {
+        notchSize != nil && panelFocus.request?.target == .section(.keepAwake)
+    }
+
     /// Uses the same sections and actions inside an existing surface. The
     /// host already supplies the title and material; one native scroll view
     /// keeps long sections usable without nesting two scroll regions.
     private func embeddedPanel(size: CGSize) -> some View {
+        Group {
+            if keepAwakeOnly {
+                // The coffee shortcut opens a tool, not the app's section
+                // browser. Its own card keeps the status and duration controls
+                // together below the island's normal Back / Keep awake row.
+                OverlayScrollView(measuredHeight: $navigableContentHeight) {
+                    KeepAwakeCard(collapsible: false, showsOptions: false)
+                        .frame(width: size.width)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                            NotchService.shared.updateKeepAwakeCardHeight($0)
+                        }
+                        .environment(\.notchPresentation, true)
+                        .environment(\.colorScheme, .dark)
+                }
+                .frame(width: size.width, height: size.height)
+                .accessibilityIdentifier("notch.keepAwake.card")
+            } else {
+                embeddedNavigationPanel(size: size)
+            }
+        }
+        .frame(width: size.width, height: size.height, alignment: .top)
+    }
+
+    private func embeddedNavigationPanel(size: CGSize) -> some View {
         VStack(spacing: 12) {
             Group {
                 if let selectedMetric { metricNavigationHeader(selectedMetric) }
@@ -365,6 +393,7 @@ struct MenuPanelView: View {
     private func isSectionVisible(_ id: PanelSectionID) -> Bool {
         _ = (showKeepAwake, showBrightness, brightnessEnabled, showMixer, showSystem, showNetwork,
              showDisk, showPower, showFanControl, showUtilities, showControls, showToggles, showWallpaper)
+        if keepAwakeOnly { return id == .keepAwake && id.isAvailable }
         // The island's explicit duration request temporarily reveals its card
         // even when hidden from the normal panel, without changing the layout.
         return PanelLayout.isVisibleInPanel(id)
@@ -2724,6 +2753,7 @@ struct KeepAwakeCard: View {
         )
     }
     var collapsible = true
+    var showsOptions = true
 
     var body: some View {
         // The collapsible header supplies the "Keep awake" title, so the card's
@@ -2796,15 +2826,17 @@ struct KeepAwakeCard: View {
                     }
                 }
 
-                optionsDisclosure
+                if showsOptions {
+                    optionsDisclosure
 
-                Divider()
+                    Divider()
 
-                optionRow(title: l10n.s.clamshellTitle,
-                          caption: clamshellCaption,
-                          isOn: $awake.clamshellPreferred,
-                          disabled: awake.clamshellSetupInProgress,
-                          captionIsError: awake.clamshellSetupFailed)
+                    optionRow(title: l10n.s.clamshellTitle,
+                              caption: clamshellCaption,
+                              isOn: $awake.clamshellPreferred,
+                              disabled: awake.clamshellSetupInProgress,
+                              captionIsError: awake.clamshellSetupFailed)
+                }
             }
             .panelCard()
         }

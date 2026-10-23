@@ -209,6 +209,7 @@ final class NotchService: ObservableObject {
     @Published private var captureContentHeight: CGFloat?
     /// Kept after closing, so the next Fan Control detail opens at its size.
     @Published private var fanDetailHeight: CGFloat?
+    @Published private var keepAwakeCardHeight: CGFloat?
     @Published private(set) var power = PowerReading()
     @Published private var musicDetailVisible = false
 
@@ -884,9 +885,10 @@ final class NotchService: ObservableObject {
         }
         let musicExtras = NotchLyricsSupport.isEnabled() || NotchQueueSupport.isEnabled()
         let launcher = QuickLauncherService.shared
+        let awakeOnly = showingAppPanel && MenuPanelFocus.shared.request?.target == .section(.keepAwake)
         return pageSize(in: expandedGeometry, module: showingAppPanel ? .tools : selected,
-                        detail: selectedMetric != nil, panel: showingAppPanel,
-                        detailHeight: selectedMetric == .fan ? fanDetailHeight : nil,
+                        detail: selectedMetric != nil || awakeOnly, panel: showingAppPanel && !awakeOnly,
+                        detailHeight: awakeOnly ? (keepAwakeCardHeight ?? 156) : selectedMetric == .fan ? fanDetailHeight : nil,
                         musicExtraHeight: musicExtras && musicDetailVisible ? geometry.musicExtrasHeight : 0,
                         fileMediaHeight: !choosingFileDropDestination && AppFeature.mediaTools.isAvailable
                             && NotchFileToolsService.shared.mediaPresented ? NotchFileToolsService.shared.mediaContentHeight : nil,
@@ -987,7 +989,10 @@ final class NotchService: ObservableObject {
     }
     /// A detail's title, the app panel's, or the island's own with no sections.
     var detailTitle: String {
-        if showingAppPanel { return "Vorssaint" }
+        if showingAppPanel {
+            return MenuPanelFocus.shared.request?.target == .section(.keepAwake)
+                ? L10n.shared.s.keepAwakeTitle : "Vorssaint"
+        }
         let language = L10n.shared.language
         guard let metric = selectedMetric else { return FeatureStrings.notch(language).title }
         // The fan card opens Fan Control, so its page shares that title.
@@ -2190,6 +2195,18 @@ final class NotchService: ObservableObject {
         let measured = ceil(height)
         guard fanDetailHeight != measured else { return }
         fanDetailHeight = measured
+        refreshPresentation()
+    }
+
+    /// The coffee tool fits its duration card; the ordinary app panel keeps
+    /// its full navigation height. The existing detail geometry caps both.
+    func updateKeepAwakeCardHeight(_ height: CGFloat) {
+        guard expanded, showingAppPanel, !showingSections,
+              MenuPanelFocus.shared.request?.target == .section(.keepAwake),
+              height.isFinite, height > 0 else { return }
+        let measured = ceil(height)
+        guard keepAwakeCardHeight != measured else { return }
+        keepAwakeCardHeight = measured
         refreshPresentation()
     }
 

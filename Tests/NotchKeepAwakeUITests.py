@@ -31,7 +31,7 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     checks += 1; if !condition() { fatalError(message) }
 }
 enum AppFeature { case keepAwake; static var available = true; var isAvailable: Bool { Self.available } }
-enum PanelSectionID { case keepAwake, system; var isAvailable: Bool { AppFeature.available } }
+enum PanelSectionID: CaseIterable { case keepAwake, brightness, mixer, system, network, disk, power, fanControl, utilities, controls, toggles, wallpaper; var isAvailable: Bool { AppFeature.available } }
 enum MetricDetailKind { case system }
 enum NotchModule { case controls }
 enum PanelLayout { static var shown = false; static func isVisibleInPanel(_ id: PanelSectionID) -> Bool { shown } }
@@ -39,7 +39,14 @@ FOCUS_TYPES
 final class NotchService {
     static let shared = NotchService()
     var opened = 0
-    func open(_ module: NotchModule, appPanel: Bool) { if module == .controls && appPanel { opened += 1 } }
+    var showingAppPanel = false
+    var expanded = true, showingSections = false
+    var keepAwakeCardHeight: CGFloat?
+    var refreshed = 0
+    func refreshPresentation() { refreshed += 1 }
+    AWAKE_HEIGHT
+    func open(_ module: NotchModule, appPanel: Bool) { if module == .controls && appPanel { opened += 1; showingAppPanel = true } }
+    var detailTitle: String { DETAIL_TITLE; return "Other" }
     OPEN_KEEP_AWAKE
     func activateQuickAction(_ action: QuickAction) {
         guard AppFeature.available else { return }
@@ -86,6 +93,8 @@ struct QuickCup: View {
 }
 struct Visibility {
     let panelFocus = MenuPanelFocus.shared
+    var notchSize: CGSize? = CGSize(width: 520, height: 260)
+    KEEP_AWAKE_ONLY
     let showKeepAwake = false, showBrightness = false, brightnessEnabled = false, showMixer = false,
         showSystem = false, showNetwork = false, showDisk = false, showPower = false,
         showFanControl = false, showUtilities = false, showControls = false, showToggles = false,
@@ -151,15 +160,26 @@ func mouseClick(_ target: NSView, secondary: Bool) {
     drain()
 }
 let awake = KeepAwakeManager.shared
-let visibility = Visibility()
+var visibility = Visibility()
 expect(!visibility.isSectionVisible(.keepAwake), "hidden card stays hidden during normal presentation")
+PanelLayout.shown = true
+expect(PanelSectionID.allCases.allSatisfy(visibility.isSectionVisible), "normal panel exposes every enabled section before the cup request")
 mouseClick(quick, secondary: false)
 expect(NotchService.shared.opened == 1 && MenuPanelFocus.shared.request?.target == .section(.keepAwake),
        "quickaccess primary mouse click opens the existing duration card")
+expect(NotchService.shared.detailTitle == "Keep awake", "focused island header names only Keep awake")
+NotchService.shared.updateKeepAwakeCardHeight(120.2)
+expect(NotchService.shared.keepAwakeCardHeight == 121 && NotchService.shared.refreshed == 1, "focused card measures and refreshes its compact height")
+NotchService.shared.updateKeepAwakeCardHeight(120.2)
+NotchService.shared.updateKeepAwakeCardHeight(.nan)
+NotchService.shared.updateKeepAwakeCardHeight(0)
+expect(NotchService.shared.refreshed == 1, "unchanged or invalid heights cannot cause a resize loop")
 expect(!awake.isActive && awake.toggles == 0, "opening the duration card does not start a session")
+expect(PanelSectionID.allCases.filter(visibility.isSectionVisible) == [.keepAwake] && PanelLayout.shown,
+       "coffee request shows ONLY awake even when every category is enabled")
+PanelLayout.shown = false
 expect(visibility.isSectionVisible(.keepAwake) && !PanelLayout.shown,
-       "explicit request reveals a hidden card without changing saved visibility")
-expect(!visibility.isSectionVisible(.system), "the request does not reveal other hidden cards")
+       "explicit request also reveals a hidden awake card without changing saved visibility")
 mouseClick(quick, secondary: true)
 expect(awake.isActive && awake.toggles == 1 && NotchService.shared.opened == 1,
        "quickaccess native right click starts indefinite awake without opening a card")
@@ -183,7 +203,15 @@ expect(!quick.handle(click(.rightMouseDown, at: inside, in: other)), "other wind
 quick.isHidden = true
 expect(!quick.handle(click(.rightMouseDown, at: inside)), "hidden cup cannot intercept a click")
 quick.isHidden = false
+PanelLayout.shown = true
+visibility.notchSize = nil
+expect(PanelSectionID.allCases.allSatisfy(visibility.isSectionVisible), "standalone menu panel retains all sections for an ordinary focus request")
+visibility.notchSize = CGSize(width: 520, height: 260)
 MenuPanelFocus.shared.showNormalPanel()
+expect(PanelSectionID.allCases.allSatisfy(visibility.isSectionVisible) && NotchService.shared.detailTitle == "Vorssaint", "normal app-panel route restores every enabled category and its normal title")
+NotchService.shared.updateKeepAwakeCardHeight(400)
+expect(NotchService.shared.keepAwakeCardHeight == 121, "general app panel is not resized by a stale awake measurement")
+PanelLayout.shown = false
 expect(!visibility.isSectionVisible(.keepAwake), "returning to the normal panel restores hidden layout")
 AppFeature.available = false
 NotchService.shared.openKeepAwake()
@@ -191,6 +219,61 @@ NotchService.shared.activateQuickAction(.keepAwake)
 expect(NotchService.shared.opened == 3, "unavailable Keep Awake cannot open its card through either route")
 for listener in listeners { listener.stop() }
 window.orderOut(nil)
+
+// Exercise the real focused container. Leaf content is a marker here; the
+// unchanged production KeepAwakeCard is inspected in the installed app.
+private struct NotchPresentationKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var notchPresentation: Bool { get { self[NotchPresentationKey.self] } set { self[NotchPresentationKey.self] = newValue } }
+}
+struct OverlayScrollView<Content: View>: View {
+    @Binding var measuredHeight: CGFloat
+    @ViewBuilder var content: () -> Content
+    var body: some View { ScrollView { content() } }
+}
+struct KeepAwakeCard: View {
+    let collapsible: Bool
+    var showsOptions = true
+    var body: some View { VStack {
+        Text("Existing awake controls").frame(height: 140).accessibilityIdentifier("fixture.awakeControls")
+        if showsOptions { Text("Options").accessibilityIdentifier("fixture.awakeOptions") }
+    } }
+}
+struct FocusedContainer: View {
+    let notchSize: CGSize? = CGSize(width: 520, height: 260)
+    @ObservedObject var panelFocus = MenuPanelFocus.shared
+    @State var navigableContentHeight: CGFloat = 0
+    KEEP_AWAKE_ONLY
+    EMBEDDED_PANEL
+    private func embeddedNavigationPanel(size: CGSize) -> some View {
+        VStack {
+            Text("All section tabs").accessibilityIdentifier("fixture.navigation")
+            Text("General app footer").accessibilityIdentifier("fixture.footer")
+        }.frame(width: size.width, height: size.height)
+    }
+    var body: some View { embeddedPanel(size: notchSize!) }
+}
+func identifiers(_ element: AnyObject) -> [String] {
+    let current = (element.accessibilityIdentifier?() ?? "").isEmpty ? [] : [element.accessibilityIdentifier?() ?? ""]
+    return current + (element.accessibilityChildren?() ?? []).flatMap { identifiers($0 as AnyObject) }
+}
+AppFeature.available = true
+PanelLayout.shown = true
+MenuPanelFocus.shared.focus(.keepAwake)
+let focusedHost = NSHostingView(rootView: FocusedContainer())
+let focusedWindow = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 520, height: 260), styleMask: [.titled], backing: .buffered, defer: false)
+focusedWindow.contentView = focusedHost; focusedWindow.makeKeyAndOrderFront(nil)
+drain()
+let focusedIDs = identifiers(focusedHost)
+expect(focusedIDs.contains("notch.keepAwake.card") && !focusedIDs.contains("fixture.navigation") && !focusedIDs.contains("fixture.footer") && !focusedIDs.contains("fixture.awakeOptions"),
+       "production embedded awake container has no global category toolbar, app footer or optional settings")
+MenuPanelFocus.shared.showNormalPanel()
+drain()
+let normalIDs = identifiers(focusedHost)
+expect(normalIDs.contains("fixture.navigation") && normalIDs.contains("fixture.footer") && !normalIDs.contains("notch.keepAwake.card"),
+       "normal app panel still uses its ordinary navigation and footer")
+focusedWindow.orderOut(nil)
+
 print("PASS: \(checks) native Keep Awake checks")
 '''
 swift = swift.replace("FOCUS_TYPES", "\n".join(declaration(panel, marker) for marker in [
@@ -213,6 +296,16 @@ swift = swift.replace("QUICK_PRIMARY_ACTION", next(line.strip() for line in quic
 secondary_start = quick_source.index("else if action == .control(.keepAwake), motion.interactive {")
 swift = swift.replace("QUICK_SECONDARY", quick_source[secondary_start:].splitlines()[1].strip())
 swift = swift.replace("VISIBILITY", declaration(panel, "private func isSectionVisible(").replace("private func", "func", 1))
+swift = swift.replace("KEEP_AWAKE_ONLY", declaration(panel, "private var keepAwakeOnly:").replace("private var", "var", 1))
+swift = swift.replace("EMBEDDED_PANEL", declaration(panel, "private func embeddedPanel("))
+swift = swift.replace("AWAKE_HEIGHT", declaration("Sources/Vorssaint/Services/Notch/NotchService.swift", "func updateKeepAwakeCardHeight("))
+detail = declaration("Sources/Vorssaint/Services/Notch/NotchService.swift", "var detailTitle:")
+start = detail.index("if showingAppPanel {")
+end, depth = detail.index("{", start) + 1, 1
+while depth:
+    depth += (detail[end] == "{") - (detail[end] == "}")
+    end += 1
+swift = swift.replace("DETAIL_TITLE", detail[start:end])
 with tempfile.TemporaryDirectory(prefix="notch-keep-awake-ui-") as temporary:
     source = Path(temporary) / "main.swift"
     source.write_text(swift)
