@@ -445,6 +445,10 @@ if (( TEST )); then
         Sources/Vorssaint/Services/Clipboard/ClipboardHistorySupport.swift
         Sources/Vorssaint/Services/Clipboard/ClipboardDiff.swift
         Sources/Vorssaint/Core/ClipboardDiffStrings.swift
+        Sources/Vorssaint/Services/Clipboard/PayloadInspector.swift
+        Sources/Vorssaint/Core/PayloadInspectorStrings.swift
+        Sources/Vorssaint/Services/QuickTools/ScreenCompareModel.swift
+        Sources/Vorssaint/Core/ScreenCompareStrings.swift
         Sources/Vorssaint/Core/ColorValue.swift
         Sources/Vorssaint/Services/Clipboard/ClipboardAutoClearSupport.swift
         Sources/Vorssaint/Services/AutoQuit/AutoQuitSupport.swift

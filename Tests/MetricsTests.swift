@@ -26,6 +26,8 @@ struct MetricsTests {
                 ClipboardFeatureTests.run(suite)
                 PastePlainTests.run(suite)
             }),
+            ("payload-inspector", { PayloadInspectorTests.run(suite) }),
+            ("screen-compare", { ScreenCompareTests.run(suite) }),
             ("pointer-input", {
                 PointerOnDisplayContract.run(suite)
                 PointerInputFeatureTests.run(suite)

@@ -6,6 +6,14 @@ import AppKit
 /// Production destination methods run against controlled delivery results.
 /// Native transport and payload integrity have separate transfer tests.
 enum ShelfDropRoutingContract {
+    enum ClipboardFileDiff { enum Side: CaseIterable { case before, after } }
+    final class ClipboardFileDiffService {
+        static let shared = ClipboardFileDiffService()
+        // This fixture exercises shelf/media routing. Text target delivery is
+        // covered with actual files in ClipboardFileDiffTests.
+        func files(from board: NSPasteboard) -> [URL]? { nil }
+        func accept(_ board: NSPasteboard, side: ClipboardFileDiff.Side) -> Bool { false }
+    }
     enum AppFeature {
         static var shelf = Feature()
         static var mediaTools = Feature()
@@ -74,6 +82,9 @@ enum ShelfDropRoutingContract {
         var dragPlaceholder = true
         var choosingFileDropDestination = false
         var targetsMediaDrop = false
+        var offeringFileDiff = false
+        var fileDiffTarget: ClipboardFileDiff.Side?
+        var fileDiffDropFrames: [ClipboardFileDiff.Side: CGRect] = [:]
         var fileDropActive = false
         var fileDropPoint: CGPoint?
         var pinned = false

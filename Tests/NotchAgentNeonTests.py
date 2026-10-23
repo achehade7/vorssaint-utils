@@ -37,6 +37,8 @@ service_source = (repo / "Sources/Vorssaint/Services/Notch/NotchService.swift").
 meeting_handler = declaration("    func signalMeetingStarted(at", service_source)
 meeting_click = declaration("        if selectedNotice.meetingReminder {", service_source)
 reminder_handler = declaration("    func signalMeetingReminder(title:", service_source)
+# Advance both thresholds for the same event without waiting nine real minutes.
+reminder_handler = reminder_handler.replace("let now = Date()", "let now = reminderClock ?? Date()")
 notice_can_present = declaration("    private var noticeCanPresent:", service_source).replace("private ", "", 1)
 notice_changed = declaration(".onChange(of: service.notice) { _, notice in")
 notice_changed = notice_changed[notice_changed.index("{ _, notice in") + len("{ _, notice in"):-1]
@@ -106,7 +108,9 @@ final class MeetingService {
     var captureControls: Bool?
     var neonMeetingAt: Date?
     var lastMeetingReminderStart: Date?
+    var lastMeetingFinalReminderStart: Date?
     var lastMeetingAnnouncementStart: Date?
+    var reminderClock: Date?
     var notices: [NotchNotice] = []
     func show(_ notice: NotchNotice) -> Bool {
         guard canShow else { return false }
@@ -127,14 +131,36 @@ final class MeetingClickHost {
     var dismissed = 0, calendars = 0
     func dismissNotice() { dismissed += 1 }
     func open(_ page: Page) { calendars += 1 }
-    func click(_ selectedNotice: NotchNotice) {
+    func click(_ selectedNotice: NotchNotice, modifiers: NSEvent.ModifierFlags = []) {
 MEETING_CLICK
     }
 }
-enum AppLanguage: String { case enUS = "en-US" }
+struct NotchCalendarEvent: Equatable {
+    var calendarItemIdentifier: String
+    var start: Date
+    var end = Date().addingTimeInterval(1800)
+    var meetingURL: URL?
+    var allDay = false
+    var noteEventKey = "exact-note-identity"
+}
+final class NotchCalendarService {
+    static let shared = NotchCalendarService()
+    var events: [NotchCalendarEvent] = [], reads = 0
+    var allowed = true
+    func meetingEvents() async -> [NotchCalendarEvent] {
+        reads += 1
+        return allowed ? events : []
+    }
+}
+final class MeetingNoteService {
+    static let shared = MeetingNoteService()
+    var prepared: [NotchCalendarEvent] = []
+    func show(_ event: NotchCalendarEvent) { prepared.append(event) }
+}
+enum AppLanguage: String { case enUS = "en-US", de }
 struct L10n {
-    static let shared = L10n()
-    let language = AppLanguage.enUS
+    static var shared = L10n()
+    var language = AppLanguage.enUS
 }
 struct FeatureStrings {
     struct CalendarText { let untitled = "Untitled event"; let ongoing = "Happening now" }
@@ -153,6 +179,8 @@ struct NotchNotice {
     var meetingReminder = false
     var meetingStartsNow = false
     var meetingURL: URL? = nil
+    var meetingCalendarItemIdentifier: String? = nil
+    var meetingStart: Date? = nil
     var audioHandoff = false
     var terminalStatus: Int?
     struct Notification { var app: String }
@@ -391,6 +419,77 @@ let linkedReminder = MeetingService()
 linkedReminder.signalMeetingReminder(title: "Planning", start: reminderStart, at: Date(), url: joinLink)
 expect(linkedReminder.notices.first?.meetingURL?.absoluteString == joinLink,
        "ten-minute reminder also preserves the direct call link")
+let clock = Date(timeIntervalSince1970: 1_800_000_000)
+let staged = MeetingService(), stagedStart = clock.addingTimeInterval(600)
+staged.reminderClock = clock
+staged.signalMeetingReminder(title: "Planning", start: stagedStart, at: clock, url: joinLink)
+expect(staged.notices.count == 1 && staged.lastMeetingReminderStart == stagedStart
+       && staged.lastMeetingFinalReminderStart == nil,
+       "the ten-minute stage records only its own deduplication key")
+staged.reminderClock = clock.addingTimeInterval(540)
+staged.signalMeetingReminder(title: "Planning", start: stagedStart, at: staged.reminderClock!, url: joinLink,
+                             calendarItemIdentifier: "calendar-item")
+expect(staged.notices.count == 2 && staged.notices[1].detail == "1 min"
+       && staged.notices[1].meetingReminder && !staged.notices[1].meetingStartsNow
+       && staged.notices[1].meetingURL?.absoluteString == joinLink
+       && staged.notices[1].meetingCalendarItemIdentifier == "calendar-item"
+       && staged.notices[1].meetingStart == stagedStart
+       && staged.lastMeetingFinalReminderStart == stagedStart,
+       "the same event gets a separate one-minute reminder with the exact call link")
+staged.signalMeetingReminder(title: "Duplicate", start: stagedStart, at: staged.reminderClock!, url: joinLink)
+expect(staged.notices.count == 2, "duplicate delivery cannot repeat the one-minute stage")
+staged.reminderClock = clock
+staged.signalMeetingReminder(title: "Duplicate", start: stagedStart, at: clock, url: joinLink)
+expect(staged.notices.count == 2, "the later stage does not erase ten-minute deduplication")
+for seconds in [60.0, 600.0] {
+    for delta in [0.001, 0, -3, -3.001] {
+        let boundary = MeetingService()
+        boundary.reminderClock = clock
+        boundary.signalMeetingReminder(title: "Boundary", start: clock.addingTimeInterval(seconds + delta), at: clock)
+        expect(boundary.notices.count == ((delta <= 0 && delta >= -3) ? 1 : 0),
+               "each reminder accepts only its exact three-second delivery window")
+    }
+    for condition in 0..<10 {
+        let blocked = MeetingService()
+        blocked.reminderClock = clock
+        var timestamp = clock, start = clock.addingTimeInterval(seconds)
+        switch condition {
+        case 0: blocked.acceptsSystemFeedback = false
+        case 1: blocked.expanded = true
+        case 2: blocked.dragPlaceholder = true
+        case 3: blocked.captureControls = true
+        case 4: blocked.canShow = false
+        case 5: timestamp = clock.addingTimeInterval(-2)
+        case 6: timestamp = clock.addingTimeInterval(0.001)
+        case 7: start = clock.addingTimeInterval(-1)
+        case 8: start = clock.addingTimeInterval(300)
+        default: start = Date(timeIntervalSince1970: .nan)
+        }
+        blocked.signalMeetingReminder(title: "Ignored", start: start, at: timestamp)
+        expect(blocked.notices.isEmpty && blocked.lastMeetingReminderStart == nil
+               && blocked.lastMeetingFinalReminderStart == nil,
+               "both stages reject unavailable surfaces and stale, future or wrong-threshold messages")
+    }
+}
+let localized = MeetingService()
+localized.reminderClock = clock
+L10n.shared.language = .de
+localized.signalMeetingReminder(title: "Planung", start: clock.addingTimeInterval(60), at: clock)
+expect(localized.notices.first?.detail == "1 Min.", "one-minute detail uses the selected app language")
+L10n.shared.language = .enUS
+let suppressed = MeetingService()
+suppressed.reminderClock = clock
+suppressed.acceptsSystemFeedback = false
+suppressed.signalMeetingReminder(title: "Quiet", start: stagedStart, at: clock)
+suppressed.acceptsSystemFeedback = true
+suppressed.reminderClock = clock.addingTimeInterval(4)
+suppressed.signalMeetingReminder(title: "Late", start: stagedStart, at: clock)
+suppressed.signalMeetingReminder(title: "Late", start: stagedStart, at: suppressed.reminderClock!)
+expect(suppressed.notices.isEmpty, "a suppressed reminder cannot replay after its delivery window")
+suppressed.reminderClock = clock.addingTimeInterval(540)
+suppressed.signalMeetingReminder(title: "Planning", start: stagedStart, at: suppressed.reminderClock!)
+expect(suppressed.notices.count == 1 && suppressed.notices[0].detail == "1 min",
+       "missing a ten-minute reminder still permits the fresh one-minute stage")
 for offset in [-5.0, 5.0] {
     let late = MeetingService()
     late.signalMeetingStarted(at: Date(), title: "Missed", start: Date().addingTimeInterval(offset), url: joinLink)
@@ -408,6 +507,53 @@ expect(NSWorkspace.shared.opened.map(\.absoluteString) == [joinLink, joinLink]
 clicks.click(missingLink.notices[0])
 expect(clicks.calendars == 1 && NSWorkspace.shared.opened.count == 2,
        "only a meeting without a call link opens Calendar")
+let calendar = NotchCalendarService.shared, notes = MeetingNoteService.shared
+let exactEvent = NotchCalendarEvent(calendarItemIdentifier: "calendar-item", start: stagedStart,
+                                    meetingURL: URL(string: joinLink))
+calendar.events = [exactEvent]
+let commandClicks = MeetingClickHost(), commandNotice = staged.notices[1]
+func settleMeetingClick() { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
+commandClicks.click(commandNotice, modifiers: .command)
+settleMeetingClick()
+expect(notes.prepared == [exactEvent] && calendar.reads == 1 && commandClicks.dismissed == 1
+       && NSWorkspace.shared.opened.count == 2,
+       "Command-click resolves the exact occurrence and opens the existing Prepare & join flow before joining")
+commandClicks.click(commandNotice)
+expect(NSWorkspace.shared.opened.last?.absoluteString == joinLink && calendar.reads == 1
+       && notes.prepared.count == 1,
+       "ordinary click joins immediately without reading the calendar or preparing a note")
+let opensBeforeInvalid = NSWorkspace.shared.opened.count
+for missing in 0..<3 {
+    var notice = commandNotice
+    if missing == 0 { notice.meetingCalendarItemIdentifier = nil }
+    if missing == 1 { notice.meetingStart = nil }
+    if missing == 2 { notice.meetingURL = nil }
+    let before = commandClicks.calendars
+    commandClicks.click(notice, modifiers: .command)
+    settleMeetingClick()
+    expect(commandClicks.calendars == before + 1 && calendar.reads == 1
+           && notes.prepared.count == 1 && NSWorkspace.shared.opened.count == opensBeforeInvalid,
+           "missing occurrence context opens Calendar without inventing a note identity or joining")
+}
+for mismatch in 0..<7 {
+    var event = exactEvent
+    switch mismatch {
+    case 0: event.calendarItemIdentifier = "different-item"
+    case 1: event.start = stagedStart.addingTimeInterval(86400)
+    case 2: event.meetingURL = URL(string: "https://meet.google.com/other-call")
+    case 3: event.end = Date().addingTimeInterval(-1)
+    case 4: event.allDay = true
+    default: break
+    }
+    calendar.events = mismatch == 5 ? [event, event] : [event]
+    calendar.allowed = mismatch != 6
+    let before = commandClicks.calendars
+    commandClicks.click(commandNotice, modifiers: .command)
+    settleMeetingClick()
+    expect(commandClicks.calendars == before + 1 && notes.prepared.count == 1
+           && NSWorkspace.shared.opened.count == opensBeforeInvalid,
+           "changed, expired, ambiguous or inaccessible events cannot create a note for the wrong occurrence")
+}
 print("PASS: \(checks) agent neon checks")
 '''
 for token, value in [("SIGNATURE", signature), ("DURATION", duration), ("SIGNAL", signal),

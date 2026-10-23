@@ -23,6 +23,7 @@ struct NotchView: View {
         feedbackSurface
             .coordinateSpace(name: "islandDropSurface")
             .onPreferenceChange(WorkspaceDropFrames.self) { service.workspaceDropFrames = $0 }
+            .onPreferenceChange(FileDiffDropFrames.self) { service.fileDiffDropFrames = $0 }
             .foregroundStyle(.white)
             // The window server leaves SwiftUI content that ignores hit tests
             // out of its own hit test unless it is fully opaque. The backdrop
@@ -156,7 +157,7 @@ struct NotchView: View {
                     .frame(width: service.surfaceSize.width, height: service.surfaceSize.height, alignment: .top)
             } else {
                 Button {
-                    service.activateNotice(notice)
+                    service.activateNotice(notice, modifiers: NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags)
                 } label: {
                     Group {
                         if floats {

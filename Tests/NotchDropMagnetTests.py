@@ -77,6 +77,17 @@ final class ShelfService {
     var deliveries = 0
     func acceptDrop(pasteboard: NSPasteboard) -> Bool { deliveries += 1; return true }
 }
+enum ClipboardFileDiff { enum Side: String, CaseIterable { case before, after } }
+final class ClipboardFileDiffService {
+    static let shared = ClipboardFileDiffService()
+    var compatible = false
+    var deliveries: [ClipboardFileDiff.Side] = []
+    func files(from: NSPasteboard) -> [URL]? { compatible ? [URL(fileURLWithPath: "/tmp/config.json")] : nil }
+    func accept(_ board: NSPasteboard, side: ClipboardFileDiff.Side) -> Bool {
+        guard compatible else { return false }
+        deliveries.append(side); return true
+    }
+}
 final class Service {
     var acceptsUserInteraction = true, displayIsFullscreen = false
     var captureControls: Int?
@@ -84,6 +95,11 @@ final class Service {
     var fileDropActive = false
     var fileDropPoint: CGPoint?
     var routingFileDrag = false, choosingFileDropDestination = false, targetsMediaDrop = false
+    var offeringFileDiff = false
+    var fileDiffTarget: ClipboardFileDiff.Side?
+    var fileDiffDropFrames: [ClipboardFileDiff.Side: CGRect] = [
+        .before: CGRect(x: 20, y: 70, width: 190, height: 100),
+        .after: CGRect(x: 230, y: 70, width: 190, height: 100)]
     var dragTargetWorkspace: String?
     var workspaceDropFrames = ["G": CGRect(x: 30, y: 5, width: 22, height: 26)]
     var workspaceDragWork: DispatchWorkItem?
@@ -207,6 +223,29 @@ _ = service.updateFileDrop(at: shelfPoint)
 service.endFileDrop()
 expect(service.fileDropPoint == nil && !service.routingFileDrag && !service.choosingFileDropDestination,
        "leaving the island clears both magnetic decoration and the prior routing state")
+files.compatible = false
+let diff = ClipboardFileDiffService.shared
+diff.compatible = true
+for (side, point) in [(ClipboardFileDiff.Side.before, shelfPoint), (.after, mediaPoint)] {
+    let previousShelf = shelf.deliveries
+    service.beginFileDrop(board)
+    expect(service.offeringFileDiff && service.updateFileDrop(at: point) && service.fileDiffTarget == side,
+           "text files expose the precise measured Before/After target")
+    expect(service.accept(board) && diff.deliveries.last == side && shelf.deliveries == previousShelf,
+           "dropping on a comparison side routes there without storing a shelf copy")
+    expect(!service.offeringFileDiff && service.fileDiffTarget == nil,
+           "comparison drop completion clears transient target state")
+}
+let previousShelf = shelf.deliveries, previousDiff = diff.deliveries.count
+service.beginFileDrop(board)
+expect(service.updateFileDrop(at: CGPoint(x: 100, y: 200)) && service.fileDiffTarget == nil,
+       "the shelf area stays available while text comparison targets are offered")
+expect(service.accept(board) && shelf.deliveries == previousShelf + 1 && diff.deliveries.count == previousDiff,
+       "explicit shelf drop never starts a comparison")
+service.beginFileDrop(board)
+_ = service.updateFileDrop(at: mediaPoint)
+expect(!service.updateFileDrop(at: CGPoint(x: 40, y: 15)) && !service.accept(board),
+       "moving from comparison target to a workspace cannot accidentally compare")
 print("NotchDropMagnetTests: \(checks) checks passed")
 '''
 swift = swift.replace("MAGNET", declaration(magnet, "enum NotchDropMagnet"))

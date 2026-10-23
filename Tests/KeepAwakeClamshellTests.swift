@@ -180,7 +180,7 @@ enum KeepAwakeClamshellTests {
                && prefs.standard.integer(forKey: Key.defaultDuration) == 30,
                "the island starts indefinitely without replacing the card's saved duration")
         island.toggleIndefinitely(); C.drain()
-        expect(!island.isActive, "a second island click stops its open-ended session")
+        expect(!island.isActive, "a second island secondary click stops its open-ended session")
         island.toggle()
         expect(island.sessionMinutes == 30 && island.endDate != nil,
                "the full card still restarts its saved timed session after the island toggle")

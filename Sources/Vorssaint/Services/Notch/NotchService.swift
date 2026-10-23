@@ -21,6 +21,8 @@ struct NotchNotice: Equatable {
     var meetingReminder = false
     var meetingStartsNow = false
     var meetingURL: URL? = nil
+    var meetingCalendarItemIdentifier: String? = nil
+    var meetingStart: Date? = nil
     var replayed = false
     var duration: TimeInterval { meetingNote ? 3 : meetingStartsNow ? 4 : replayed ? 3 : event.duration }
     /// The agent an AI notice is about, which tints its mark.
@@ -132,6 +134,9 @@ final class NotchService: ObservableObject {
     @Published private(set) var dragPlaceholder = false
     @Published private(set) var choosingFileDropDestination = false
     @Published private(set) var targetsMediaDrop = false
+    @Published private(set) var offeringFileDiff = false
+    @Published private(set) var fileDiffTarget: ClipboardFileDiff.Side?
+    var fileDiffDropFrames: [ClipboardFileDiff.Side: CGRect] = [:]
     @Published private(set) var fileDropPoint: CGPoint?
     private var fileDropActive = false
     @Published private(set) var selectedMetric: MetricDetailKind?
@@ -163,6 +168,7 @@ final class NotchService: ObservableObject {
     @Published private(set) var neonCopyAt: Date?
     @Published private(set) var neonMeetingAt: Date?
     private var lastMeetingReminderStart: Date?
+    private var lastMeetingFinalReminderStart: Date?
     private var lastMeetingAnnouncementStart: Date?
     @Published private(set) var nightPalette: Double = 0
     @Published private(set) var routingFileDrag = false
@@ -1679,24 +1685,29 @@ final class NotchService: ObservableObject {
         }
     }
 
-    /// A single ten-minute notice from SketchyBar's existing calendar feed.
+    /// Ten-minute and one-minute notices from SketchyBar's existing calendar feed.
     /// Missed reminders never queue behind quiet mode, sleep or an open tool.
-    func signalMeetingReminder(title: String, start: Date, at date: Date, url: String? = nil) {
+    func signalMeetingReminder(title: String, start: Date, at date: Date, url: String? = nil,
+                               calendarItemIdentifier: String? = nil) {
         let now = Date()
+        let remaining = start.timeIntervalSince(now)
+        let finalReminder = (57...60).contains(remaining)
         guard acceptsSystemFeedback, noticeCanPresent,
               (0..<2).contains(now.timeIntervalSince(date)),
-              (597...600).contains(start.timeIntervalSince(now)),
-              lastMeetingReminderStart != start else { return }
+              finalReminder || (597...600).contains(remaining),
+              (finalReminder ? lastMeetingFinalReminderStart : lastMeetingReminderStart) != start else { return }
         let label = String(title.components(separatedBy: .controlCharacters).joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
-        let detail = Duration.seconds(600).formatted(.units(allowed: [.minutes], width: .abbreviated)
+        let detail = Duration.seconds(finalReminder ? 60 : 600).formatted(.units(allowed: [.minutes], width: .abbreviated)
             .locale(Locale(identifier: L10n.shared.language.rawValue)))
         if show(NotchNotice(event: .systemNotification,
                             title: label.isEmpty ? FeatureStrings.notchCalendar(L10n.shared.language).untitled : label,
                             detail: detail, symbol: "calendar", meetingReminder: true,
                             meetingURL: NotchCalendarSupport.meetingURL(
-                                url: url.flatMap(URL.init(string:)), location: nil, notes: nil))) {
-            lastMeetingReminderStart = start
+                                url: url.flatMap(URL.init(string:)), location: nil, notes: nil),
+                            meetingCalendarItemIdentifier: calendarItemIdentifier, meetingStart: start)) {
+            if finalReminder { lastMeetingFinalReminderStart = start }
+            else { lastMeetingReminderStart = start }
         }
     }
 
@@ -2094,7 +2105,7 @@ final class NotchService: ObservableObject {
         case .module(let module): select(module)
         case .control(let item):
             switch item {
-            case .keepAwake: KeepAwakeManager.shared.toggleIndefinitely()
+            case .keepAwake: openKeepAwake()
             case .microphone: MicMuteService.shared.toggle()
             case .screenshot: perform { ScreenshotService.shared.capture() }
             case .recording: perform { ScreenRecorderService.shared.toggle() }
@@ -2509,6 +2520,8 @@ final class NotchService: ObservableObject {
         routingFileDrag = NotchAeroSpaceService.shared.state.current != nil && pasteboard.types?.contains(.fileURL) == true
         choosingFileDropDestination = NotchFileToolsService.shared.mediaDropContent(for: pasteboard) != nil
         targetsMediaDrop = false
+        offeringFileDiff = ClipboardFileDiffService.shared.files(from: pasteboard) != nil
+        fileDiffTarget = nil
         open(.files, takeFocus: false)
     }
 
@@ -2534,6 +2547,8 @@ final class NotchService: ObservableObject {
         }
         // The number is a spring-loaded route, not a destination that stores files.
         if workspace != nil { return false }
+        let diffTarget = offeringFileDiff ? ClipboardFileDiff.Side.allCases.first { fileDiffDropFrames[$0]?.contains(point) == true } : nil
+        if fileDiffTarget != diffTarget { fileDiffTarget = diffTarget }
         let targeted = choosingFileDropDestination
             && NotchFileToolsSupport.mediaDropArea(in: expandedGeometry, size: surfaceSize).contains(point)
         if targetsMediaDrop != targeted { targetsMediaDrop = targeted }
@@ -2551,8 +2566,10 @@ final class NotchService: ObservableObject {
         workspaceDragWork?.cancel(); workspaceDragWork = nil
         dragTargetWorkspace = nil
         routingFileDrag = false
-        let changed = choosingFileDropDestination
-        if changed { choosingFileDropDestination = false }
+        let changed = choosingFileDropDestination || offeringFileDiff
+        choosingFileDropDestination = false
+        offeringFileDiff = false
+        fileDiffTarget = nil
         if targetsMediaDrop { targetsMediaDrop = false }
         if changed, acceptsUserInteraction { refreshPresentation() }
     }
@@ -2565,6 +2582,15 @@ final class NotchService: ObservableObject {
     func accept(_ pasteboard: NSPasteboard) -> Bool {
         defer { endFileDrop() }
         guard canAcceptFileDrop, dragTargetWorkspace == nil else { return false }
+        if offeringFileDiff, let fileDiffTarget {
+            let accepted = ClipboardFileDiffService.shared.accept(pasteboard, side: fileDiffTarget)
+            if accepted {
+                heldDrag = false; dragPlaceholder = false
+                NotchFileToolsService.shared.hideMedia()
+                open(.files)
+            }
+            return accepted
+        }
         let optimize = choosingFileDropDestination && targetsMediaDrop
         let accepted = optimize
             ? NotchFileToolsService.shared.openMediaDrop(pasteboard)
@@ -2615,7 +2641,7 @@ final class NotchService: ObservableObject {
         return true
     }
 
-    func activateNotice(_ selectedNotice: NotchNotice) {
+    func activateNotice(_ selectedNotice: NotchNotice, modifiers: NSEvent.ModifierFlags = []) {
         if selectedNotice.audioHandoff {
             guard notice == selectedNotice, let view = panel?.contentView else { return }
             settleNotificationHover()
@@ -2642,6 +2668,27 @@ final class NotchService: ObservableObject {
         }
         guard notice == selectedNotice else { return }
         if selectedNotice.meetingReminder {
+            if modifiers.contains(.command) {
+                guard let identifier = selectedNotice.meetingCalendarItemIdentifier, !identifier.isEmpty,
+                      let start = selectedNotice.meetingStart, let url = selectedNotice.meetingURL else {
+                    open(.calendar)
+                    return
+                }
+                dismissNotice()
+                Task { @MainActor [weak self] in
+                    let events = await NotchCalendarService.shared.meetingEvents()
+                    let matches = events.filter {
+                        $0.calendarItemIdentifier == identifier && $0.start == start && $0.meetingURL == url
+                            && !$0.allDay && $0.end > Date()
+                    }
+                    guard matches.count == 1, let event = matches.first else {
+                        self?.open(.calendar)
+                        return
+                    }
+                    MeetingNoteService.shared.show(event)
+                }
+                return
+            }
             if let url = selectedNotice.meetingURL {
                 dismissNotice()
                 NSWorkspace.shared.open(url)
@@ -3974,7 +4021,8 @@ final class NotchService: ObservableObject {
                   let start = note.userInfo?["start"] as? Double, start.isFinite,
                   let title = note.userInfo?["title"] as? String else { return }
             self?.signalMeetingReminder(title: title, start: Date(timeIntervalSince1970: start),
-                                        at: Date(timeIntervalSince1970: timestamp), url: note.userInfo?["url"] as? String)
+                                        at: Date(timeIntervalSince1970: timestamp), url: note.userInfo?["url"] as? String,
+                                        calendarItemIdentifier: note.userInfo?["calendarItemIdentifier"] as? String)
         }
         observers.append((distributed, reminderObserver))
         let terminalObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.terminal"), object: nil, queue: .main) { [weak self] note in

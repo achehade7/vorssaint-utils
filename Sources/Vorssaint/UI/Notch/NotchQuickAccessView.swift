@@ -286,7 +286,7 @@ struct NotchQuickAccessView: View {
             if isMusic, motion.interactive {
                 NotchMusicShortcutScroll(adjusted: adjustMusicVolume)
             } else if action == .control(.keepAwake), motion.interactive {
-                NotchObsidianRightClick(action: service.openKeepAwake)
+                NotchObsidianRightClick(action: awake.toggleIndefinitely)
             }
         }
         .help(title)

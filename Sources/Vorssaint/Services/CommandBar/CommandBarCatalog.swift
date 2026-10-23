@@ -373,6 +373,15 @@ enum CommandBarCatalog {
                 shortcut: roleShortcut(.colorPicker),
                 run: { _ in afterBeat { ColorSamplerService.shared.pick() } }))
         }
+        if AppFeature.screenshot.isAvailable {
+            let compare = ScreenCompareStrings.localized(language)
+            entries.append(CommandBarEntry(
+                id: "action.screenCompare", title: compare[.title],
+                subtitle: compare[.captureBefore] + " → " + compare[.captureAfter],
+                keywords: "screen compare screenshot image before after", icon: .symbol("rectangle.lefthalf.filled"),
+                matchTitle: "screen compare",
+                run: { _ in afterBeat(0.1) { ScreenCompareService.shared.show() } }))
+        }
         if AppFeature.clipboardHistory.isAvailable {
             let clipboard = FeatureStrings.clipboard(language)
             let keepsHistory = UserDefaults.standard.bool(forKey: DefaultsKey.clipboardHistoryEnabled)
@@ -394,6 +403,12 @@ enum CommandBarCatalog {
                 keywords: "diff clipboard compare text", icon: .symbol("arrow.left.arrow.right"),
                 matchTitle: "diff",
                 run: { _ in afterBeat(0.1) { ClipboardDiffService.shared.show() } }))
+            let inspector = PayloadInspectorStrings.localized(language)
+            entries.append(CommandBarEntry(
+                id: "action.payloadInspector", title: inspector.title, subtitle: inspector.search,
+                keywords: "inspect payload json xml field path", icon: .symbol("curlybraces"),
+                matchTitle: "inspect",
+                run: { _ in afterBeat(0.1) { PayloadInspectorService.shared.show() } }))
             // Counted when the bar lists it: a copy made before confirming is kept.
             let recentIDs = ClipboardHistoryService.shared.recentEntriesSnapshot
             entries.append(CommandBarEntry(

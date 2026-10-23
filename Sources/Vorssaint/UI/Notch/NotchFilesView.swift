@@ -12,6 +12,7 @@ struct NotchFilesView: View {
     @State private var shareAnchor = ShelfSharePickerAnchor.Anchor()
     @ObservedObject private var features = FeatureRuntime.shared
     @ObservedObject private var archives = NotchFileToolsService.shared
+    @ObservedObject private var fileDiff = ClipboardFileDiffService.shared
     @ObservedObject private var media = NotchFileToolsService.shared.media
     @State private var actionInputs: [URL] = []
     @State private var supportedTools: [MediaTool] = []
@@ -29,18 +30,26 @@ struct NotchFilesView: View {
         archives.mediaPresented && AppFeature.mediaTools.isAvailable ? archives.mediaSession : nil
     }
 
+    private var showsFileDiff: Bool {
+        AppFeature.clipboardHistory.isAvailable && (service.offeringFileDiff || fileDiff.hasDraft)
+            && !choosesDropDestination
+    }
+
     private var showsTiles: Bool {
-        !choosesDropDestination && presentedMediaSession == nil && !shelf.items.isEmpty
+        !showsFileDiff && !choosesDropDestination && presentedMediaSession == nil && !shelf.items.isEmpty
     }
 
     /// An archive's outcome, below whatever the shelf shows.
     private var showsArchiveStatus: Bool {
-        !service.choosingFileDropDestination && !archives.mediaPresented && AppFeature.mediaTools.isAvailable
+        !showsFileDiff && !service.choosingFileDropDestination && !archives.mediaPresented && AppFeature.mediaTools.isAvailable
     }
 
     var body: some View {
         VStack(spacing: NotchLayout.rowSpacing) {
-            if choosesDropDestination {
+            if showsFileDiff {
+                NotchFileDiffView(service: service)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if choosesDropDestination {
                 HStack(spacing: NotchFileToolsSupport.dropSpacing) {
                     dropDestination(FeatureStrings.notch(l10n.language).files, symbol: "tray.and.arrow.down",
                                     selected: !service.targetsMediaDrop)
@@ -110,6 +119,7 @@ struct NotchFilesView: View {
             if !preview { service.keepFileInteractionOpen(false) }
         }
         .onChange(of: features.revision) {
+            if !AppFeature.clipboardHistory.isAvailable { fileDiff.clear() }
             if !AppFeature.mediaTools.isAvailable {
                 archives.syncWithPreferences()
                 showingActions = false

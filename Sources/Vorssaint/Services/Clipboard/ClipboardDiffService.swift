@@ -23,11 +23,11 @@ final class ClipboardDiffService: NSObject, NSWindowDelegate, NSTextViewDelegate
     private var currentChange: Int?
     private var synchronizing = false
 
-    func show() {
+    func show(pair suppliedPair: ClipboardDiff.Pair? = nil, beforeName: String? = nil, afterName: String? = nil) {
         guard AppFeature.clipboardHistory.isAvailable else { return }
         panel?.close()
         let strings = ClipboardDiffStrings.localized(L10n.shared.language)
-        let pair = ClipboardDiff.latestPair(in: ClipboardHistoryService.shared.entries)
+        let pair = suppliedPair ?? ClipboardDiff.latestPair(in: ClipboardHistoryService.shared.entries)
         let panel = ClipboardDiffPanel(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 640),
                                       styleMask: [.titled, .closable, .resizable, .nonactivatingPanel],
                                       backing: .buffered, defer: false)
@@ -39,11 +39,19 @@ final class ClipboardDiffService: NSObject, NSWindowDelegate, NSTextViewDelegate
         panel.minSize = NSSize(width: 620, height: 360)
         panel.delegate = self
         let content = ClipboardDiffBackground()
-        let beforeLabel = NSTextField(labelWithString: "−  " + strings.before)
-        let afterLabel = NSTextField(labelWithString: "+  " + strings.after)
+        let beforeLabel = NSTextField(labelWithString: "−  " + strings.before + (beforeName.map { " · " + $0 } ?? ""))
+        let afterLabel = NSTextField(labelWithString: "+  " + strings.after + (afterName.map { " · " + $0 } ?? ""))
         for (label, color) in [(beforeLabel, NSColor.systemOrange), (afterLabel, NSColor.systemBlue)] {
             label.font = .systemFont(ofSize: 13, weight: .semibold)
+            label.lineBreakMode = .byTruncatingMiddle
+            label.maximumNumberOfLines = 1
+            label.cell?.usesSingleLineMode = true
+            label.toolTip = label.stringValue
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             let title = NSMutableAttributedString(string: label.stringValue)
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byTruncatingMiddle
+            title.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: title.length))
             title.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: 1))
             label.attributedStringValue = title
         }
@@ -91,6 +99,7 @@ final class ClipboardDiffService: NSObject, NSWindowDelegate, NSTextViewDelegate
         NSLayoutConstraint.activate([
             beforeLabel.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
             beforeLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            beforeLabel.trailingAnchor.constraint(lessThanOrEqualTo: beforeScroll.trailingAnchor, constant: -16),
             afterLabel.topAnchor.constraint(equalTo: beforeLabel.topAnchor),
             afterLabel.leadingAnchor.constraint(equalTo: afterScroll.leadingAnchor, constant: 20),
             afterLabel.trailingAnchor.constraint(lessThanOrEqualTo: format.leadingAnchor, constant: -12),
