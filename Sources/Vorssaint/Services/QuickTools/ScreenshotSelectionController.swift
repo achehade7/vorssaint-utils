@@ -22,6 +22,14 @@ final class ScreenshotSelectionController {
         let scale: CGFloat
         /// The captured area in Cocoa global coordinates.
         let anchorRect: CGRect
+        let capturedAt: Date
+
+        init(image: CGImage, scale: CGFloat, anchorRect: CGRect, capturedAt: Date = Date()) {
+            self.image = image
+            self.scale = scale
+            self.anchorRect = anchorRect
+            self.capturedAt = capturedAt
+        }
     }
 
     /// What the caller wants out of the same gesture. The screenshot tool
@@ -69,6 +77,12 @@ final class ScreenshotSelectionController {
     /// later tool change already replaced never reaches the panels.
     private var sourceGeneration = 0
     private var sourceRefreshPending = false
+    private var frozenCaptureTimes: [CGDirectDisplayID: Date] = [:]
+    private let freezeOnCommand: Bool
+    private var commandHeld = false
+    private var commandSnapshotPending = false
+    private var pendingCommandRegion: (rect: CGRect, panel: ScreenshotOverlayPanel)?
+    private var commandActivationObserver: NSObjectProtocol?
     /// Old pixels and window choices remain visible during refresh, but cannot
     /// be used by either pointer actions or keyboard confirmations.
     fileprivate var acceptsCaptureInput: Bool {
@@ -76,6 +90,10 @@ final class ScreenshotSelectionController {
     }
     fileprivate let requiresDraggedRegion: Bool
     private var finished = false
+    private(set) var acquisitionPending = false
+    var isAcquiring: Bool {
+        !finished && acquisitionPending
+    }
     /// Read by the overlays so a late event finds a session that is over.
     fileprivate var isOver: Bool { finished }
     fileprivate var spaceIsDown = false
@@ -90,6 +108,7 @@ final class ScreenshotSelectionController {
         if active != previous {
             screenCaptureOptions?.onSelectionProgressChange?(active)
         }
+        if !active, freezeOnCommand { setCommandFrozen(commandHeld) }
     }
     fileprivate var scrollingCaptureEnabled = false {
         didSet {
@@ -168,6 +187,7 @@ final class ScreenshotSelectionController {
     /// Named at the head of the hint bar so the surface never leaves the
     /// person guessing what the area they are about to pick is for.
     private let purpose: String?
+    fileprivate let onSelectionBegan: ((NSEvent.ModifierFlags) -> Void)?
 
     init(freeze: Bool,
          includePointer: Bool,
@@ -178,7 +198,9 @@ final class ScreenshotSelectionController {
          mode: Mode = .image,
          supportsScrollingCapture: Bool = false,
          requiresDraggedRegion: Bool = false,
-         screenCaptureOptions: ScreenCaptureSelectionOptions? = nil) {
+         screenCaptureOptions: ScreenCaptureSelectionOptions? = nil,
+         freezeOnCommand: Bool = false,
+         onSelectionBegan: ((NSEvent.ModifierFlags) -> Void)? = nil) {
         self.freeze = freeze
         self.includePointer = includePointer
         self.showLastRegion = showLastRegion
@@ -189,6 +211,8 @@ final class ScreenshotSelectionController {
         self.supportsScrollingCapture = supportsScrollingCapture
         self.requiresDraggedRegion = requiresDraggedRegion
         self.screenCaptureOptions = screenCaptureOptions
+        self.freezeOnCommand = freezeOnCommand
+        self.onSelectionBegan = onSelectionBegan
         let defaults = UserDefaults.standard
         self.loupeZoom = ScreenshotSupport.captureLoupeInitialZoom(
             rememberLast: defaults.bool(forKey: DefaultsKey.screenshotLoupeRememberZoom),
@@ -225,15 +249,16 @@ final class ScreenshotSelectionController {
         if freeze {
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                let images = await ScreenshotCaptureEngine.captureAllDisplays(
+                let captures = await ScreenshotCaptureEngine.captureAllDisplaysWithTimestamps(
                     includePointer: self.includePointer,
                     hideVorssaintWindows: self.hideVorssaintWindows,
                     protectedWindowIDs: self.captureExcludedWindowIDs)
-                guard !images.isEmpty else {
+                guard !captures.isEmpty else {
                     self.finish(.failed)
                     return
                 }
-                self.present(frozenImages: images)
+                self.frozenCaptureTimes = captures.mapValues(\.capturedAt)
+                self.present(frozenImages: captures.mapValues(\.image))
             }
         } else {
             present(frozenImages: [:])
@@ -329,17 +354,19 @@ final class ScreenshotSelectionController {
         sourceGeneration += 1
         let generation = sourceGeneration
         guard policy.freeze else {
+            frozenCaptureTimes = [:]
             applySource(frozenImages: [:])
             return
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let images = await ScreenshotCaptureEngine.captureAllDisplays(
+            let captures = await ScreenshotCaptureEngine.captureAllDisplaysWithTimestamps(
                 includePointer: policy.includePointer,
                 hideVorssaintWindows: policy.hideVorssaintWindows,
                 protectedWindowIDs: self.captureExcludedWindowIDs)
             guard !self.finished, self.sourceGeneration == generation else { return }
-            self.applySource(frozenImages: images)
+            self.frozenCaptureTimes = captures.mapValues(\.capturedAt)
+            self.applySource(frozenImages: captures.mapValues(\.image))
         }
     }
 
@@ -365,6 +392,52 @@ final class ScreenshotSelectionController {
         panels.forEach {
             $0.overlayView.refreshPointerState()
             $0.overlayView.refreshFullScreenControlVisibility()
+        }
+    }
+
+    /// Command previews use their own pending state: the pointer can draw
+    /// while pixels arrive, unlike a generic tool/source change.
+    fileprivate func commandModifiersChanged(_ modifiers: NSEvent.ModifierFlags) {
+        guard freezeOnCommand, !finished else { return }
+        commandHeld = modifiers.contains(.command)
+        guard !selectionInProgress, !acquisitionPending else { return }
+        setCommandFrozen(commandHeld)
+    }
+
+    fileprivate func prepareSelection(_ modifiers: NSEvent.ModifierFlags) {
+        if freezeOnCommand {
+            // Reconcile from this exact mouse event. The opening Cmd-G or a
+            // previous selector may have owned the last flagsChanged event.
+            commandHeld = modifiers.contains(.command)
+            setCommandFrozen(commandHeld)
+        }
+        onSelectionBegan?(modifiers)
+    }
+
+    private func setCommandFrozen(_ active: Bool) {
+        guard freezeOnCommand, !finished, !acquisitionPending, freeze != active else { return }
+        sourceGeneration += 1
+        let generation = sourceGeneration
+        freeze = active
+        commandSnapshotPending = active
+        guard active else {
+            frozenCaptureTimes = [:]
+            applySource(frozenImages: [:])
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let captures = await ScreenshotCaptureEngine.captureAllDisplaysWithTimestamps(
+                includePointer: self.includePointer,
+                hideVorssaintWindows: self.hideVorssaintWindows,
+                protectedWindowIDs: self.captureExcludedWindowIDs)
+            guard !self.finished, self.sourceGeneration == generation else { return }
+            self.commandSnapshotPending = false
+            self.frozenCaptureTimes = captures.mapValues(\.capturedAt)
+            self.applySource(frozenImages: captures.mapValues(\.image))
+            guard !self.finished, let pending = self.pendingCommandRegion else { return }
+            self.pendingCommandRegion = nil
+            self.confirmRegion(pending.rect, on: pending.panel)
         }
     }
 
@@ -410,11 +483,15 @@ final class ScreenshotSelectionController {
     // MARK: - Keyboard
 
     private func installKeyMonitor() {
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
             let inNotch = self.screenCaptureOptions?.controlsInNotch == true
                 && event.window === NotchService.shared.presentationWindow
             guard event.window is ScreenshotOverlayPanel || inNotch else { return event }
+            if event.type == .flagsChanged {
+                self.commandModifiersChanged(event.modifierFlags)
+                return event
+            }
             if inNotch {
                 guard event.window?.attachedSheet == nil, !(event.window?.firstResponder is NSText),
                       !ShortcutCapture.isCapturing else { return event }
@@ -461,6 +538,15 @@ final class ScreenshotSelectionController {
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == UInt16(kVK_Escape) else { return }
             self?.finish(.cancelled)
+        }
+        if freezeOnCommand {
+            commandActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+            ) { [weak self] notice in
+                guard let app = notice.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+                self?.commandModifiersChanged([])
+            }
         }
     }
 
@@ -622,6 +708,7 @@ final class ScreenshotSelectionController {
     /// being taken. They are either about to leave the screen or already gone,
     /// and the rest of the gesture must not begin a second capture.
     private func markCapturePending() {
+        acquisitionPending = true
         panels.forEach { $0.overlayView.isCapturePending = true }
     }
 
@@ -656,6 +743,10 @@ final class ScreenshotSelectionController {
               viewRect.width >= 1, viewRect.height >= 1 else { return }
         markCapturePending()
         Self.lastRegion = (panel.displayID, viewRect)
+        if commandSnapshotPending {
+            pendingCommandRegion = (viewRect, panel)
+            return
+        }
         if activeMode == .geometry {
             finish(.region(region(fromView: viewRect, on: panel, windowID: nil)))
             return
@@ -669,7 +760,8 @@ final class ScreenshotSelectionController {
             viewSize: panel.screenFrame.size,
             imageSize: panel.frozenImageSize ?? panel.pixelSize)
         if let frozen = panel.frozenImage {
-            guard let cropped = frozen.cropping(to: pixelRect) else {
+            guard let cropped = frozen.cropping(to: pixelRect),
+                  let capturedAt = frozenCaptureTimes[panel.displayID] else {
                 finish(.failed)
                 return
             }
@@ -678,7 +770,8 @@ final class ScreenshotSelectionController {
                 scale: panel.pixelScale,
                 anchorRect: ScreenshotSupport.cocoaRect(
                     fromFlippedView: viewRect,
-                    screenFrame: panel.screenFrame))))
+                    screenFrame: panel.screenFrame),
+                capturedAt: capturedAt)))
         } else {
             captureLive(displayID: panel.displayID,
                         pixelRect: pixelRect,
@@ -706,7 +799,7 @@ final class ScreenshotSelectionController {
             guard let self else { return }
             // A composite with an attached dialog may be captured at another
             // display's scale than this panel's; record the one it has.
-            guard let capture = await ScreenshotCaptureEngine.captureWindow(
+            guard let capture = await ScreenshotCaptureEngine.captureWindowWithTimestamp(
                 windowID, scale: panel.pixelScale) else {
                 self.finish(.failed)
                 return
@@ -716,7 +809,8 @@ final class ScreenshotSelectionController {
                 scale: capture.scale,
                 anchorRect: ScreenshotSupport.cocoaRect(
                     fromFlippedView: frame,
-                    screenFrame: panel.screenFrame))))
+                    screenFrame: panel.screenFrame),
+                capturedAt: capture.capturedAt)))
         }
     }
 
@@ -739,9 +833,11 @@ final class ScreenshotSelectionController {
             return
         }
         if let frozen = panel.frozenImage {
+            guard let capturedAt = frozenCaptureTimes[panel.displayID] else { finish(.failed); return }
             finish(.captured(Capture(image: frozen,
                                      scale: panel.pixelScale,
-                                     anchorRect: panel.screenFrame)))
+                                     anchorRect: panel.screenFrame,
+                                     capturedAt: capturedAt)))
         } else {
             captureLive(displayID: panel.displayID,
                         pixelRect: nil,
@@ -755,6 +851,8 @@ final class ScreenshotSelectionController {
               let last = Self.lastRegion,
               let panel = repeatTargetPanel
         else { return }
+        // Keyboard repeat has no drag-start modifier gesture.
+        prepareSelection([])
         confirmRegion(last.viewRect, on: panel)
     }
 
@@ -787,7 +885,7 @@ final class ScreenshotSelectionController {
         Task { @MainActor [weak self] in
             guard let self else { return }
             try? await Task.sleep(nanoseconds: 120_000_000)
-            guard var image = await ScreenshotCaptureEngine.captureDisplay(
+            guard let capture = await ScreenshotCaptureEngine.captureDisplayWithTimestamp(
                 displayID,
                 includePointer: self.includePointer,
                 hideVorssaintWindows: self.hideVorssaintWindows,
@@ -796,6 +894,7 @@ final class ScreenshotSelectionController {
                 self.finish(.failed)
                 return
             }
+            var image = capture.image
             if let pixelRect {
                 let clamped = ScreenshotSupport.clamp(
                     pixelRect,
@@ -808,7 +907,8 @@ final class ScreenshotSelectionController {
             }
             self.finish(.captured(Capture(image: image,
                                           scale: scale,
-                                          anchorRect: anchorRect)))
+                                          anchorRect: anchorRect,
+                                          capturedAt: capture.capturedAt)))
         }
     }
 
@@ -829,6 +929,9 @@ final class ScreenshotSelectionController {
     }
 
     deinit {
+        if let commandActivationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(commandActivationObserver)
+        }
         // A session that goes away without ending would otherwise leave the
         // screen marked as taken and every capture feature dead until the app
         // is restarted. The wrong flag is always the one that lets a capture
@@ -853,6 +956,12 @@ final class ScreenshotSelectionController {
             NSEvent.removeMonitor(globalKeyMonitor)
             self.globalKeyMonitor = nil
         }
+        if let commandActivationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(commandActivationObserver)
+            self.commandActivationObserver = nil
+        }
+        pendingCommandRegion = nil
+        commandSnapshotPending = false
         // A gesture can still have events on the way, so the surfaces are made
         // inert before they leave the screen: whatever arrives after this
         // point finds nothing left to act on.
@@ -1302,6 +1411,7 @@ private final class ScreenshotOverlayView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard acceptsPointerInput else { return }
+        controller?.prepareSelection(event.modifierFlags)
         controller?.currentPointerLocation = nil
         let point = convert(event.locationInWindow, from: nil)
         pointerIsInside = true

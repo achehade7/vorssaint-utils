@@ -15,8 +15,10 @@ enum ScreenshotAttachedCaptureTests {
     enum WindowPreviewProvider {
         static var images: [CGWindowID: CGImage] = [:]
         static var calls: [CGWindowID] = []
+        static var acquiredAt: [CGWindowID: Date] = [:]
         static func captureViaWindowServer(_ id: CGWindowID) async -> CGImage? {
             calls.append(id)
+            acquiredAt[id] = Date()
             return images[id]
         }
     }
@@ -40,11 +42,13 @@ enum ScreenshotAttachedCaptureTests {
         enum Failure: Error { case missing }
         static var images: [CGWindowID: CGImage] = [:]
         static var requests: [Request] = []
+        static var acquiredAt: [CGWindowID: Date] = [:]
         static func captureImage(contentFilter: SCContentFilter,
                                   configuration: SCStreamConfiguration) async throws -> CGImage {
             let id = contentFilter.desktopIndependentWindow.windowID
             requests.append(Request(id: id, configuration: configuration))
             guard let image = images[id] else { throw Failure.missing }
+            acquiredAt[id] = Date()
             return image
         }
     }
@@ -79,10 +83,12 @@ enum ScreenshotAttachedCaptureTests {
             (id, solid(width: Int(frame.width * scale), height: Int(frame.height * scale), channel: Int(id - 1)))
         })
         WindowPreviewProvider.calls = []
+        WindowPreviewProvider.acquiredAt = [:]
         SCShareableContent.ids = [1, 2, 3]
         SCShareableContent.calls = 0
         SCScreenshotManager.images = [:]
         SCScreenshotManager.requests = []
+        SCScreenshotManager.acquiredAt = [:]
     }
 
     @MainActor private static func checks(_ suite: TestSuite) async {
@@ -90,6 +96,9 @@ enum ScreenshotAttachedCaptureTests {
             reset(scale: scale)
             let capture = await Engine.composeAttached(plan, frames: frames)
             expectPixels(capture, scale: scale, suite)
+            suite.expect(capture!.capturedAt >= WindowPreviewProvider.acquiredAt[1]!
+                         && capture!.capturedAt <= WindowPreviewProvider.acquiredAt[2]!,
+                         "composite retains base-window acquisition time before later layers arrive")
             suite.expect(WindowPreviewProvider.calls == [1, 2, 3] && SCScreenshotManager.requests.isEmpty,
                          "whole layers keep their native scale and need no independent recapture")
         }
@@ -101,6 +110,9 @@ enum ScreenshotAttachedCaptureTests {
         WindowPreviewProvider.images[3] = nil
         let recaptured = await Engine.composeAttached(plan, frames: frames)
         expectPixels(recaptured, scale: 2, suite)
+        suite.expect(recaptured!.capturedAt >= SCScreenshotManager.acquiredAt[1]!
+                     && recaptured!.capturedAt <= WindowPreviewProvider.acquiredAt[2]!,
+                     "recaptured base replaces the clipped buffer's acquisition time")
         suite.expect(SCScreenshotManager.requests.map(\.id) == [1, 2, 3] && SCShareableContent.calls == 1,
                      "clipped, differently scaled and missing buffers share one content snapshot and are recaptured")
         suite.expect(SCScreenshotManager.requests.allSatisfy { request in
@@ -139,7 +151,7 @@ enum ScreenshotAttachedCaptureTests {
                      "unknown display scale declines the composite before acquiring pixels")
     }
 
-    private static func expectPixels(_ capture: (image: CGImage, scale: CGFloat)?,
+    private static func expectPixels(_ capture: (image: CGImage, scale: CGFloat, capturedAt: Date)?,
                                      scale: CGFloat, _ suite: TestSuite) {
         guard let capture else {
             suite.expect(false, "a complete attached-window plan produces an image")

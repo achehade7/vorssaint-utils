@@ -3,14 +3,78 @@
 
 import Darwin
 import Foundation
+import CryptoKit
 
 /// Local files only. Call from the capture service's serial I/O queue.
 struct NotchQuickCaptureStore {
     let vault: URL
     let screenshots: URL
+    let operations: FileOperations
     static let retention: TimeInterval = 14 * 24 * 60 * 60
 
     enum Failure: Error { case unavailable, busy, write, unsafeLocation, empty }
+
+    /// Only publication's destructive system calls are injectable. Tests still
+    /// use real files, descriptors, locks, reads and fingerprints.
+    struct FileOperations {
+        var write: (Int32, Data) -> Int = { fd, data in
+            data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+        }
+        var synchronize: (Int32) -> Int32 = { Darwin.fsync($0) }
+        var truncate: (Int32, off_t) -> Int32 = { Darwin.ftruncate($0, $1) }
+    }
+
+    init(vault: URL, screenshots: URL, operations: FileOperations = FileOperations()) {
+        self.vault = vault
+        self.screenshots = screenshots
+        self.operations = operations
+    }
+
+    struct Meeting: Sendable {
+        let title: String
+        let start: Date
+        let note: URL?
+    }
+
+    struct Image: Sendable {
+        let id: UUID
+        let capturedAt: Date
+        let file: URL
+    }
+
+    struct TextExtract: Identifiable, Sendable {
+        let id: UUID
+        let capturedAt: Date
+        let text: String
+    }
+
+    struct Snapshot: Sendable {
+        let id: UUID
+        let startedAt: Date
+        let label: String
+        let text: String
+        let meeting: Meeting?
+        let images: [Image]
+        let extracts: [TextExtract]
+    }
+
+    /// Retained only while this process is running. A retry must use these
+    /// bytes, even if the locale, time zone or draft has subsequently changed.
+    struct AppendAttempt: Sendable {
+        let snapshotID: UUID
+        let device: dev_t
+        let inode: ino_t
+        let originalLength: off_t
+        let prefixFingerprint: Data
+        let payload: Data
+        var writtenCount: Int
+    }
+
+    enum AppendResult {
+        case committed
+        case notCommitted
+        case uncertain(AppendAttempt)
+    }
 
     static var personal: Self {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -49,22 +113,206 @@ struct NotchQuickCaptureStore {
         return safe.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
     }
 
-    func append(text: String, pngs: [Data], at date: Date = Date()) throws {
-        let text = Self.singleLine(text)
-        guard !text.isEmpty || !pngs.isEmpty else { throw Failure.empty }
-        var saved: [URL] = []
-        var appended = false
-        defer {
-            if !appended { for url in saved { try? FileManager.default.removeItem(at: url) } }
+    /// Publish a fixed, already-persisted capture. Failure never deletes image
+    /// files: the note may contain their paths even when durability is unknown.
+    func publish(_ snapshot: Snapshot, retry: AppendAttempt? = nil) -> AppendResult {
+        if let retry, retry.snapshotID != snapshot.id { return .uncertain(retry) }
+        let block: Data
+        if retry == nil {
+            do { block = Data(try markdown(snapshot).utf8) }
+            catch { return .notCommitted }
+        } else { block = Data() }
+        let directory = Darwin.open(vault.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard directory >= 0 else { return retry.map(AppendResult.uncertain) ?? .notCommitted }
+        defer { Darwin.close(directory) }
+        let flags = O_RDWR | O_APPEND | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK
+        let fd = openat(directory, "Captures.md", flags | (retry == nil ? O_CREAT : 0), 0o600)
+        guard fd >= 0 else { return retry.map(AppendResult.uncertain) ?? .notCommitted }
+        defer { Darwin.close(fd) }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+            return retry.map(AppendResult.uncertain) ?? .notCommitted
         }
-        try appendLine {
-            for png in pngs { saved.append(try saveScreenshot(png, at: date)) }
-            var line = "- \(formatter("yyyy-MM-dd HH:mm").string(from: date))"
-            if !text.isEmpty { line += " · \(text)" }
-            for url in saved { line += " · screenshot: \(url.path)" }
-            return line
+        defer { flock(fd, LOCK_UN) }
+        if let retry { return reconcile(retry, fd: fd, directory: directory) }
+        do {
+            return try appendBlock(block, snapshotID: snapshot.id, fd: fd, directory: directory)
+        } catch { return .notCommitted }
+    }
+
+    private func markdown(_ snapshot: Snapshot) throws -> String {
+        let thought = Self.multiline(snapshot.text)
+        guard !thought.isEmpty || !snapshot.images.isEmpty || !snapshot.extracts.isEmpty else { throw Failure.empty }
+        let label = Self.singleLine(snapshot.label)
+        var block = "## " + timestamp(snapshot.startedAt) + (label.isEmpty ? "" : " · " + label) + "\n\n"
+        if let meeting = snapshot.meeting {
+            var title = Self.singleLine(meeting.title)
+            if let note = meeting.note {
+                let root = vault.resolvingSymlinksInPath().standardizedFileURL.path
+                let path = note.resolvingSymlinksInPath().standardizedFileURL.path
+                if path.hasPrefix(root + "/") {
+                    let relative = String(path.dropFirst(root.count + 1))
+                    let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "?#()<>[]"))
+                    if let target = relative.addingPercentEncoding(withAllowedCharacters: allowed) {
+                        let escaped = title.replacingOccurrences(of: "\\", with: "\\\\")
+                            .replacingOccurrences(of: "[", with: "\\[").replacingOccurrences(of: "]", with: "\\]")
+                        title = "[" + escaped + "](<" + target + ">)"
+                    }
+                }
+            }
+            block += "Meeting: " + title + " · " + timestamp(meeting.start) + "\n\n"
         }
-        appended = true
+        if !thought.isEmpty { block += thought + "\n\n" }
+        if !snapshot.images.isEmpty {
+            block += "### Screenshots\n\n"
+            for image in snapshot.images {
+                try checkScreenshotLocation(image.file)
+                let info = try image.file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                guard info.isRegularFile == true, info.isSymbolicLink != true else { throw Failure.unsafeLocation }
+                block += "- " + attachmentTime(image.capturedAt, meeting: snapshot.meeting)
+                    + " · " + image.file.path + "\n"
+            }
+            block += "\n"
+        }
+        if !snapshot.extracts.isEmpty {
+            block += "### Text extracts\n\n"
+            for extract in snapshot.extracts {
+                let text = Self.multiline(extract.text)
+                guard !text.isEmpty else { throw Failure.empty }
+                // A captured code example may itself contain a Markdown fence.
+                let longest = text.split(whereSeparator: { $0 != "`" }).map(\.count).max() ?? 0
+                let fence = String(repeating: "`", count: max(3, longest + 1))
+                block += "**" + attachmentTime(extract.capturedAt, meeting: snapshot.meeting) + "**\n\n"
+                    + fence + "text\n" + text + "\n" + fence + "\n\n"
+            }
+        }
+        return block
+    }
+
+    static func multiline(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\0", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func timestamp(_ date: Date) -> String {
+        formatter("yyyy-MM-dd'T'HH:mm:ssxxx").string(from: date)
+    }
+
+    private func attachmentTime(_ date: Date, meeting: Meeting?) -> String {
+        guard let meeting else { return timestamp(date) }
+        let offset = date.timeIntervalSince(meeting.start)
+        guard offset.isFinite, abs(offset) < Double(Int.max) else { return timestamp(date) }
+        let seconds = Int(abs(offset).rounded(.down))
+        return timestamp(date) + " · meeting " + (offset < 0 ? "−" : "+")
+            + String(format: "%02d:%02d:%02d", seconds / 3600, (seconds / 60) % 60, seconds % 60)
+    }
+
+    private func appendBlock(_ block: Data, snapshotID: UUID, fd: Int32, directory: Int32) throws -> AppendResult {
+        var info = stat()
+        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { throw Failure.unavailable }
+        let fingerprint = try prefixFingerprint(fd, length: info.st_size)
+        var prefix = Data()
+        if info.st_size > 0 {
+            let last = try bytes(fd, offset: info.st_size - 1, count: 1)
+            if last.first != 10 { prefix.append(10) }
+            prefix.append(10)
+        }
+        let attempt = AppendAttempt(snapshotID: snapshotID, device: info.st_dev, inode: info.st_ino,
+                                    originalLength: info.st_size, prefixFingerprint: fingerprint,
+                                    payload: prefix + block, writtenCount: 0)
+        guard matchesOriginal(attempt, fd: fd, directory: directory), fileLength(fd) == attempt.originalLength else {
+            throw Failure.busy
+        }
+        return writeAttempt(attempt, fd: fd, directory: directory)
+    }
+
+    private func writeAttempt(_ original: AppendAttempt, fd: Int32, directory: Int32) -> AppendResult {
+        var attempt = original
+        attempt.writtenCount = operations.write(fd, attempt.payload)
+        guard attempt.writtenCount > 0 else { return .notCommitted }
+        if attempt.writtenCount == attempt.payload.count, operations.synchronize(fd) == 0,
+           completeBlockMatches(attempt, fd: fd, directory: directory) { return .committed }
+        // flock coordinates participating writers, not Obsidian. Never truncate
+        // a replacement, a changed prefix, or bytes beyond this exact write.
+        if rollback(attempt, fd: fd, directory: directory) { return .notCommitted }
+        return .uncertain(attempt)
+    }
+
+    private func reconcile(_ attempt: AppendAttempt, fd: Int32, directory: Int32) -> AppendResult {
+        guard matchesOriginal(attempt, fd: fd, directory: directory), let length = fileLength(fd) else {
+            return .uncertain(attempt)
+        }
+        if length == attempt.originalLength {
+            guard operations.synchronize(fd) == 0,
+                  matchesOriginal(attempt, fd: fd, directory: directory),
+                  fileLength(fd) == attempt.originalLength else { return .uncertain(attempt) }
+            return writeAttempt(attempt, fd: fd, directory: directory)
+        }
+        if completeBlockMatches(attempt, fd: fd, directory: directory) {
+            guard operations.synchronize(fd) == 0,
+                  completeBlockMatches(attempt, fd: fd, directory: directory) else { return .uncertain(attempt) }
+            return .committed
+        }
+        guard attempt.writtenCount < attempt.payload.count,
+              rollback(attempt, fd: fd, directory: directory) else { return .uncertain(attempt) }
+        return writeAttempt(attempt, fd: fd, directory: directory)
+    }
+
+    private func rollback(_ attempt: AppendAttempt, fd: Int32, directory: Int32) -> Bool {
+        guard attempt.writtenCount > 0, attempt.writtenCount <= attempt.payload.count,
+              matchesOriginal(attempt, fd: fd, directory: directory), let length = fileLength(fd),
+              length >= attempt.originalLength,
+              length - attempt.originalLength == off_t(attempt.writtenCount),
+              (try? bytes(fd, offset: attempt.originalLength, count: attempt.writtenCount))
+                == Data(attempt.payload.prefix(attempt.writtenCount)),
+              operations.truncate(fd, attempt.originalLength) == 0,
+              operations.synchronize(fd) == 0 else { return false }
+        return matchesOriginal(attempt, fd: fd, directory: directory) && fileLength(fd) == attempt.originalLength
+    }
+
+    private func completeBlockMatches(_ attempt: AppendAttempt, fd: Int32, directory: Int32) -> Bool {
+        guard matchesOriginal(attempt, fd: fd, directory: directory), let length = fileLength(fd),
+              length >= attempt.originalLength, length - attempt.originalLength >= off_t(attempt.payload.count) else { return false }
+        return (try? bytes(fd, offset: attempt.originalLength, count: attempt.payload.count)) == attempt.payload
+    }
+
+    private func matchesOriginal(_ attempt: AppendAttempt, fd: Int32, directory: Int32) -> Bool {
+        var descriptor = stat(), current = stat()
+        guard fstat(fd, &descriptor) == 0, (descriptor.st_mode & S_IFMT) == S_IFREG,
+              fstatat(directory, "Captures.md", &current, AT_SYMLINK_NOFOLLOW) == 0,
+              (current.st_mode & S_IFMT) == S_IFREG,
+              descriptor.st_dev == attempt.device, descriptor.st_ino == attempt.inode,
+              current.st_dev == attempt.device, current.st_ino == attempt.inode,
+              descriptor.st_size >= attempt.originalLength else { return false }
+        return (try? prefixFingerprint(fd, length: attempt.originalLength)) == attempt.prefixFingerprint
+    }
+
+    private func fileLength(_ fd: Int32) -> off_t? {
+        var info = stat()
+        return fstat(fd, &info) == 0 ? info.st_size : nil
+    }
+
+    private func prefixFingerprint(_ fd: Int32, length: off_t) throws -> Data {
+        guard length >= 0 else { throw Failure.write }
+        var hash = SHA256(), offset: off_t = 0
+        while offset < length {
+            let data = try bytes(fd, offset: offset, count: Int(min(65_536, length - offset)))
+            hash.update(data: data)
+            offset += off_t(data.count)
+        }
+        return Data(hash.finalize())
+    }
+
+    private func bytes(_ fd: Int32, offset: off_t, count: Int) throws -> Data {
+        var data = Data(count: count), readCount = 0
+        while readCount < count {
+            let amount = data.withUnsafeMutableBytes {
+                pread(fd, $0.baseAddress!.advanced(by: readCount), count - readCount, offset + off_t(readCount))
+            }
+            if amount < 0, errno == EINTR { continue }
+            guard amount > 0 else { throw Failure.write }
+            readCount += amount
+        }
+        return data
     }
 
     func saveSessionScreenshot(_ png: Data, session: Session, at date: Date) throws -> Session {
@@ -126,45 +374,6 @@ struct NotchQuickCaptureStore {
         guard renamex_np(staging.path, folder.path, UInt32(RENAME_SWAP)) == 0 else { throw Failure.write }
     }
 
-    func appendSession(_ session: Session) throws {
-        guard session.count > 0 else { return }
-        guard let folder = session.folder else { throw Failure.write }
-        try checkScreenshotLocation(folder)
-        try appendLine {
-            var line = "- \(formatter("yyyy-MM-dd HH:mm").string(from: session.startedAt))"
-            if !session.label.isEmpty { line += " · \(session.label)" }
-            return line + " · \(session.count) screenshots · \(folder.path)"
-        }
-    }
-
-    /// One locked O_APPEND write preserves every existing byte, including notes
-    /// sorted by hand. No temporary replacement of Captures.md is involved.
-    private func appendLine(_ makeLine: () throws -> String) throws {
-        let directory = Darwin.open(vault.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-        guard directory >= 0 else { throw Failure.unavailable }
-        defer { Darwin.close(directory) }
-        let fd = openat(directory, "Captures.md", O_RDWR | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0o600)
-        guard fd >= 0 else { throw Failure.unavailable }
-        defer { Darwin.close(fd) }
-        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { throw Failure.busy }
-        defer { flock(fd, LOCK_UN) }
-        var info = stat()
-        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { throw Failure.unavailable }
-        var prefix = ""
-        if info.st_size > 0 {
-            var last: UInt8 = 0
-            guard pread(fd, &last, 1, info.st_size - 1) == 1 else { throw Failure.write }
-            if last != 10 { prefix = "\n" }
-        }
-        let data = Data((prefix + (try makeLine()) + "\n").utf8)
-        let count = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
-        guard count == data.count, fsync(fd) == 0 else {
-            // Remove only this failed append, never rewrite previous lines.
-            if count > 0 { _ = ftruncate(fd, info.st_size); _ = fsync(fd) }
-            throw Failure.write
-        }
-    }
-
     private func formatter(_ format: String) -> DateFormatter {
         let value = DateFormatter()
         value.locale = Locale(identifier: "en_US_POSIX")
@@ -218,19 +427,6 @@ struct NotchQuickCaptureStore {
         let complete = count == png.count && fsync(fd) == 0
         Darwin.close(fd)
         guard complete else { unlinkat(directory, name, 0); throw Failure.write }
-    }
-
-    private func saveScreenshot(_ png: Data, at date: Date) throws -> URL {
-        // Exclusive creation keeps the existing HHMMSS format for quick bursts.
-        for offset in 0..<86_400 {
-            let instant = date.addingTimeInterval(Double(offset))
-            let day = try dayFolder(at: instant)
-            let name = formatter("HHmmss").string(from: instant) + ".png"
-            do { try writePNG(png, to: day, name: name) }
-            catch Failure.busy { continue }
-            return day.appendingPathComponent(name)
-        }
-        throw Failure.write
     }
 
     /// Only this feature's dated PNGs are eligible; never follow folder/file

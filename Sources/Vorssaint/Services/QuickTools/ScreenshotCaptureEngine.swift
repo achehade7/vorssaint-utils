@@ -13,11 +13,26 @@ import ScreenCaptureKit
 /// tool taking them; the rest of the app follows the visibility preference.
 enum ScreenshotCaptureEngine {
 
+    struct Acquisition {
+        let image: CGImage
+        /// Recorded when acquisition returns pixels, before selection or OCR.
+        let capturedAt: Date
+    }
+
     /// Full-resolution capture of one display.
     static func captureDisplay(_ displayID: CGDirectDisplayID,
                                includePointer: Bool,
                                hideVorssaintWindows: Bool,
                                protectedWindowIDs: Set<CGWindowID>) async -> CGImage? {
+        await captureDisplayWithTimestamp(displayID, includePointer: includePointer,
+                                          hideVorssaintWindows: hideVorssaintWindows,
+                                          protectedWindowIDs: protectedWindowIDs)?.image
+    }
+
+    static func captureDisplayWithTimestamp(_ displayID: CGDirectDisplayID,
+                                            includePointer: Bool,
+                                            hideVorssaintWindows: Bool,
+                                            protectedWindowIDs: Set<CGWindowID>) async -> Acquisition? {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true)
         else { return nil }
@@ -102,13 +117,21 @@ enum ScreenshotCaptureEngine {
     static func captureAllDisplays(includePointer: Bool,
                                    hideVorssaintWindows: Bool,
                                    protectedWindowIDs: Set<CGWindowID>) async -> [CGDirectDisplayID: CGImage] {
+        await captureAllDisplaysWithTimestamps(includePointer: includePointer,
+                                               hideVorssaintWindows: hideVorssaintWindows,
+                                               protectedWindowIDs: protectedWindowIDs).mapValues(\.image)
+    }
+
+    static func captureAllDisplaysWithTimestamps(includePointer: Bool,
+                                                hideVorssaintWindows: Bool,
+                                                protectedWindowIDs: Set<CGWindowID>) async -> [CGDirectDisplayID: Acquisition] {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true)
         else { return [:] }
         let ownWindows = await excludedOwnWindows(in: content,
                                             hideVorssaintWindows: hideVorssaintWindows,
                                             protectedWindowIDs: protectedWindowIDs)
-        var result: [CGDirectDisplayID: CGImage] = [:]
+        var result: [CGDirectDisplayID: Acquisition] = [:]
         for screen in NSScreen.screens {
             let id = screen.displayID
             guard id != 0,
@@ -151,15 +174,16 @@ enum ScreenshotCaptureEngine {
     private static func captureDisplay(_ display: SCDisplay,
                                        scale: CGFloat,
                                        excluding ownWindows: [SCWindow],
-                                       includePointer: Bool) async -> CGImage? {
+                                       includePointer: Bool) async -> Acquisition? {
         let filter = SCContentFilter(display: display, excludingWindows: ownWindows)
         let configuration = SCStreamConfiguration()
         configuration.width = max(1, Int((CGFloat(display.width) * scale).rounded()))
         configuration.height = max(1, Int((CGFloat(display.height) * scale).rounded()))
         configuration.showsCursor = includePointer
         configuration.colorSpaceName = CGColorSpace.sRGB
-        return try? await SCScreenshotManager.captureImage(contentFilter: filter,
-                                                           configuration: configuration)
+        guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter,
+                                                                     configuration: configuration) else { return nil }
+        return Acquisition(image: image, capturedAt: Date())
     }
 
     /// The window's own buffer via the window server (same capture the
@@ -171,6 +195,12 @@ enum ScreenshotCaptureEngine {
     /// at, which on mixed displays can differ from the one asked for.
     static func captureWindow(_ windowID: CGWindowID,
                               scale: CGFloat) async -> (image: CGImage, scale: CGFloat)? {
+        guard let capture = await captureWindowWithTimestamp(windowID, scale: scale) else { return nil }
+        return (capture.image, capture.scale)
+    }
+
+    static func captureWindowWithTimestamp(_ windowID: CGWindowID,
+                                           scale: CGFloat) async -> (image: CGImage, scale: CGFloat, capturedAt: Date)? {
         // A sheet or dialog the app stacked on the window is a window of its
         // own, and neither single-window route draws it (issue #1098). The
         // window list answers this without waiting on shareable content, so
@@ -203,18 +233,20 @@ enum ScreenshotCaptureEngine {
         }
         var clippedFallback: CGImage?
         let capturedImage = await WindowPreviewProvider.captureViaWindowServer(windowID)
+        let windowServerCaptureAt = Date()
         guard !Task.isCancelled else { return nil }
         if let image = capturedImage {
             let bounds = windowBounds(windowID)
             if bounds.map({ SwitcherSupport.captureCoversWindow(imageWidth: image.width,
                                                                 imageHeight: image.height,
                                                                 windowSize: $0.size) }) ?? true {
-                return (image, scale)
+                return (image, scale, windowServerCaptureAt)
             }
             clippedFallback = image
         }
         let capture = await captureIndependentWindow(windowID, scale: scale)
-        return (capture ?? clippedFallback).map { ($0, scale) }
+        if let capture { return (capture, scale, Date()) }
+        return clippedFallback.map { ($0, scale, windowServerCaptureAt) }
     }
 
     /// The window drawn on its own by ScreenCaptureKit, whole wherever it
@@ -329,7 +361,7 @@ enum ScreenshotCaptureEngine {
     /// `nil` leaves the single-window routes to answer. The scale is that
     /// display's, which the crop keeps.
     private static func captureAttached(
-        _ plan: ScreenshotCapturePolicy.AttachedCapturePlan) async -> (image: CGImage, scale: CGFloat)? {
+        _ plan: ScreenshotCapturePolicy.AttachedCapturePlan) async -> (image: CGImage, scale: CGFloat, capturedAt: Date)? {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true)
         else { return nil }
@@ -356,6 +388,7 @@ enum ScreenshotCaptureEngine {
         guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter,
                                                                       configuration: configuration)
         else { return nil }
+        let capturedAt = Date()
         let cocoaBounds = ScreenshotSupport.cocoaRect(fromWindowServer: plan.bounds,
                                                       mainScreenHeight: mainScreen.frame.height)
         let viewBounds = ScreenshotSupport.flippedViewRect(fromCocoa: cocoaBounds,
@@ -370,10 +403,10 @@ enum ScreenshotCaptureEngine {
         let packedBounds = ScreenshotSupport.clamp(
             CGRect(origin: .zero, size: cropBounds.size), to: imageBounds)
         guard packedBounds != cropBounds, let alpha = alphaCoverage(of: image) else {
-            return image.cropping(to: cropBounds).map { ($0, pixelScale) }
+            return image.cropping(to: cropBounds).map { ($0, pixelScale, capturedAt) }
         }
         return image.cropping(to: ScreenshotSupport.attachedCaptureCrop(
-            placed: cropBounds, packed: packedBounds, coverage: alpha)).map { ($0, pixelScale) }
+            placed: cropBounds, packed: packedBounds, coverage: alpha)).map { ($0, pixelScale, capturedAt) }
     }
 
     /// The image's alpha, one byte per pixel with the top row first, which is
@@ -404,7 +437,7 @@ enum ScreenshotCaptureEngine {
     /// is not whole either. The scale is the one the layers were captured
     /// at, not necessarily the clicked display's.
     private static func composeAttached(_ plan: ScreenshotCapturePolicy.AttachedCapturePlan,
-                                        frames: [CGWindowID: CGRect]) async -> (image: CGImage, scale: CGFloat)? {
+                                        frames: [CGWindowID: CGRect]) async -> (image: CGImage, scale: CGFloat, capturedAt: Date)? {
         let candidates = Array(Set(NSScreen.screens.map(\.backingScaleFactor)))
         guard let targetID = plan.windowIDs.first, let targetFrame = frames[targetID],
               !candidates.isEmpty else { return nil }
@@ -429,12 +462,14 @@ enum ScreenshotCaptureEngine {
 
         // The clicked window sets the scale every other layer must match.
         var targetImage = await WindowPreviewProvider.captureViaWindowServer(targetID)
+        var capturedAt = Date()
         guard let targetCapture = ScreenshotCapturePolicy.compositeTargetCapture(
             buffer: targetImage.map { ($0.width, $0.height) }, frame: targetFrame, candidates: candidates)
         else { return nil }
         let scale = targetCapture.scale
         if case .recapture = targetCapture {
             targetImage = await independentCapture(targetID, frame: targetFrame, scale: scale)
+            capturedAt = Date()
         }
         guard let targetImage,
               ScreenshotCapturePolicy.layerCoversFrame(imageWidth: targetImage.width,
@@ -469,7 +504,9 @@ enum ScreenshotCaptureEngine {
             context.draw(layer.image, in: ScreenshotCapturePolicy.compositeRect(
                 for: layer.frame, in: plan.bounds, scale: scale))
         }
-        return context.makeImage().map { ($0, scale) }
+        // The base window's acquisition identifies this composite, even if
+        // attached-window acquisition or drawing completes later.
+        return context.makeImage().map { ($0, scale, capturedAt) }
     }
 
     /// The window's size as the window server knows it, used to tell a whole

@@ -65,9 +65,10 @@ enum CommandBarSnippetCommands {
                                         QuickToolHUD.show(icon: "lock", message: SnippetCaptureStrings.localized(L10n.shared.language).permanentName)
                                     })]
         }
+        let replacesScratch = temporary && name.compare("tmp", options: .caseInsensitive) == .orderedSame
         return [CommandBarEntry(id: "action.snippetSave", title: name,
                                 subtitle: temporary ? SnippetCaptureStrings.localized(L10n.shared.language).today : SnippetCaptureStrings.localized(L10n.shared.language).permanent, icon: .symbol(temporary ? "clock" : "text.badge.plus"),
-                                confirmationPrompt: expected.map { String(format: strings.replaceClipboardFormat, $0.name) },
+                                confirmationPrompt: replacesScratch ? nil : expected.map { String(format: strings.replaceClipboardFormat, $0.name) },
                                 countsUsage: false, keepsBarOpen: true,
                                 run: { _ in save(name: name, temporary: temporary, expected: expected) })]
     }

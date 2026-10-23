@@ -18,6 +18,13 @@ enum NotchCaptureKeyboardContract {
         let screenFrame = CGRect(x: 0, y: 0, width: 100, height: 100)
     }
     final class Overlay { var isDragging = false }
+    struct NSRunningApplication { let processIdentifier: Int32 }
+    final class NSWorkspace {
+        static let shared = NSWorkspace()
+        static let didActivateApplicationNotification = Notification.Name("fixture.applicationActivated")
+        static let applicationUserInfoKey = "application"
+        let notificationCenter = NotificationCenter()
+    }
     enum ShortcutCapture { static var isCapturing = false }
     struct NSEvent {
         static let mouseLocation = CGPoint(x: 23, y: 61)
@@ -34,16 +41,19 @@ enum NotchCaptureKeyboardContract {
             let rawValue: Int
             static let keyDown = Self(rawValue: 1)
             static let keyUp = Self(rawValue: 2)
+            static let flagsChanged = Self(rawValue: 4)
         }
-        enum EventType { case keyDown, keyUp }
+        enum EventType { case keyDown, keyUp, flagsChanged }
         let window: NSPanel?
         let keyCode: UInt16
         var modifierFlags: ModifierFlags = []
         var type: EventType = .keyDown
         var charactersIgnoringModifiers: String?
         static var handler: ((Self) -> Self?)?
+        static var monitoredTypes: EventTypeMask = []
         static func addLocalMonitorForEvents(matching: EventTypeMask, handler: @escaping (Self) -> Self?) -> Any? {
             self.handler = handler
+            monitoredTypes = matching
             return 1
         }
         static func addGlobalMonitorForEvents(matching: EventTypeMask, handler: @escaping (Self) -> Void) -> Any? { nil }
@@ -230,5 +240,38 @@ enum NotchCaptureKeyboardTests {
                          && selection.actions == ["color"],
                    "Return and keypad Enter confirm the color instead of capturing the display")
         }
+
+        let commandPreview = Contract.Selection()
+        commandPreview.freezeOnCommand = true
+        commandPreview.screenCaptureOptions?.controlsInNotch = false
+        commandPreview.attach()
+        suite.expect(Event.monitoredTypes.contains(.flagsChanged),
+                     "selector subscribes to modifier transitions before mouse-down")
+        for flags: Event.ModifierFlags in [.command, [.command, .shift], []] {
+            let event = Event(window: overlay, keyCode: UInt16(kVK_Command), modifierFlags: flags, type: .flagsChanged)
+            suite.expect(Event.handler?(event) != nil && commandPreview.commandModifiers.last == flags,
+                         "owned modifier events reach freeze handling unchanged without being consumed")
+        }
+        let ownedChanges = commandPreview.commandModifiers
+        let outside = Event(window: unrelated, keyCode: UInt16(kVK_Command), modifierFlags: .command, type: .flagsChanged)
+        suite.expect(Event.handler?(outside) != nil && commandPreview.commandModifiers == ownedChanges,
+                     "unrelated windows cannot change the selector's frozen preview")
+
+        let workspace = Contract.NSWorkspace.shared.notificationCenter
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        workspace.post(name: Contract.NSWorkspace.didActivateApplicationNotification, object: nil,
+                       userInfo: [Contract.NSWorkspace.applicationUserInfoKey:
+                                    Contract.NSRunningApplication(processIdentifier: ownPID)])
+        suite.expect(commandPreview.commandModifiers == ownedChanges,
+                     "own application activation does not thaw a Command preview")
+        workspace.post(name: Contract.NSWorkspace.didActivateApplicationNotification, object: nil,
+                       userInfo: [Contract.NSWorkspace.applicationUserInfoKey:
+                                    Contract.NSRunningApplication(processIdentifier: ownPID + 1)])
+        suite.expect(commandPreview.commandModifiers == ownedChanges + [[]],
+                     "foreign activation reconciles Command release through the latched freeze handler")
+        let ordinary = Contract.Selection()
+        ordinary.attach()
+        suite.expect(ordinary.commandActivationObserver == nil,
+                     "ordinary selectors install no Command-preview activation observer")
     }
 }

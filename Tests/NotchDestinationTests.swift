@@ -90,7 +90,11 @@ enum NotchDestinationContract {
         }
     }
     enum NotchQuickCaptureService { static let shared = Capture()
-        final class Capture { var isSelecting = false; func cancel() {} }
+        final class Capture {
+            var isSelecting = false
+            func open() {}
+            func hide() {}
+        }
     }
     enum ShortcutCapture { static var isCapturing = false }
 

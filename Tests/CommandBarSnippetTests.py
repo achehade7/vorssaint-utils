@@ -238,12 +238,49 @@ row("snip keep tmp").run(nil)
 let scratch = stored().first { $0.name == "tmp" }!
 board.value = "temporary scratch"
 let overwriteScratch = row("snip save TMP")
-expect(overwriteScratch.id == "action.snippetSave" && overwriteScratch.confirmationPrompt != nil,
-       "tmp is the case-insensitive exception and still requires replacement confirmation")
+expect(overwriteScratch.id == "action.snippetSave" && overwriteScratch.confirmationPrompt == nil,
+       "snip save tmp replaces its exact case-insensitive scratch name without confirmation")
 overwriteScratch.run(nil)
 let replacedScratch = stored().first { $0.id == scratch.id }!
 expect(replacedScratch.replacement == "temporary scratch" && replacedScratch.expiresAt != nil,
        "save tmp replaces permanent content with a temporary value")
+for query in ["snip save tmp", "snip save TMP", "snip save  TmP  ", "snip save temp tmp"] {
+    let previous = stored().first { $0.id == scratch.id }!
+    board.value = "new scratch for \(query)\nsecond line"
+    let before = Store.standard.stored, reads = board.reads
+    let direct = row(query)
+    expect(direct.confirmationPrompt == nil && Store.standard.stored == before && board.reads == reads,
+           "normalized scratch preview skips confirmation without reading or changing data: \(query)")
+    direct.run(nil)
+    let current = stored().first { $0.id == scratch.id }!
+    expect(current.id == previous.id && current.replacement == board.value
+           && current.expiresAt == Calendar.current.dateInterval(of: .day, for: Date())!.end
+           && !bar.isVisible,
+           "one Return replaces scratch content under same identity and midnight expiry: \(query)")
+}
+expect(row("snip keep TMP").confirmationPrompt != nil,
+       "keeping tmp permanently still requires replacement confirmation")
+for name in ["tmp-other", "tmp2", "tmp another", "other"] {
+    var named = TextSnippet(); named.name = name; named.replacement = "old text"
+    named.expiresAt = Date().addingTimeInterval(60)
+    Store.standard.stored = TextSnippetSupport.encode(stored() + [named])
+    let before = Store.standard.stored
+    let guarded = row("snip save \(name)")
+    expect(guarded.confirmationPrompt != nil && Store.standard.stored == before,
+           "temporary name other than exact tmp still requires confirmation: \(name)")
+}
+let staleScratch = row("snip save tmp")
+var editedScratch = stored().first { $0.id == scratch.id }!
+editedScratch.replacement = "edited while scratch row was open"
+Store.standard.stored = TextSnippetSupport.encode(stored().map { $0.id == scratch.id ? editedScratch : $0 })
+staleScratch.run(nil)
+expect(stored().first { $0.id == scratch.id } == editedScratch && bar.isVisible,
+       "immediate scratch replacement still rejects an intervening store edit")
+let emptyScratchBefore = Store.standard.stored
+board.value = " \n "
+row("snip save tmp").run(nil)
+expect(Store.standard.stored == emptyScratchBefore && bar.isVisible,
+       "immediate scratch replacement never erases content for an empty clipboard")
 print("Snippet commands: \(checks) checks passed")
 '''
 service = 'Sources/Vorssaint/Services/CommandBar/CommandBarService.swift'

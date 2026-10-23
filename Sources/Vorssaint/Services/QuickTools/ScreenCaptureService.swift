@@ -115,6 +115,11 @@ final class ScreenCaptureService: ObservableObject {
     /// button merely picks the initial mode; the person can switch before
     /// selecting anything.
     func capture(initial preferred: ScreenCaptureTool? = nil, fromShortcut: Bool = false) {
+        if fromShortcut, preferred == .text, AppFeature.screenOCR.isAvailable,
+           NotchService.shared.showingQuickCapture {
+            NotchQuickCaptureService.shared.captureText()
+            return
+        }
         let recorder = ScreenRecorderService.shared
         if preferred == .recording, AppFeature.screenRecorder.isAvailable,
            recorder.stopOrCancelActiveCapture() {

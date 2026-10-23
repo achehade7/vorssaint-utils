@@ -48,8 +48,8 @@ struct NotchObsidianButton: View {
                                 .allowsHitTesting(false)
                             }
                         }
-                    if let session = capture.session {
-                        Text("\(session.count)")
+                    if capture.imageCount > 0 {
+                        Text("\(capture.imageCount)")
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
                             .foregroundStyle(NotchNeonPalette.purple)
                             .padding(.trailing, 4)
@@ -68,9 +68,8 @@ struct NotchObsidianButton: View {
             .help("\(NotchQuickCaptureStrings.localized(L10n.shared.language).title) · ⌃⌥⌘O · \(NotchQuickCaptureStrings.localized(L10n.shared.language).homeHint)")
             .accessibilityLabel(NotchQuickCaptureStrings.localized(L10n.shared.language).title)
             .accessibilityAction(named: "HOME", openHome)
-            .accessibilityValue(capture.session.map {
-                String(format: NotchQuickCaptureStrings.localized(L10n.shared.language).sessionCount, $0.count)
-            } ?? "")
+            .accessibilityValue(String(format: NotchQuickCaptureStrings.localized(L10n.shared.language).count,
+                                       capture.imageCount, capture.extracts.count))
             .accessibilityIdentifier("notch.obsidian.capture")
         }
     }

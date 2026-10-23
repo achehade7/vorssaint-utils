@@ -98,14 +98,25 @@ enum ScreenshotSelectionRefreshContract {
         }
     }
     @MainActor enum ScreenshotCaptureEngine {
+        struct Acquisition {
+            let image: CGImage
+            let capturedAt: Date
+        }
         struct Request {
             let excluded: Set<CGWindowID>
-            let continuation: CheckedContinuation<[CGDirectDisplayID: CGImage], Never>
+            let continuation: CheckedContinuation<[CGDirectDisplayID: Acquisition], Never>
         }
         static var requests = [Request]()
         static func captureAllDisplays(
             includePointer: Bool, hideVorssaintWindows: Bool, protectedWindowIDs: Set<CGWindowID>
         ) async -> [CGDirectDisplayID: CGImage] {
+            await captureAllDisplaysWithTimestamps(includePointer: includePointer,
+                hideVorssaintWindows: hideVorssaintWindows,
+                protectedWindowIDs: protectedWindowIDs).mapValues(\.image)
+        }
+        static func captureAllDisplaysWithTimestamps(
+            includePointer: Bool, hideVorssaintWindows: Bool, protectedWindowIDs: Set<CGWindowID>
+        ) async -> [CGDirectDisplayID: Acquisition] {
             let excluded = ScreenshotCapturePolicy.excludedWindowIDs(
                 hideVorssaintWindows: hideVorssaintWindows, ownWindowIDs: [11, 12, 13],
                 protectedWindowIDs: protectedWindowIDs)
@@ -124,14 +135,19 @@ enum ScreenshotSelectionRefreshContract {
         /// The scale a window capture reports, like a composite recaptured
         /// on a 2x display; `nil` echoes the scale asked for.
         static var windowCaptureScale: CGFloat?
-        static func captureWindow(_ id: CGWindowID, scale: CGFloat) async -> (image: CGImage, scale: CGFloat)? {
-            (CGImage(excluded: []), windowCaptureScale ?? scale)
+        static let windowCaptureAt = Date(timeIntervalSince1970: 42)
+        static func captureWindowWithTimestamp(_ id: CGWindowID, scale: CGFloat) async
+            -> (image: CGImage, scale: CGFloat, capturedAt: Date)? {
+            (CGImage(excluded: []), windowCaptureScale ?? scale, windowCaptureAt)
         }
-        static func complete(_ index: Int, displays: [CGDirectDisplayID]) {
+        static func complete(_ index: Int, displays: [CGDirectDisplayID], timestampBase: Double = 1_000) {
             let request = requests[index]
             request.continuation.resume(
                 returning: Dictionary(
-                    uniqueKeysWithValues: displays.map { ($0, CGImage(excluded: request.excluded)) }))
+                    uniqueKeysWithValues: displays.map {
+                        ($0, Acquisition(image: CGImage(excluded: request.excluded),
+                                         capturedAt: Date(timeIntervalSince1970: timestampBase + Double($0))))
+                    }))
         }
     }
     @MainActor final class Chooser {
@@ -148,6 +164,10 @@ enum ScreenshotSelectionRefreshContract {
             let image: CGImage
             let scale: CGFloat
             let anchorRect: CGRect
+            let capturedAt: Date
+            init(image: CGImage, scale: CGFloat, anchorRect: CGRect, capturedAt: Date = Date()) {
+                self.image = image; self.scale = scale; self.anchorRect = anchorRect; self.capturedAt = capturedAt
+            }
         }
         enum Outcome {
             case captured(Capture), region(RecorderSupport.Region), scrollingRegion(
@@ -168,6 +188,12 @@ enum ScreenshotSelectionRefreshContract {
         var includePointer: Bool
         var hideVorssaintWindows: Bool
         var sourceRefreshPending = false
+        var freezeOnCommand = false, commandHeld = false, commandSnapshotPending = false
+        var pendingCommandRegion: (rect: CGRect, panel: ScreenshotOverlayPanel)?
+        var frozenCaptureTimes: [CGDirectDisplayID: Date] = [
+            1: Date(timeIntervalSince1970: 100), 2: Date(timeIntervalSince1970: 200)]
+        var onSelectionBegan: ((NSEvent.ModifierFlags) -> Void)?
+        var acquisitionPending = false
         var sourceGeneration = 0, finished = false, scrollingCaptureEnabled = false,
             loupeEnabled = false, selectionInProgress = false
         var panels: [ScreenshotOverlayPanel]
@@ -277,6 +303,8 @@ enum ScreenshotSelectionRefreshContract {
                 expect(tool != .recording && capture.anchorRect == c.panels[0].screenFrame
                        && capture.scale == c.panels[0].pixelScale,
                        "screenshot and text confirmation capture the full display")
+                expect(capture.capturedAt == Date(timeIntervalSince1970: 100),
+                       "frozen full-display capture retains acquisition time, not confirmation time")
             case .region(let region):
                 expect(tool == .recording && region.windowID == nil
                        && region.viewRect == CGRect(origin: .zero, size: c.panels[0].screenFrame.size),
@@ -301,9 +329,13 @@ enum ScreenshotSelectionRefreshContract {
                        "repeat is offered only for a stored display and a tool that accepts regions")
                 expect(c.repeatTargetPanel?.displayID == (available ? display : nil),
                        "repeat targets its stored display even when the pointer is on another display")
+                var beganWith: NSEvent.ModifierFlags?
+                c.onSelectionBegan = { beganWith = $0 }
                 c.repeatLastRegion()
                 expect((c.outcome != nil) == (available && tool != .color),
                        "the repeat hint agrees with the production confirmation path")
+                expect(beganWith == (available && tool != .color ? [] : nil),
+                       "keyboard region repeat has no modifier-drag intent")
             }
         }
         let fullScreenScreenshot = Chooser(.screenshot)
@@ -441,6 +473,9 @@ enum ScreenshotSelectionRefreshContract {
                 ScreenshotCaptureEngine.complete(request, displays: [1, 2])
                 await drain()
                 expect(c.acceptsCaptureInput, "successful refresh restores capture input")
+                expect(c.frozenCaptureTimes == [1: Date(timeIntervalSince1970: 1_001),
+                                               2: Date(timeIntervalSince1970: 1_002)],
+                       "refreshed frozen displays retain their individual acquisition times")
                 expect(c.panels[0].overlayView.fullScreenHost.isHidden == (to != .screenshot)
                         && c.panels[1].overlayView.fullScreenHost.isHidden,
                        "a ready source restores the full-screen action only for screenshots on the pointer display")
@@ -485,10 +520,14 @@ enum ScreenshotSelectionRefreshContract {
             ScreenshotCaptureEngine.windowCaptureScale = reported
             let window = Chooser(.screenshot)
             window.confirmWindow(11, frame: CGRect(x: 0, y: 0, width: 50, height: 50), on: window.panels[0])
+            expect(window.isAcquiring, "confirmed window is owned pending acquisition before pixels arrive")
             await drain()
+            expect(!window.isAcquiring, "completed acquisition no longer reports pending pixels")
             if case .captured(let capture)? = window.outcome {
                 expect(capture.scale == (reported ?? window.panels[0].pixelScale),
                        "a window capture records the scale the engine captured it at")
+                expect(capture.capturedAt == ScreenshotCaptureEngine.windowCaptureAt,
+                       "window capture keeps the engine acquisition time")
             } else {
                 expect(false, "a window capture records the scale the engine captured it at")
             }
@@ -593,6 +632,101 @@ enum ScreenshotSelectionRefreshContract {
         expect(
             loupe.panels.allSatisfy { $0.overlayView.loupeImage == nil },
             "a previous tool's delayed live loupe cannot replace the current source")
+
+        func commandChooser() -> Chooser {
+            let result = Chooser(.screenshot)
+            result.activeTool = nil; result.screenCaptureOptions = nil
+            result.freezeOnCommand = true; result.freeze = false
+            result.applySource(frozenImages: [:])
+            return result
+        }
+        let preview = commandChooser()
+        let previewRequest = ScreenshotCaptureEngine.requests.count
+        preview.commandModifiersChanged(.command)
+        expect(preview.acceptsCaptureInput && preview.commandSnapshotPending,
+               "Command snapshot preparation preserves pointer input")
+        await drain()
+        ScreenshotCaptureEngine.complete(previewRequest, displays: [1, 2])
+        await drain()
+        expect(preview.freeze && preview.panels.allSatisfy { $0.frozenImage != nil },
+               "Command freezes fresh pixels before any drag begins")
+        preview.commandModifiersChanged([])
+        expect(!preview.freeze && preview.panels.allSatisfy { $0.frozenImage == nil },
+               "Command release before a drag immediately returns to live pixels")
+
+        let delayed = commandChooser()
+        let delayedRequest = ScreenshotCaptureEngine.requests.count
+        delayed.prepareSelection(.command)
+        delayed.setSelectionInProgress(true)
+        delayed.commandModifiersChanged([])
+        delayed.confirmRegion(CGRect(x: 10, y: 10, width: 20, height: 30), on: delayed.panels[0])
+        expect(delayed.isAcquiring && delayed.outcome == nil && delayed.freeze,
+               "accepted drag waits for pending frozen pixels even after Command release")
+        await drain()
+        ScreenshotCaptureEngine.complete(delayedRequest, displays: [1, 2], timestampBase: 2_000)
+        await drain()
+        if case .captured(let capture)? = delayed.outcome {
+            expect(capture.capturedAt == Date(timeIntervalSince1970: 2_001),
+                   "deferred region preserves the snapshot acquisition timestamp")
+        } else { expect(false, "pending Command region completes with frozen pixels") }
+
+        let released = commandChooser()
+        let releasedRequest = ScreenshotCaptureEngine.requests.count
+        released.commandModifiersChanged(.command)
+        await drain()
+        released.commandModifiersChanged([])
+        ScreenshotCaptureEngine.complete(releasedRequest, displays: [1, 2])
+        await drain()
+        expect(released.panels.allSatisfy { $0.frozenImage == nil } && released.outcome == nil,
+               "released Command snapshot completion cannot restore an old frozen preview")
+
+        let refreshed = commandChooser()
+        let refreshedRequest = ScreenshotCaptureEngine.requests.count
+        refreshed.commandModifiersChanged(.command)
+        await drain()
+        refreshed.commandModifiersChanged([])
+        refreshed.commandModifiersChanged(.command)
+        await drain()
+        ScreenshotCaptureEngine.complete(refreshedRequest + 1, displays: [1, 2], timestampBase: 3_000)
+        await drain()
+        ScreenshotCaptureEngine.complete(refreshedRequest, displays: [1, 2])
+        await drain()
+        expect(refreshed.frozenCaptureTimes[1] == Date(timeIntervalSince1970: 3_001),
+               "a new Command press owns new pixels despite out-of-order completions")
+
+        let cancelledCommand = commandChooser()
+        let cancelledRequest = ScreenshotCaptureEngine.requests.count
+        cancelledCommand.prepareSelection(.command)
+        cancelledCommand.setSelectionInProgress(true)
+        cancelledCommand.confirmRegion(CGRect(x: 0, y: 0, width: 20, height: 20), on: cancelledCommand.panels[0])
+        await drain()
+        cancelledCommand.finish(.failed)
+        ScreenshotCaptureEngine.complete(cancelledRequest, displays: [1, 2])
+        await drain()
+        expect(cancelledCommand.panels.allSatisfy { $0.frozenImage == nil },
+               "cancelled acquisition cannot display or publish late Command pixels")
+
+        let missingCommand = commandChooser()
+        let missingRequest = ScreenshotCaptureEngine.requests.count
+        missingCommand.commandModifiersChanged(.command)
+        await drain()
+        ScreenshotCaptureEngine.complete(missingRequest, displays: [1])
+        await drain()
+        if case .failed? = missingCommand.outcome {
+            expect(true, "missing Command display fails instead of capturing live or old pixels")
+        } else { expect(false, "incomplete Command acquisition fails explicitly") }
+
+        let clickedCommand = commandChooser()
+        let clickedRequest = ScreenshotCaptureEngine.requests.count
+        clickedCommand.prepareSelection(.command)
+        clickedCommand.setSelectionInProgress(true)
+        clickedCommand.commandModifiersChanged([])
+        clickedCommand.setSelectionInProgress(false)
+        await drain()
+        ScreenshotCaptureEngine.complete(clickedRequest, displays: [1, 2])
+        await drain()
+        expect(!clickedCommand.freeze && clickedCommand.outcome == nil,
+               "a click without a region drops the drag latch and follows released Command")
 
     }
 }

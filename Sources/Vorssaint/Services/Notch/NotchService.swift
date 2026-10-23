@@ -1652,6 +1652,7 @@ final class NotchService: ObservableObject {
         guard acceptsUserInteraction, captureControls == nil, !heldDrag,
               !NotchQuickCaptureService.shared.isSelecting else { return }
         open(pinned: true, quickCapture: true)
+        NotchQuickCaptureService.shared.open()
     }
 
     func signalQuickCapture(success: Bool) {
@@ -2230,7 +2231,7 @@ final class NotchService: ObservableObject {
     /// once nothing lies behind.
     private func stepBack() {
         guard captureControls == nil, !heldDrag else { return }
-        if showingQuickCapture { NotchQuickCaptureService.shared.cancel(); return }
+        if showingQuickCapture { NotchQuickCaptureService.shared.hide(); return }
         if showingAppPanel || selectedMetric != nil {
             if detailHasPage { goBack() } else { collapse() }
         } else if let close = pageLayers[selected] {
@@ -2244,7 +2245,7 @@ final class NotchService: ObservableObject {
     /// A top-level page returns to Home; Home itself stays put.
     private func swipeBack() {
         guard expanded, captureControls == nil, !heldDrag, !showingSections else { return }
-        if showingQuickCapture { collapse() }
+        if showingQuickCapture { NotchQuickCaptureService.shared.hide() }
         else if showingCommandBar {
             open(selected)
         } else if showingAppPanel || selectedMetric != nil {

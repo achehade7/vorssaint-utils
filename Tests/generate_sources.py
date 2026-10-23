@@ -1545,11 +1545,19 @@ def main():
           + "}\n")
     write("ScreenTextCompletion.swift", "import Foundation\n"
           + "extension ScreenTextCompletionTests {\nfinal class ScreenTextService: State {\n"
+          + "static let shared = ScreenTextService()\n"
           + "".join(declaration(screen_text, prefix).replace("private func", "func", 1)
                     for prefix in ["    func copyText(", "    func receiveUnifiedCapture(",
                                    "    private func recognize(", "    func syncWithPreferences()",
                                    "    func suspend()", "    private func cancelSession()",
-                                   "    enum Outcome:"])
+                                   "    enum Outcome:", "    enum CaptureTextFailure:",
+                                   "    static func recognizeCaptureText("])
+          + "}\n}\n")
+    write("ScreenTextShortcutRouting.swift", "import Foundation\n"
+          + "extension ScreenTextCompletionTests {\nfinal class ScreenCaptureService: CaptureState {\n"
+          + "".join(declaration("Sources/Vorssaint/Services/QuickTools/ScreenCaptureService.swift", prefix)
+                    .replace("private func", "func", 1)
+                    for prefix in ["    func capture(initial", "    private func route("])
           + "}\n}\n")
     write("ScreenshotShareCompletion.swift", "import Foundation\n"
           + "extension ScreenshotShareCompletionTests {\nfinal class Controller: State {\n"
@@ -1613,6 +1621,9 @@ def main():
         "    private func screenCaptureToolDidChange()",
         "    private func adoptCapturePolicy(",
         "    private func applySource(",
+        "    fileprivate func commandModifiersChanged(",
+        "    fileprivate func prepareSelection(",
+        "    private func setCommandFrozen(",
         "    private func loadLiveLoupeImages()",
         "    private func markCapturePending()",
         "    private func confirmSelectionWithKeyboard()",
@@ -1628,6 +1639,7 @@ def main():
           + "extension ScreenshotSelectionRefreshContract.Chooser {\n"
           + declaration(selection, "    fileprivate func setSelectionInProgress(").replace("fileprivate func", "func", 1)
           + declaration(selection, "    fileprivate var acceptsCaptureInput:").replace("fileprivate var", "var", 1)
+          + declaration(selection, "    var isAcquiring:")
           + declaration(selection, "    fileprivate var offersFullScreenCapture:").replace("fileprivate var", "var", 1)
           + declaration(selection, "    fileprivate var acceptsWindowClick:").replace("fileprivate var", "var", 1)
           + declaration(selection, "    func placeFullScreenControlBelowNotch(")
@@ -1668,6 +1680,10 @@ def main():
           + "final class Options { var controlsInNotch = true; var hasFocusedControl = false }\n"
           + "enum Outcome { case cancelled }\nvar screenCaptureOptions: Options? = Options()\n"
           + "var keyMonitor: Any?\nvar globalKeyMonitor: Any?\nvar spaceIsDown = false\n"
+          + "var freezeOnCommand = false\nvar commandActivationObserver: NSObjectProtocol?\n"
+          + "var commandModifiers: [NSEvent.ModifierFlags] = []\n"
+          + "func commandModifiersChanged(_ modifiers: NSEvent.ModifierFlags) { commandModifiers.append(modifiers) }\n"
+          + "deinit { if let observer = commandActivationObserver { NSWorkspace.shared.notificationCenter.removeObserver(observer) } }\n"
           + "var acceptsWindowClick = true\nvar loupeAcceptsKeyboardActions = false\n"
           + "var actions: [String] = []\nvar draggingPanel: ScreenshotOverlayPanel?\n"
           + "var isPickingColor = false\nvar acceptsCaptureInput = true\n"

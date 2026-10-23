@@ -60,6 +60,33 @@ final class ScreenTextService: ObservableObject {
         case empty
     }
 
+    enum CaptureTextFailure: Error {
+        case unavailable, noText
+    }
+
+    /// Quick Capture owns completion, cancellation and publication. This path
+    /// only returns text, preserving lines regardless of clipboard preferences.
+    static func recognizeCaptureText(_ image: CGImage,
+                                     completion: @escaping (Result<String, Error>) -> Void) {
+        guard AppFeature.screenOCR.isAvailable else {
+            DispatchQueue.main.async { completion(.failure(CaptureTextFailure.unavailable)) }
+            return
+        }
+        let languages = MediaSupport.recognitionLanguages(for: L10n.shared.language.rawValue)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = Self.outcome(for: Self.recognitionImage(image), detectQRCodes: false,
+                                       removeLineBreaks: false, fallbackLanguages: languages)
+            DispatchQueue.main.async {
+                guard AppFeature.screenOCR.isAvailable else {
+                    completion(.failure(CaptureTextFailure.unavailable))
+                    return
+                }
+                if case .text(let text) = outcome { completion(.success(text)) }
+                else { completion(.failure(CaptureTextFailure.noText)) }
+            }
+        }
+    }
+
     private func recognize(_ image: CGImage, detectQRCodes: Bool) {
         guard AppFeature.screenOCR.isAvailable else { return }
         ScreenTextPreviewController.shared.close()
