@@ -552,7 +552,9 @@ private struct NotchAwakeButton: View {
     var body: some View {
         NotchActionTile(symbol: service.isActive ? "cup.and.saucer.fill" : "cup.and.saucer",
                         title: l10n.s.keepAwakeTitle, active: service.isActive,
-                        accent: .awake, action: service.toggle)
+                        accent: .awake, action: service.toggleIndefinitely)
+            .background(NotchObsidianRightClick(action: NotchService.shared.openKeepAwake))
+            .accessibilityIdentifier("notch.controls.keepAwake")
     }
 }
 

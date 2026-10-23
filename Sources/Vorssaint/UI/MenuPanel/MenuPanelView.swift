@@ -365,7 +365,10 @@ struct MenuPanelView: View {
     private func isSectionVisible(_ id: PanelSectionID) -> Bool {
         _ = (showKeepAwake, showBrightness, brightnessEnabled, showMixer, showSystem, showNetwork,
              showDisk, showPower, showFanControl, showUtilities, showControls, showToggles, showWallpaper)
+        // The island's explicit duration request temporarily reveals its card
+        // even when hidden from the normal panel, without changing the layout.
         return PanelLayout.isVisibleInPanel(id)
+            || (id == .keepAwake && id.isAvailable && panelFocus.request?.target == .section(.keepAwake))
     }
 
     private var sectionNavigation: some View {

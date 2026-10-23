@@ -172,6 +172,41 @@ enum KeepAwakeClamshellTests {
         prefs.standard.set(false, forKey: Key.keepAwakeSwitchUsesUntil)
         prefs.standard.removeObject(forKey: Key.keepAwakeUntilTime)
 
+        let island = C.reset()
+        island.activate(minutes: 30)
+        island.deactivate(reason: .manual); C.drain()
+        island.toggleIndefinitely()
+        expect(island.isActive && island.endDate == nil && island.sessionMinutes == 0
+               && prefs.standard.integer(forKey: Key.defaultDuration) == 30,
+               "the island starts indefinitely without replacing the card's saved duration")
+        island.toggleIndefinitely(); C.drain()
+        expect(!island.isActive, "a second island click stops its open-ended session")
+        island.toggle()
+        expect(island.sessionMinutes == 30 && island.endDate != nil,
+               "the full card still restarts its saved timed session after the island toggle")
+        island.toggleIndefinitely(); C.drain()
+        expect(!island.isActive, "the island also stops an active timed session")
+        island.activate(until: end)
+        island.deactivate(reason: .manual); C.drain()
+        island.toggleIndefinitely()
+        expect(island.endDate == nil && prefs.standard.bool(forKey: Key.keepAwakeSwitchUsesUntil)
+               && prefs.standard.double(forKey: Key.keepAwakeUntilTime) == end.timeIntervalSinceReferenceDate,
+               "the island's indefinite session preserves a saved Until pick")
+        island.toggleIndefinitely(); C.drain()
+        island.toggle()
+        expect(island.endDate == end, "the full card still restores its saved Until pick")
+        island.sessionTrigger = .automation
+        island.toggleIndefinitely(); C.drain()
+        expect(!island.isActive && island.automationSuppressedUntilConditionsClear,
+               "stopping an automatic session from the island keeps automation suppressed")
+        island.toggleIndefinitely()
+        expect(island.isActive && !island.automationSuppressedUntilConditionsClear,
+               "a deliberate island restart clears automation suppression")
+        island.toggleIndefinitely(); C.drain()
+        prefs.standard.integers = [:]
+        prefs.standard.set(false, forKey: Key.keepAwakeSwitchUsesUntil)
+        prefs.standard.removeObject(forKey: Key.keepAwakeUntilTime)
+
         let staleStatus = C.reset(); staleStatus.isActive = true
         staleStatus.refreshPasswordlessStatus()
         staleStatus.enableClamshell()

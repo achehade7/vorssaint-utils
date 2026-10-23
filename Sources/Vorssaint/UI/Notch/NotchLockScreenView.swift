@@ -118,19 +118,6 @@ struct NotchLockScreenIsland: View {
                 .id(device?.id)
             }
             .overlay {
-                // The surface sits below the camera and the panel reserves
-                // clear room around this light, including its soft glow.
-                NotchShape(attached: true, radius: NotchLayout.surfaceRadius(height: size.height))
-                    .stroke(NotchLockScreenSurface.light, lineWidth: 1)
-                    .mask(alignment: .bottom) {
-                        LinearGradient(colors: [.clear, .white], startPoint: .top, endPoint: .bottom)
-                            .frame(height: 12)
-                    }
-                    .shadow(color: NotchNeonPalette.purple.opacity(0.55), radius: 2)
-                    .opacity(model.unlockHandoffAt == nil ? 1 : 0)
-                    .allowsHitTesting(false)
-            }
-            .overlay {
                 NotchLockScreenEdgePulse(event: model.lockRippleID, size: size)
                 if let began = model.unlockHandoffAt {
                     TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in

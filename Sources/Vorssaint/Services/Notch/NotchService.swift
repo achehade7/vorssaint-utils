@@ -2094,7 +2094,7 @@ final class NotchService: ObservableObject {
         case .module(let module): select(module)
         case .control(let item):
             switch item {
-            case .keepAwake: KeepAwakeManager.shared.toggle()
+            case .keepAwake: KeepAwakeManager.shared.toggleIndefinitely()
             case .microphone: MicMuteService.shared.toggle()
             case .screenshot: perform { ScreenshotService.shared.capture() }
             case .recording: perform { ScreenRecorderService.shared.toggle() }
@@ -2141,6 +2141,12 @@ final class NotchService: ObservableObject {
         // The toggling route is the menu bar's. Opened from there, the panel
         // has nothing behind it and closes on Escape, like the menu panel.
         if toggle { detailHasPage = false }
+    }
+
+    func openKeepAwake() {
+        guard AppFeature.keepAwake.isAvailable else { return }
+        MenuPanelFocus.shared.focus(.keepAwake)
+        open(.controls, appPanel: true)
     }
 
     func openQuickPanel(toggle: Bool = false) -> Bool {

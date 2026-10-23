@@ -200,6 +200,13 @@ final class KeepAwakeManager: ObservableObject {
         }
     }
 
+    /// The island's quick toggle always starts an open-ended session, without
+    /// replacing the duration selected in the full Keep Awake card.
+    func toggleIndefinitely() {
+        if isActive { toggle() }
+        else { activate(minutes: 0, rememberPick: false) }
+    }
+
     /// Keep Awake leaving the hub ends any running session; everything else
     /// (saved duration, tint, shortcut setting) stays for its return.
     func syncWithFeatures() {
@@ -226,14 +233,14 @@ final class KeepAwakeManager: ObservableObject {
     }
 
     /// `minutes <= 0` activates indefinitely.
-    func activate(minutes: Int) {
+    func activate(minutes: Int, rememberPick: Bool = true) {
         automationSuppressedUntilConditionsClear = false
         let minutes = Defaults.sanitizedDefaultDuration(minutes)
         let end = minutes > 0 ? Date().addingTimeInterval(TimeInterval(minutes) * 60) : nil
         activate(end: end, trigger: .manual)
         sessionMinutes = isActive ? minutes : nil
-        guard isActive else { return }
-        // Every entry point records the pick, so each switch restarts the same session.
+        guard isActive, rememberPick else { return }
+        // Explicit duration picks are reused by the full card's switch.
         UserDefaults.standard.set(minutes, forKey: DefaultsKey.defaultDuration)
         UserDefaults.standard.set(false, forKey: DefaultsKey.keepAwakeSwitchUsesUntil)
     }
