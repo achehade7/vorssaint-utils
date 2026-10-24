@@ -162,6 +162,11 @@ func open(_ content: SharedToolActions.Content) -> NSWindow {
     wait { menu() != nil }; return menu()!
 }
 func click(_ window: NSWindow, title: String) { actionButtons(window).first { $0.title == title }!.performClick(nil); drain() }
+func destinationCalls() -> Int {
+    PayloadInspectorService.shared.received.count + ClipboardDiffService.shared.received.count
+        + SnippetLibraryService.shared.received.count + ScreenshotService.shared.images.count
+        + ScreenCompareService.shared.received.count + ScreenTextService.completions.count
+}
 func image(_ width: Int) -> CGImage {
     let context = CGContext(data: nil, width: width, height: 5, bitsPerComponent: 8, bytesPerRow: 0,
         space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
@@ -258,6 +263,59 @@ key(inspected, code: kVK_DownArrow)
 key(inspected, code: kVK_Return, characters: "\r")
 check(PayloadInspectorService.shared.received.last == "inspect target", "Down and Return invoke the second action's payload inspector")
 
+// Plain letters invoke the offered action using its original selected snapshot.
+let letterActions = [("s", kVK_ANSI_S), ("l", kVK_ANSI_L), ("r", kVK_ANSI_R),
+                     ("j", kVK_ANSI_J), ("i", kVK_ANSI_I)]
+for (letter, code) in letterActions {
+    let snapshot = "  exact \(letter) selection\r\nsecond line  "
+    var source = ClipboardHistoryEntry(text: snapshot)
+    SharedToolActions.present(entry: source, from: parent, owner: owner)
+    wait { menu() != nil }
+    source.text = "later source edit"
+    let calls = destinationCalls()
+    key(menu()!, code: code, characters: letter)
+    check(menu() == nil && destinationCalls() == calls + 1,
+          "\(letter) closes the menu and invokes exactly one action")
+    switch letter {
+    case "s": check(SnippetLibraryService.shared.received.last == snapshot, "S saves exact selected text")
+    case "l", "r":
+        check(ClipboardDiffService.shared.received.last?.0 == snapshot
+              && ClipboardDiffService.shared.received.last?.1 == (letter == "l"),
+              "\(letter) routes exact selected text to the requested comparison side")
+    default: check(PayloadInspectorService.shared.received.last == snapshot, "\(letter) inspects exact selected text")
+    }
+}
+let layoutCharacter = open(.text("keyboard-layout character"))
+key(layoutCharacter, code: kVK_ANSI_X, characters: "s")
+check(SnippetLibraryService.shared.received.last == "keyboard-layout character" && menu() == nil,
+      "letter shortcuts follow the typed character rather than a physical US key position")
+let capsCharacter = open(.text("caps-lock selection"))
+key(capsCharacter, code: kVK_ANSI_S, characters: "S", modifiers: .capsLock)
+check(SnippetLibraryService.shared.received.last == "caps-lock selection" && menu() == nil,
+      "Caps Lock preserves plain-letter shortcuts")
+
+let scopedLetters = open(.text("scoped shortcuts"))
+let callsBeforeScope = destinationCalls()
+let foreign = NSPanel(contentRect: .zero, styleMask: [.nonactivatingPanel], backing: .buffered, defer: false)
+foreign.isReleasedWhenClosed = false
+for (letter, code) in letterActions {
+    key(scopedLetters, code: code, characters: letter, repeatPress: true)
+    check(menu() === scopedLetters && destinationCalls() == callsBeforeScope,
+          "held \(letter) cannot invoke an action from a repeated key event")
+    for modifiers: NSEvent.ModifierFlags in [.command, .option, .control, .shift] {
+        key(scopedLetters, code: code, characters: letter, modifiers: modifiers)
+        check(menu() === scopedLetters && destinationCalls() == callsBeforeScope,
+              "modified \(letter) does not invoke a plain-letter shortcut")
+    }
+    key(foreign, code: code, characters: letter)
+    check(menu() === scopedLetters && destinationCalls() == callsBeforeScope,
+          "\(letter) targeted to another window cannot invoke a menu action")
+}
+foreign.close()
+SharedToolActions.cancel(owner: owner)
+check(TestPasteboard.board.changeCount == fixtureChangeCount,
+      "letter actions preserve the clipboard")
+
 let escaped = open(.text("keep source"))
 key(parent, code: kVK_DownArrow)
 check(menu() === escaped, "key targeted to another window cannot operate menu")
@@ -302,11 +360,31 @@ check(SnippetLibraryService.shared.received.last == "standalone exact \r\ntext",
 AppFeature.available = [.textSnippets]
 let gated = open(.text("only snippet"))
 check(actionButtons(gated).map(\.title) == [SnippetCaptureStrings.localized(.enUS).save], "disabled destinations are absent")
+let callsBeforeUnavailable = destinationCalls()
+for (letter, code) in letterActions where letter != "s" {
+    key(gated, code: code, characters: letter)
+    check(menu() === gated && destinationCalls() == callsBeforeUnavailable,
+          "unavailable \(letter) leaves the menu open without invoking its selected action")
+}
 AppFeature.available = []
 let beforeDisabled = SnippetLibraryService.shared.received.count
 key(gated, code: kVK_Return, characters: "\r")
 check(SnippetLibraryService.shared.received.count == beforeDisabled, "feature disabled after menu opening is checked again at execution")
 check(!SharedToolActions.supports(entry: .init(text: "file", kind: .files)), "files have no unsupported shared actions")
+AppFeature.available = [.clipboardHistory]
+let noSnippets = open(.text("snippet unavailable"))
+let callsWithoutSnippets = destinationCalls()
+key(noSnippets, code: kVK_ANSI_S, characters: "s")
+check(menu() === noSnippets && destinationCalls() == callsWithoutSnippets,
+      "S cannot invoke the selected inspector when snippets are unavailable")
+SharedToolActions.cancel(owner: owner)
+AppFeature.available = Set(AppFeature.allCases)
+let disabledLetter = open(.text("disabled after opening"))
+AppFeature.available.remove(.textSnippets)
+key(disabledLetter, code: kVK_ANSI_S, characters: "s")
+check(destinationCalls() == callsWithoutSnippets,
+      "letter execution rechecks a feature disabled after menu opening")
+SharedToolActions.cancel(owner: owner)
 AppFeature.available = Set(AppFeature.allCases)
 
 // Actual command-bar handoff methods retain search state for clipboard rows.
@@ -330,6 +408,25 @@ check(!bar.canOpenActions, "removed clipboard entry cannot open stale actions")
 
 // Delayed original-image loading cannot reopen a closed action menu.
 let pixels = image(17), otherPixels = image(9)
+for (letter, code) in letterActions where letter == "l" || letter == "r" {
+    var selectedPixels = pixels
+    let imageLetters = open(.image(selectedPixels))
+    selectedPixels = otherPixels
+    let calls = destinationCalls()
+    key(imageLetters, code: code, characters: letter)
+    check(menu() == nil && destinationCalls() == calls + 1
+          && ScreenCompareService.shared.received.last?.0 === pixels
+          && ScreenCompareService.shared.received.last?.1 == (letter == "l"),
+          "\(letter) sends original image identity to the requested comparison side")
+}
+let imageTextLetters = open(.image(pixels))
+let callsBeforeImageLetters = destinationCalls()
+for (letter, code) in letterActions where ["s", "j", "i"].contains(letter) {
+    key(imageTextLetters, code: code, characters: letter)
+    check(menu() === imageTextLetters && destinationCalls() == callsBeforeImageLetters,
+          "text-only \(letter) cannot invoke a different image action")
+}
+SharedToolActions.cancel(owner: owner)
 for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
     parent.appearance = NSAppearance(named: appearance)
     let screenshotMenu = open(.image(pixels))
@@ -358,9 +455,16 @@ SharedToolActions.present(entry: imageEntry, from: parent, owner: owner)
 wait { ClipboardImageStore.readCount() == reads + 1 }
 let loading = menu()!
 check(actionButtons(loading).allSatisfy { !$0.isEnabled }, "image actions wait for original file pixels")
+let callsBeforeLoadingLetters = destinationCalls()
+for (letter, code) in letterActions where letter == "l" || letter == "r" {
+    key(loading, code: code, characters: letter)
+    check(menu() === loading && destinationCalls() == callsBeforeLoadingLetters,
+          "\(letter) waits for image loading without dispatching or closing the menu")
+}
 SharedToolActions.cancel(owner: owner)
 delayedGate.signal(); drain(); drain()
 check(menu() == nil && ScreenshotService.shared.images.isEmpty, "closing during image load rejects late completion")
+check(destinationCalls() == callsBeforeLoadingLetters, "loading shortcuts cannot queue an action after cancellation")
 ClipboardImageStore.gate = nil
 SharedToolActions.present(entry: imageEntry, from: parent, owner: owner)
 imageEntry.imageFile = "changed.png"
@@ -386,6 +490,12 @@ AppFeature.available = Set(AppFeature.allCases)
 let missing = open(.imageFile("missing.png"))
 wait { views(missing.contentView!).compactMap { $0 as? NSTextField }.contains { $0.stringValue == SharedToolActionStrings.unavailable } }
 check(actionButtons(missing).allSatisfy { !$0.isEnabled }, "missing historical image disables actions without clipboard fallback")
+let callsBeforeMissingLetters = destinationCalls()
+for (letter, code) in letterActions where letter == "l" || letter == "r" {
+    key(missing, code: code, characters: letter)
+    check(menu() === missing && destinationCalls() == callsBeforeMissingLetters,
+          "\(letter) cannot dispatch failed image content")
+}
 SharedToolActions.cancel(owner: owner)
 
 // OCR owns independent editable results; only Copy writes our fixture clipboard.

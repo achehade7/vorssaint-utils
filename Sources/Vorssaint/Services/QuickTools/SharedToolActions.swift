@@ -274,6 +274,20 @@ private final class SharedToolActionMenu: NSObject, NSWindowDelegate {
                 self.close(restoreFocus: true); return nil
             }
             guard modifiers.isEmpty else { return event }
+            let action: SharedToolActions.Action?
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "s": action = .saveSnippet
+            case "l": action = .before
+            case "r": action = .after
+            case "j", "i": action = .inspect
+            default: action = nil
+            }
+            if let action {
+                guard !event.isARepeat, let index = self.shown.firstIndex(of: action) else { return nil }
+                self.selected = index
+                self.performSelection()
+                return nil
+            }
             switch Int(event.keyCode) {
             case kVK_DownArrow: self.move(1); return nil
             case kVK_UpArrow: self.move(-1); return nil
