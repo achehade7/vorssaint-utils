@@ -14,10 +14,11 @@ enum SharedToolActions {
     }
 
     enum Action: CaseIterable {
-        case inspect, before, after, saveSnippet, extract, annotate
+        case inspect, jira, before, after, saveSnippet, extract, annotate
         var title: String {
             switch self {
             case .inspect: return SharedToolActionStrings.inspect
+            case .jira: return "Jira"
             case .before: return SharedToolActionStrings.before
             case .after: return SharedToolActionStrings.after
             case .saveSnippet: return SnippetCaptureStrings.localized(L10n.shared.language).save
@@ -25,7 +26,34 @@ enum SharedToolActions {
             case .annotate: return SharedToolActionStrings.annotate
             }
         }
-
+        var shortcut: String? {
+            switch self {
+            case .saveSnippet: return "s"
+            case .inspect: return "i"
+            case .jira: return "j"
+            case .before: return "l"
+            case .after: return "r"
+            case .extract, .annotate: return nil
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .saveSnippet: return "text.badge.plus"
+            case .inspect: return "curlybraces"
+            case .jira: return "ticket"
+            case .before: return "rectangle.lefthalf.filled"
+            case .after: return "rectangle.righthalf.filled"
+            case .extract: return "text.viewfinder"
+            case .annotate: return "pencil.tip.crop.circle"
+            }
+        }
+        var tint: NSColor {
+            switch self {
+            case .jira, .after: return ToolAppearance.after
+            case .before: return ToolAppearance.before
+            default: return ToolAppearance.accent
+            }
+        }
     }
 
     private static var current: SharedToolActionMenu?
@@ -78,19 +106,28 @@ enum SharedToolActions {
 
     static func actions(for content: Content) -> [Action] {
         switch content {
-        case .text:
+        case .text(let text):
             return (AppFeature.textSnippets.isAvailable ? [.saveSnippet] : [])
-                + (AppFeature.clipboardHistory.isAvailable ? [.inspect, .before, .after] : [])
+                + (AppFeature.clipboardHistory.isAvailable
+                   ? [.inspect] + (jiraEntry(for: text) == nil ? [] : [.jira]) + [.before, .after] : [])
         case .image, .imageFile:
             return (AppFeature.screenOCR.isAvailable ? [.extract] : [])
                 + (AppFeature.screenshot.isAvailable ? [.annotate, .before, .after] : [])
         }
     }
 
+    /// Use the same saved destination as `j KEY`; only the one extracted key leaves the app.
+    private static func jiraEntry(for text: String) -> CommandBarEntry? {
+        let keys = CommandBarTicketSearch.ticketKeys(in: text)
+        guard keys.count == 1 else { return nil }
+        return CommandBarTicketSearch.directEntry(query: "j " + keys[0])?.entry
+    }
+
     static func run(_ action: Action, content: Content, title: String) {
         guard actions(for: content).contains(action) else { return }
         switch (action, content) {
         case (.inspect, .text(let text)): PayloadInspectorService.shared.receive(text)
+        case (.jira, .text(let text)): jiraEntry(for: text)?.run(nil)
         case (.before, .text(let text)), (.after, .text(let text)):
             ClipboardDiffService.shared.receive(text, asBefore: action == .before, name: nil)
         case (.saveSnippet, .text(let text)): SnippetLibraryService.shared.saveCapturedText(text)
@@ -109,6 +146,8 @@ private final class SharedToolActionPanel: NSPanel {
 }
 
 private final class SharedToolActionButton: NSButton {
+    // The custom-drawn tile has no native bezel or symbol-specific alignment padding.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
     var menuSelected = false { didSet { needsDisplay = true } }
     private var hovered = false
     private var hoverArea: NSTrackingArea?
@@ -124,32 +163,29 @@ private final class SharedToolActionButton: NSButton {
     override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
 
     override func draw(_ dirtyRect: NSRect) {
+        let color = contentTintColor ?? ToolAppearance.accent
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7)
         if menuSelected || isHighlighted {
-            ToolAppearance.raised.withAlphaComponent(isHighlighted ? 1 : 0.85).setFill()
+            color.withAlphaComponent(isHighlighted ? 0.22 : 0.12).setFill()
             shape.fill()
-            ToolAppearance.accent.setFill()
-            NSBezierPath(roundedRect: NSRect(x: 3, y: (bounds.height - 10) / 2, width: 2, height: 10),
-                         xRadius: 1, yRadius: 1).fill()
+            color.withAlphaComponent(0.30).setStroke()
+            shape.lineWidth = 0.5; shape.stroke()
         } else if hovered && isEnabled {
             ToolAppearance.raised.setFill(); shape.fill()
         }
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingTail
-        let label = NSAttributedString(string: title, attributes: [
-            .font: font ?? NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: isEnabled ? ToolAppearance.text : ToolAppearance.secondaryText,
-            .paragraphStyle: paragraph
-        ])
-        let height = ceil(label.size().height)
-        label.draw(in: NSRect(x: 12, y: floor((bounds.height - height) / 2),
-                              width: max(0, bounds.width - 24), height: height))
+        guard let icon = image?.withSymbolConfiguration(.init(paletteColors: [
+            isEnabled ? color : ToolAppearance.secondaryText.withAlphaComponent(0.45)
+        ])) else { return }
+        let scale = min(16 / icon.size.width, 16 / icon.size.height)
+        let size = NSSize(width: icon.size.width * scale, height: icon.size.height * scale)
+        icon.draw(in: NSRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
+                             width: size.width, height: size.height))
     }
 }
 
 private final class SharedToolActionMenu: NSObject, NSWindowDelegate {
     let owner: UUID
-    let panel = SharedToolActionPanel(contentRect: NSRect(x: 0, y: 0, width: 288, height: 156),
+    let panel = SharedToolActionPanel(contentRect: NSRect(x: 0, y: 0, width: 152, height: 40),
                                      styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     private weak var parent: NSWindow?
     private weak var previousResponder: NSResponder?
@@ -182,7 +218,7 @@ private final class SharedToolActionMenu: NSObject, NSWindowDelegate {
         ToolAppearance.configure(panel)
         let root = NSView()
         root.wantsLayer = true
-        root.layer?.cornerRadius = 12
+        root.layer?.cornerRadius = 10
         root.layer?.masksToBounds = true
         root.layer?.borderWidth = 0.5
         panel.backgroundColor = .clear
@@ -204,36 +240,18 @@ private final class SharedToolActionMenu: NSObject, NSWindowDelegate {
             tint.layer?.backgroundColor = ToolAppearance.background.withAlphaComponent(0.88).cgColor
             root.layer?.borderColor = ToolAppearance.secondaryText.withAlphaComponent(0.24).cgColor
         }
-        let heading = NSTextField(labelWithString: SharedToolActionStrings.actions)
-        heading.font = .systemFont(ofSize: 11, weight: .semibold)
-        heading.textColor = ToolAppearance.secondaryText
-        heading.setContentHuggingPriority(.required, for: .horizontal)
-        heading.setContentCompressionResistancePriority(.required, for: .horizontal)
-        let caption = NSTextField(labelWithString: title.replacingOccurrences(of: "\n", with: " "))
-        caption.font = .systemFont(ofSize: 10, weight: .regular)
-        caption.textColor = ToolAppearance.secondaryText.withAlphaComponent(0.70)
-        caption.alignment = .right
-        caption.lineBreakMode = .byTruncatingTail
-        caption.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        rows.orientation = .vertical; rows.alignment = .leading; rows.spacing = 4
+        rows.orientation = .horizontal; rows.alignment = .centerY; rows.spacing = 4
         status.font = .systemFont(ofSize: 10)
         status.textColor = ToolAppearance.secondaryText
-        let header = NSStackView(views: [heading, caption])
-        header.orientation = .horizontal; header.alignment = .centerY; header.spacing = 12
-        header.distribution = .fill
-        header.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        let stack = NSStackView(views: [header, rows, status])
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
+        let stack = NSStackView(views: [rows, status])
+        stack.orientation = .vertical; stack.alignment = .centerX; stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -12),
-            header.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            header.heightAnchor.constraint(equalToConstant: 20),
-            rows.widthAnchor.constraint(equalTo: stack.widthAnchor)
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 6),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -6),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 4),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -4)
         ])
     }
 
@@ -274,29 +292,16 @@ private final class SharedToolActionMenu: NSObject, NSWindowDelegate {
                 self.close(restoreFocus: true); return nil
             }
             guard modifiers.isEmpty else { return event }
-            let action: SharedToolActions.Action?
-            switch event.charactersIgnoringModifiers?.lowercased() {
-            case "s": action = .saveSnippet
-            case "l": action = .before
-            case "r": action = .after
-            case "j", "i": action = .inspect
-            default: action = nil
-            }
-            if let action {
+            if let key = event.charactersIgnoringModifiers?.lowercased(),
+               let action = SharedToolActions.Action.allCases.first(where: { $0.shortcut == key }) {
                 guard !event.isARepeat, let index = self.shown.firstIndex(of: action) else { return nil }
                 self.selected = index
                 self.performSelection()
                 return nil
             }
             switch Int(event.keyCode) {
-            case kVK_DownArrow: self.move(1); return nil
-            case kVK_UpArrow: self.move(-1); return nil
-            case kVK_LeftArrow, kVK_RightArrow:
-                guard self.shown.indices.contains(self.selected),
-                      [.before, .after].contains(self.shown[self.selected]),
-                      let side = self.shown.firstIndex(of: Int(event.keyCode) == kVK_LeftArrow ? .before : .after)
-                else { return event }
-                self.selected = side; self.updateSelection(); return nil
+            case kVK_DownArrow, kVK_RightArrow: self.move(1); return nil
+            case kVK_UpArrow, kVK_LeftArrow: self.move(-1); return nil
             case kVK_Return, kVK_ANSI_KeypadEnter: self.performSelection(); return nil
             default: return event
             }
@@ -320,39 +325,27 @@ private final class SharedToolActionMenu: NSObject, NSWindowDelegate {
         for (index, action) in shown.enumerated() {
             let button = SharedToolActionButton(title: action.title, target: self, action: #selector(clicked(_:)))
             button.tag = index
-            button.alignment = .left; button.isBordered = false
-            button.font = .systemFont(ofSize: 12, weight: .medium)
+            button.isBordered = false
+            button.imagePosition = .imageOnly
+            button.image = NSImage(systemSymbolName: action.symbol, accessibilityDescription: action.title)?
+                .withSymbolConfiguration(.init(pointSize: 15, weight: .medium))
+            button.contentTintColor = action.tint
+            button.setAccessibilityLabel(action.title)
+            button.toolTip = action.title + (action.shortcut.map { " · " + $0.uppercased() } ?? "")
             button.isEnabled = !loading && !failed
+            button.widthAnchor.constraint(equalToConstant: 32).isActive = true
             button.heightAnchor.constraint(equalToConstant: 32).isActive = true
             buttons.append(button)
-        }
-        var index = 0
-        while index < buttons.count {
-            let row: NSView
-            if shown[index] == .before, index + 1 < shown.count, shown[index + 1] == .after {
-                let separator = NSBox(); separator.boxType = .separator
-                separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
-                separator.heightAnchor.constraint(equalToConstant: 12).isActive = true
-                let pair = NSStackView(views: [buttons[index], separator, buttons[index + 1]])
-                pair.orientation = .horizontal; pair.alignment = .centerY; pair.spacing = 4
-                pair.distribution = .fill
-                buttons[index].widthAnchor.constraint(equalTo: buttons[index + 1].widthAnchor).isActive = true
-                row = pair; index += 2
-            } else {
-                row = buttons[index]; index += 1
-            }
-            rows.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
+            rows.addArrangedSubview(button)
         }
         status.stringValue = loading ? SharedToolActionStrings.loading : failed ? SharedToolActionStrings.unavailable : ""
         status.isHidden = !loading && !failed
-        // Loading feedback expands below the actions without moving the header.
-        let rowCount = rows.arrangedSubviews.count
-        let height = 52 + CGFloat(rowCount) * 32 + CGFloat(max(0, rowCount - 1)) * rows.spacing
-            + (status.isHidden ? 0 : 22)
+        let width = 12 + CGFloat(buttons.count) * 32 + CGFloat(max(0, buttons.count - 1)) * rows.spacing
+        let height: CGFloat = status.isHidden ? 40 : 60
         var frame = panel.frame
         frame.origin.y += frame.height - height
-        frame.size.height = height
+        frame.size = NSSize(width: max(width, status.isHidden ? 44 : ceil(status.intrinsicContentSize.width) + 12),
+                            height: height)
         panel.setFrame(frame, display: true)
 
         updateSelection()

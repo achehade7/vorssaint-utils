@@ -27,6 +27,8 @@ struct L10n {
 enum FeatureStrings {
     struct Clipboard { let copy = "Copy" }
     static func clipboard(_ language: AppLanguage) -> Clipboard { .init() }
+    struct CommandBar { let openInBrowser = "Open in browser" }
+    static func commandBar(_ language: AppLanguage) -> CommandBar { .init() }
 }
 enum AppFeature: CaseIterable {
     case clipboardHistory, textSnippets, screenOCR, screenshot
@@ -90,7 +92,23 @@ final class NotchService {
     static let shared = NotchService()
     var presentationWindow: NSPanel?
 }
-struct CommandBarEntry { let id: String; var isAnswer = false }
+struct CommandBarEntry {
+    enum Icon { case symbol(String) }
+    let id: String
+    var title = "", subtitle = "", icon = Icon.symbol("link"), countsUsage = false
+    var run: (Int?) -> Void = { _ in }
+    var isAnswer = false
+}
+enum DefaultsKey { static let commandBarLinks = "fixtureLinks" }
+enum CommandBarSearch { static func normalized(_ text: String) -> String { text.lowercased() } }
+enum CommandBarSource { case links; var idPrefix: String? { "link." } }
+enum TestBrowser {
+    static var urls: [URL] = []
+    static func open(_ url: URL) { urls.append(url) }
+}
+enum CommandBarTicketSearch {
+    // TICKET_METHODS
+}
 final class Bar {
     enum Mode: Equatable { case search, actions(entryID: String) }
     enum Presentation { case floating, island }
@@ -129,6 +147,11 @@ method_exchangeImplementations(originalMethod, replacementMethod)
 defer { method_exchangeImplementations(originalMethod, replacementMethod); TestPasteboard.board.releaseGlobally() }
 TestPasteboard.board.setString("existing clipboard", forType: .string)
 let fixtureChangeCount = TestPasteboard.board.changeCount
+let jiraLink = CommandBarLink(name: "j", kind: .link, destination: "https://example.atlassian.net/browse/{query}")
+func configureJira(_ links: [CommandBarLink]) {
+    UserDefaults.standard.set(CommandBarLinks.encode(links), forKey: DefaultsKey.commandBarLinks)
+}
+configureJira([jiraLink])
 let parent = NSPanel(contentRect: NSRect(x: 180, y: 180, width: 680, height: 480),
                      styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
 parent.title = "Shared actions fixture"; parent.isReleasedWhenClosed = false
@@ -165,7 +188,7 @@ func click(_ window: NSWindow, title: String) { actionButtons(window).first { $0
 func destinationCalls() -> Int {
     PayloadInspectorService.shared.received.count + ClipboardDiffService.shared.received.count
         + SnippetLibraryService.shared.received.count + ScreenshotService.shared.images.count
-        + ScreenCompareService.shared.received.count + ScreenTextService.completions.count
+        + ScreenCompareService.shared.received.count + ScreenTextService.completions.count + TestBrowser.urls.count
 }
 func image(_ width: Int) -> CGImage {
     let context = CGContext(data: nil, width: width, height: 5, bitsPerComponent: 8, bytesPerRow: 0,
@@ -184,27 +207,21 @@ func verifyMenuLayout(_ window: NSWindow) {
     let content = window.contentView!
     content.layoutSubtreeIfNeeded()
     let actions = actionButtons(window)
-    let before = actions.first { $0.title == SharedToolActionStrings.before }!
-    let after = actions.first { $0.title == SharedToolActionStrings.after }!
-    let left = before.convert(before.bounds, to: content)
-    let right = after.convert(after.bounds, to: content)
-    check(abs(left.minY - right.minY) < 1 && abs(left.height - right.height) < 1
-          && left.maxX <= right.minX && abs(left.width - right.width) < 1,
-          "comparison sides share one evenly split left/right row")
-    let fullRow = actions[0].convert(actions[0].bounds, to: content)
-    check(abs(left.minX - fullRow.minX) < 1 && abs(right.maxX - fullRow.maxX) < 1,
-          "comparison sides fill the same row width as the other actions")
-    check([before, after].allSatisfy {
-        let titleWidth = ($0.title as NSString).size(withAttributes: [.font: $0.font!]).width
-        return titleWidth + 24 <= $0.bounds.width
-    }, "comparison labels fit with horizontal text padding instead of truncating their destination")
-    check(actions.allSatisfy { $0.image == nil }, "action buttons have no decorative icons")
-    check(actions.allSatisfy {
-        let frame = $0.convert($0.bounds, to: content)
-        return content.bounds.contains(frame) && frame.minX >= 12 && content.bounds.maxX - frame.maxX >= 12
-    }, "all actions fit with comfortable outer horizontal margins")
-    check(content.bounds.width <= 300 && content.bounds.height <= 180,
-          "menu is a compact popover rather than the former search panel")
+    let frames = actions.map { $0.convert($0.bounds, to: content) }
+    check(zip(frames, frames.dropFirst()).allSatisfy {
+        abs($0.minY - $1.minY) < 1 && $0.maxX < $1.minX
+    }, "all actions share a single ordered horizontal row: \(frames)")
+    check(actions.allSatisfy { $0.image != nil && $0.imagePosition == .imageOnly },
+          "every action has a valid symbol and displays only its icon")
+    check(actions.allSatisfy { $0.accessibilityLabel() == $0.title && $0.toolTip?.contains($0.title) == true },
+          "icon-only buttons retain accessible names and discoverable tooltips")
+    check(frames.allSatisfy { content.bounds.contains($0) && $0.minX >= 6
+          && content.bounds.maxX - $0.maxX >= 6 && $0.width == 32 && $0.height == 32 },
+          "icons have equal usable targets and even outer padding")
+    check(content.bounds.width <= 190 && content.bounds.height == 40,
+          "menu is a compact forty-point-high icon strip")
+    check(views(content).compactMap { $0 as? NSTextField }.allSatisfy(\.isHidden),
+          "ready menu has no visible heading, source text or labels")
     check(!views(content).contains { $0 is NSSearchField || $0 is NSTextView
           || ($0 as? NSTextField)?.isEditable == true }, "menu contains no search field or editable text control")
     check(window.firstResponder === window, "compact menu routes keyboard commands without a text field editor")
@@ -250,7 +267,7 @@ check(ClipboardDiffService.shared.received.last?.0 == "left selected payload"
       "Up wraps to the right destination and Left moves back to the left")
 for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
     parent.appearance = NSAppearance(named: appearance)
-    SharedToolActions.present(content: .text("Selected text"), title: "Obsidian", from: parent, owner: owner)
+    SharedToolActions.present(content: .text("Selected text SAP-531"), title: "Obsidian", from: parent, owner: owner)
     wait { menu() != nil }
     let screenshotMenu = menu()!
     verifyMenuLayout(screenshotMenu)
@@ -267,7 +284,7 @@ check(PayloadInspectorService.shared.received.last == "inspect target", "Down an
 let letterActions = [("s", kVK_ANSI_S), ("l", kVK_ANSI_L), ("r", kVK_ANSI_R),
                      ("j", kVK_ANSI_J), ("i", kVK_ANSI_I)]
 for (letter, code) in letterActions {
-    let snapshot = "  exact \(letter) selection\r\nsecond line  "
+    let snapshot = "  exact \(letter) selection\r\nsecond line  " + (letter == "j" ? "sap-531" : "")
     var source = ClipboardHistoryEntry(text: snapshot)
     SharedToolActions.present(entry: source, from: parent, owner: owner)
     wait { menu() != nil }
@@ -282,9 +299,50 @@ for (letter, code) in letterActions {
         check(ClipboardDiffService.shared.received.last?.0 == snapshot
               && ClipboardDiffService.shared.received.last?.1 == (letter == "l"),
               "\(letter) routes exact selected text to the requested comparison side")
-    default: check(PayloadInspectorService.shared.received.last == snapshot, "\(letter) inspects exact selected text")
+    case "j": check(TestBrowser.urls.last?.absoluteString == "https://example.atlassian.net/browse/SAP-531",
+                    "J opens only the extracted key at the configured Jira destination")
+    default: check(PayloadInspectorService.shared.received.last == snapshot, "I inspects exact selected text")
     }
 }
+// Jira uses the captured text and saved destination; an absent or ambiguous key never opens anything.
+for text in ["no ticket here", "SAP-0", "SAP-531 OPS-42"] {
+    let unavailable = open(.text(text))
+    let calls = destinationCalls()
+    check(!actionButtons(unavailable).contains { $0.title == "Jira" }, "Jira is absent without one distinct valid ticket")
+    key(unavailable, code: kVK_ANSI_J, characters: "j")
+    check(menu() === unavailable && destinationCalls() == calls, "J cannot fall through to Inspect or another action")
+    SharedToolActions.cancel(owner: owner)
+}
+let jiraMenu = open(.text("Private context sap-531; https://untrusted.example/browse/SAP-531"))
+check(actionButtons(jiraMenu).map(\.title) == [SnippetCaptureStrings.localized(.enUS).save,
+      SharedToolActionStrings.inspect, "Jira", SharedToolActionStrings.before, SharedToolActionStrings.after],
+      "Jira follows Snippet and Inspect, before the two comparison icons")
+check(actionButtons(jiraMenu).first { $0.title == "Jira" }?.toolTip == "Jira · J"
+      && actionButtons(jiraMenu).first { $0.title == SharedToolActionStrings.inspect }?.toolTip?.hasSuffix(" · I") == true,
+      "tooltips advertise the distinct Jira and Inspect shortcuts")
+let jiraCount = TestBrowser.urls.count
+click(jiraMenu, title: "Jira")
+check(TestBrowser.urls.count == jiraCount + 1
+      && TestBrowser.urls.last?.absoluteString == "https://example.atlassian.net/browse/SAP-531",
+      "click opens one deduplicated ticket using the saved site, without surrounding text")
+for links in [[], [CommandBarLink(name: "j", kind: .link, destination: "file:///tmp/{query}")]] {
+    configureJira(links)
+    let unavailable = open(.text("SAP-531"))
+    check(!actionButtons(unavailable).contains { $0.title == "Jira" }, "missing or non-web Jira configuration offers no action")
+    SharedToolActions.cancel(owner: owner)
+}
+configureJira([jiraLink])
+let removedJira = open(.text("SAP-531"))
+configureJira([])
+let beforeRemovedJira = TestBrowser.urls.count
+key(removedJira, code: kVK_ANSI_J, characters: "j")
+check(TestBrowser.urls.count == beforeRemovedJira, "a removed Jira destination is rechecked before dispatch")
+configureJira([jiraLink])
+let arrowJira = open(.text("SAP-531"))
+key(arrowJira, code: kVK_RightArrow); key(arrowJira, code: kVK_RightArrow)
+key(arrowJira, code: kVK_Return, characters: "\r")
+check(TestBrowser.urls.count == beforeRemovedJira + 1, "horizontal arrows navigate all icons to Jira")
+
 let layoutCharacter = open(.text("keyboard-layout character"))
 key(layoutCharacter, code: kVK_ANSI_X, characters: "s")
 check(SnippetLibraryService.shared.received.last == "keyboard-layout character" && menu() == nil,
@@ -294,7 +352,7 @@ key(capsCharacter, code: kVK_ANSI_S, characters: "S", modifiers: .capsLock)
 check(SnippetLibraryService.shared.received.last == "caps-lock selection" && menu() == nil,
       "Caps Lock preserves plain-letter shortcuts")
 
-let scopedLetters = open(.text("scoped shortcuts"))
+let scopedLetters = open(.text("scoped shortcuts SAP-531"))
 let callsBeforeScope = destinationCalls()
 let foreign = NSPanel(contentRect: .zero, styleMask: [.nonactivatingPanel], backing: .buffered, defer: false)
 foreign.isReleasedWhenClosed = false
@@ -580,6 +638,10 @@ check(!closingParent.isVisible && menu() == nil, "closing source closes its acti
 check(actualClipboard.changeCount == actualChangeCount, "fixture never changes actual system clipboard")
 print("PASS: \(checks) native shared action and OCR checks")
 '''
+ticket_source = 'Sources/Vorssaint/Services/CommandBar/CommandBarTicketSearch.swift'
+fixture = fixture.replace('// TICKET_METHODS', '\n'.join(declaration(ticket_source, prefix)
+    .replace('NSWorkspace.shared.open(url)', 'TestBrowser.open(url)')
+    for prefix in ['    static func ticketKeys(in', '    static func directEntry(query:']))
 bar_source = 'Sources/Vorssaint/Services/CommandBar/CommandBarService.swift'
 fixture = fixture.replace('// BAR_METHODS', '\n'.join(declaration(bar_source, prefix).replace('private ', '', 1)
     for prefix in ['    private func clipboardEntry(for', '    var canOpenActions:', '    func openActions()']))
@@ -592,7 +654,8 @@ with tempfile.TemporaryDirectory(prefix='shared-tool-actions-ui-') as temporary:
              'Sources/Vorssaint/Services/QuickTools/ExtractedTextController.swift',
              'Sources/Vorssaint/UI/ToolAppearance.swift', 'Sources/Vorssaint/Core/SharedToolActionStrings.swift',
              'Sources/Vorssaint/Core/SharedActionShortcut.swift', 'Sources/Vorssaint/Core/AppKitExtensions.swift',
-             'Sources/Vorssaint/Core/SnippetCaptureStrings.swift']
+             'Sources/Vorssaint/Core/SnippetCaptureStrings.swift',
+             'Sources/Vorssaint/Services/CommandBar/CommandBarLinks.swift']
     subprocess.run(['swiftc', *[str(repo / path) for path in paths], str(source), '-o', str(binary)], check=True)
     if '--compile-only' not in sys.argv:
         preferences = folder / 'preferences'
