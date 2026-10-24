@@ -491,11 +491,18 @@ final class NotchService: ObservableObject {
         fullscreenCompact && !geometry.isNotched
     }
 
+    /// Full-screen hover is opt-in independently of the opening mode used
+    /// on the desktop. Hiding full-screen content alone never enables it.
+    private var hoverOpeningEnabled: Bool {
+        hiddenInFullscreen ? UserDefaults.standard.bool(forKey: DefaultsKey.notchHoverInFullscreen)
+            : UserDefaults.standard.bool(forKey: DefaultsKey.notchOpenOnHover)
+    }
+
     /// Out of sight at rest, the island has no window for the pointer to
     /// enter, so hover follows the pointer over its place instead.
     private var watchesHiddenHover: Bool {
         hiddenUntilHover || (hiddenAtRestInFullscreen && !dragPlaceholder && captureControls == nil
-            && UserDefaults.standard.bool(forKey: DefaultsKey.notchOpenOnHover))
+            && hoverOpeningEnabled)
     }
 
     /// A Mac without a battery has no charge to show, so a saved battery
@@ -1776,7 +1783,7 @@ final class NotchService: ObservableObject {
         let unnamesMusic = inside != wasInside && endMusicStripHover(leaving: !inside)
         // A full hover opening goes straight from its resting size to the page.
         // The activity picker replaces that opening and keeps its hover response.
-        let opensOnHover = UserDefaults.standard.bool(forKey: DefaultsKey.notchOpenOnHover)
+        let opensOnHover = hoverOpeningEnabled
             && UserDefaults.standard.bool(forKey: DefaultsKey.notchHoverExpands) && !showsCompactActivityPicker
         let emphasize = inside && !hiddenInFullscreen && !hiddenUntilHover && !expanded && !peeking && !dragPlaceholder
             && notice == nil && captureControls == nil && !opensOnHover
@@ -1816,7 +1823,7 @@ final class NotchService: ObservableObject {
         if inside {
             if holdsNotification, let id = notice?.notificationID { holdNotification(id); return }
             guard !hoverState.suppressed, (notice == nil || hiddenUntilHover), !expanded, !peeking, !dragPlaceholder,
-                  UserDefaults.standard.bool(forKey: DefaultsKey.notchOpenOnHover) else { return }
+                  hoverOpeningEnabled else { return }
             if !hiddenInFullscreen, compactActivity != nil, compactActivityGeometry.compactActivityWingWidth > 0,
                !UserDefaults.standard.bool(forKey: DefaultsKey.notchHoverExpands) { return }
             let work = DispatchWorkItem { [weak self] in
@@ -1829,7 +1836,7 @@ final class NotchService: ObservableObject {
                       !self.expanded, !self.peeking, !self.pinned, !self.heldDrag, !self.keepsWorkingSurface,
                       !self.showsCompactActivityPicker,
                       self.captureControls == nil, (self.notice == nil || self.hiddenUntilHover), !self.dragPlaceholder,
-                      UserDefaults.standard.bool(forKey: DefaultsKey.notchOpenOnHover),
+                      self.hoverOpeningEnabled,
                       self.windowHost?.blocksHoverReveal() == false,
                       self.geometry.contains(NSEvent.mouseLocation, in: self.watchesHiddenHover ? self.geometry.collapsed : self.surfaceSize) else { return }
                 // Following the closed island ends as it opens or peeks.
@@ -1881,7 +1888,7 @@ final class NotchService: ObservableObject {
         // restarts its dismissal under a pointer that came back to reopen it.
         let followsClosedHover = inside && !expanded && !peeking && notice == nil
             && (hoverWork?.isCancelled == false
-                || hoverState.suppressed && UserDefaults.standard.bool(forKey: DefaultsKey.notchOpenOnHover))
+                || hoverState.suppressed && hoverOpeningEnabled)
         // The music strip's name, or a song paused from its button, lasts
         // until the pointer leaves, with or without an emphasis to follow.
         let keepsMusicStrip = musicStripNamed || musicStripHeldSong != nil
@@ -3152,6 +3159,10 @@ final class NotchService: ObservableObject {
     }
 
     private func syncHiddenHoverMonitoring() {
+        if fullscreenCompact, !hoverOpeningEnabled {
+            hoverWork?.cancel(); hoverWork = nil
+            removeHoverExitMonitors()
+        }
         guard running, !suspended, watchesHiddenHover, windowHost != nil else {
             removeHiddenHoverMonitors()
             return

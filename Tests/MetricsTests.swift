@@ -31,6 +31,7 @@ struct MetricsTests {
             ("pointer-input", {
                 PointerOnDisplayContract.run(suite)
                 PointerInputFeatureTests.run(suite)
+                MouseSpacesGestureTapTests.run(suite)
                 SmoothScrollRoutingTests.run(suite)
                 KeyboardDebounceTapTests.run(suite)
                 PointerDisplayLookupContract.run(suite)
@@ -47,6 +48,7 @@ struct MetricsTests {
             ("window-layout", { WindowLayoutFeatureTests.run(suite) }),
             ("media", { MediaFeatureTests.run(suite) }),
             ("mixer", {
+                MixerRenderContinuityTests.run(suite)
                 MixerNativeDragTests.run(suite)
                 MixerOutputAdjustmentContract.run(suite)
                 MixerHeadphonesDisconnectContract.run(suite)

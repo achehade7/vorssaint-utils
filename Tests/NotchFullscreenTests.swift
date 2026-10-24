@@ -254,6 +254,9 @@ enum NotchFullscreenTests {
                      "fullscreen display arrival has side room without a lower neon")
         charging.quietMode = true
         suite.expect(charging.feedbackWingWidth == 0, "quiet mode grants no temporary feedback wings")
+        suite.expect(Defaults.registeredDefaults[DefaultsKey.notchHoverInFullscreen] as? Bool == false
+                     && SettingsBackupSupport.exportKeys().contains(DefaultsKey.notchHoverInFullscreen),
+                     "fullscreen hover is a separate opt-in included in settings backup")
         appFullscreenChecks(topology, suite)
         appFullscreenWindowChecks(suite)
         volumeLifecycleChecks(topology, suite)

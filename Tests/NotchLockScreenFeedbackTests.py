@@ -349,12 +349,13 @@ with tempfile.TemporaryDirectory(prefix="notch-lock-feedback-") as directory:
                     str(source), "-o", str(binary)], check=True, cwd=repo)
     subprocess.run([str(binary)], check=True)
 
-# Native callback delivery is asynchronous. Exercise actual callback bodies
-# against notification identities that change before their queued work runs.
+# Exercise the production service and connection monitor together. Controlled
+# worker/UI queues model events arriving across lock/desktop/sleep boundaries,
+# without calling IOBluetooth or starting a real battery sampler.
 accessory_methods = "\n".join(declaration(accessory, marker).replace("private ", "", 1) for marker in [
+    "    func syncWithPreferences()", "    func stop()",
     "    func startLockScreenMonitoring()", "    func stopLockScreenMonitoring()", "    func suspend()",
-    "    private func observeDisconnect(", "    @objc private func deviceConnected(",
-    "    @objc private func deviceDisconnected(",
+    "    private func handleConnection(",
 ])
 accessory_swift = r'''
 import AppKit
@@ -363,38 +364,46 @@ enum DefaultsKey { static let notchAccessoriesEnabled = "notchAccessoriesEnabled
 enum NotchSupport { static func isEnabled(in defaults: UserDefaults) -> Bool { true } }
 enum AppFeature { case notchAccessories, monitorPower; func isAvailable(in defaults: UserDefaults) -> Bool { true } }
 enum NotchEvent { case accessory }
-struct NotchNotice { let event: NotchEvent, title: String, detail: String, symbol: String; var audioHandoff = false }
-final class IOBluetoothUserNotification: NSObject { var unregistered = false; func unregister() { unregistered = true } }
-final class IOBluetoothDevice: NSObject {
-    static var baseline: [IOBluetoothDevice] = []
-    var addressString: String? = "fixture", name: String? = "Headphones"
-    var deviceClassMajor: UInt32 = 4, deviceClassMinor: UInt32 = 1
-    var connected = true
-    func isConnected() -> Bool { connected }
-    static func pairedDevices() -> Any { baseline }
-    static func register(forConnectNotifications owner: Any, selector: Selector) -> IOBluetoothUserNotification { IOBluetoothUserNotification() }
-    func register(forDisconnectNotification owner: Any, selector: Selector) -> IOBluetoothUserNotification { IOBluetoothUserNotification() }
+struct NotchNotice {
+    let event: NotchEvent, title: String, detail: String, symbol: String
+    var level: Double? = nil, audioHandoff = false
+}
+final class Tasks {
+    var pending: [() -> Void] = []
+    func enqueue(_ work: @escaping () -> Void) { pending.append(work) }
+    func drain() { while !pending.isEmpty { pending.removeFirst()() } }
+}
+final class ConnectionSource: NotchAccessoryConnectionSource {
+    var callback: ((NotchAccessoryConnectionEvent) -> Void)?, stops = 0
+    func start(isCancelled: @escaping () -> Bool, onEvent: @escaping (NotchAccessoryConnectionEvent) -> Void) {
+        callback = onEvent
+    }
+    func stop() { stops += 1 } // Retain the callback to model late native delivery.
 }
 final class SystemMonitor {
     static let shared = SystemMonitor()
     struct Snapshot { var peripheralBatterySample = PeripheralBatterySample() }
-    var snapshot = Snapshot(), samplerChanges: [Bool] = []
+    @Published var snapshot = Snapshot()
+    var samplerChanges: [Bool] = []
     func setNotchAccessoryMonitoring(_ enabled: Bool) { samplerChanges.append(enabled) }
 }
 final class L10n { static let shared = L10n(); let language = "en" }
-enum FeatureStrings { struct Text { let connected = "Connected" }; static func notchActivities(_ language: String) -> Text { Text() } }
+enum FeatureStrings {
+    struct Text { let connected = "Connected", lowBattery = "Low battery" }
+    static func notchActivities(_ language: String) -> Text { Text() }
+}
 final class Accessory: NSObject {
     var active = false, lockOnly = false
     var activationTime: TimeInterval = 0, generation = UUID()
     var subscription: AnyCancellable?
-    var connectNotification: IOBluetoothUserNotification?
-    var disconnectNotifications: [String: IOBluetoothUserNotification] = [:]
-    var connectionState = NotchAccessoryConnectionState()
+    let connectionMonitor: NotchAccessoryConnectionMonitor
+    var batteryState = NotchAccessoryBatteryState()
     var pending: [(notice: NotchNotice, device: String, expiresAt: Date)] = []
     var noticeWork: DispatchWorkItem?
     let lockScreenArrivals = PassthroughSubject<NotchAccessoryArrival, Never>()
-    var desktopNotices = 0
-    func enqueue(_ notice: NotchNotice, device: String) { desktopNotices += 1 }
+    var desktopNotices: [NotchNotice] = []
+    init(monitor: NotchAccessoryConnectionMonitor) { connectionMonitor = monitor; super.init() }
+    func enqueue(_ notice: NotchNotice, device: String) { desktopNotices.append(notice) }
 ACCESSORY_METHODS
 }
 var checks = 0
@@ -402,44 +411,80 @@ func expect(_ condition: Bool, _ message: String) { checks += 1; precondition(co
 func drain() { RunLoop.main.run(until: Date().addingTimeInterval(0.015)) }
 let defaults = UserDefaults.standard
 defaults.set(true, forKey: DefaultsKey.notchAccessoriesEnabled)
-let accessory = Accessory(), device = IOBluetoothDevice()
-IOBluetoothDevice.baseline = [device]
-var arrivals = 0
-let subscription = accessory.lockScreenArrivals.sink { _ in arrivals += 1 }
-accessory.startLockScreenMonitoring()
-let first = accessory.connectNotification!
-accessory.deviceConnected(first, device: device); drain()
-expect(arrivals == 0, "already connected headset is silent on lock/wake")
+let worker = Tasks(), ui = Tasks()
+var sources: [ConnectionSource] = []
+let monitor = NotchAccessoryConnectionMonitor(perform: worker.enqueue, deliver: ui.enqueue,
+    makeSource: { _ in let source = ConnectionSource(); sources.append(source); return source })
+let accessory = Accessory(monitor: monitor)
+let headset = NotchAccessoryConnectionEvent.connected(name: "AirPods Pro", majorClass: 4, minorClass: 1)
+let keyboard = NotchAccessoryConnectionEvent.connected(name: "Keyboard", majorClass: 5, minorClass: 16)
+let reading = PeripheralBatteryDevice(id: "headset", name: "AirPods Pro", percent: 64, kind: .audio)
+func sample(_ observedAt: TimeInterval) {
+    SystemMonitor.shared.snapshot.peripheralBatterySample = PeripheralBatterySample(
+        devices: [reading], observedAt: [reading.id: observedAt])
+}
+var arrivals: [NotchAccessoryArrival] = []
+let subscription = accessory.lockScreenArrivals.sink { arrivals.append($0) }
+accessory.startLockScreenMonitoring(); worker.drain()
+accessory.startLockScreenMonitoring(); worker.drain()
+expect(sources.count == 1 && arrivals.isEmpty, "lock monitoring starts once without synthesizing a connection")
 expect(SystemMonitor.shared.samplerChanges.isEmpty && accessory.subscription == nil, "lock monitoring starts no battery sampler")
-accessory.connectionState.establishBaseline([])
-accessory.deviceConnected(first, device: device)
-let replacement = IOBluetoothUserNotification(); accessory.connectNotification = replacement
-drain()
-expect(arrivals == 0, "queued old-mode connection cannot become a lock arrival")
-accessory.deviceConnected(replacement, device: device); drain()
-expect(arrivals == 1, "current registration delivers genuine lock arrival")
-accessory.deviceConnected(replacement, device: device); drain()
-expect(arrivals == 1, "duplicate native connection does not replay")
-let oldDisconnect = accessory.disconnectNotifications["fixture"]!
-device.connected = false
-accessory.deviceDisconnected(oldDisconnect, device: device)
-let newDisconnect = IOBluetoothUserNotification(); accessory.disconnectNotifications["fixture"] = newDisconnect
-drain()
-expect(accessory.disconnectNotifications["fixture"] === newDisconnect && !newDisconnect.unregistered,
-       "stale disconnect cannot unregister new-mode listener")
-accessory.deviceDisconnected(newDisconnect, device: device); drain()
-expect(newDisconnect.unregistered && accessory.disconnectNotifications["fixture"] == nil,
-       "current disconnect removes its own listener")
-device.connected = true
-accessory.deviceConnected(replacement, device: device)
-accessory.stopLockScreenMonitoring(); drain()
-expect(arrivals == 1 && accessory.connectNotification == nil && accessory.disconnectNotifications.isEmpty,
-       "sleep unregisters native monitors and rejects queued connection")
-expect(SystemMonitor.shared.samplerChanges.isEmpty, "lock stop does not touch desktop sampler ownership")
-accessory.startLockScreenMonitoring()
-accessory.deviceConnected(accessory.connectNotification!, device: device); drain()
-expect(arrivals == 1, "wake baseline prevents replay of connection while sleeping")
+let first = sources[0]
+first.callback?(headset)
 accessory.stopLockScreenMonitoring()
+accessory.startLockScreenMonitoring(); worker.drain(); ui.drain()
+expect(arrivals.isEmpty && first.stops == 1, "queued old-mode connection cannot become a new lock arrival")
+let locked = sources.last!
+sample(ProcessInfo.processInfo.systemUptime - 10)
+locked.callback?(headset); ui.drain()
+expect(arrivals.count == 1 && arrivals[0].symbol == "airpodspro" && arrivals[0].percent == 64,
+       "lock arrival retains only its icon and recent pre-lock battery reading")
+expect(accessory.desktopNotices.isEmpty, "lock connection never publishes a desktop notice")
+sample(ProcessInfo.processInfo.systemUptime - 301)
+locked.callback?(headset); ui.drain()
+expect(arrivals.count == 2 && arrivals.last?.percent == nil, "lock connection suppresses stale battery percentages")
+locked.callback?(headset)
+defaults.set(false, forKey: DefaultsKey.notchAccessoriesEnabled); ui.drain()
+expect(arrivals.count == 2, "disabled preference rejects an already queued connection")
+defaults.set(true, forKey: DefaultsKey.notchAccessoriesEnabled)
+locked.callback?(headset)
+accessory.syncWithPreferences(); worker.drain(); ui.drain(); drain()
+expect(!accessory.lockOnly && accessory.active && accessory.subscription != nil,
+       "unlock transfers monitoring to desktop ownership")
+expect(arrivals.count == 2 && accessory.desktopNotices.isEmpty && locked.stops == 1,
+       "queued lock events cannot turn into desktop notices after unlocking")
+expect(SystemMonitor.shared.samplerChanges == [true], "unlock starts the desktop sampler exactly once")
+let desktop = sources.last!
+accessory.stopLockScreenMonitoring(); worker.drain()
+expect(accessory.active && desktop.stops == 0, "late lock teardown cannot stop desktop monitoring")
+sample(accessory.activationTime - 1)
+desktop.callback?(headset); ui.drain(); drain()
+expect(accessory.desktopNotices.last?.title == "Connected" && accessory.desktopNotices.last?.audioHandoff == true,
+       "desktop connection keeps audio handoff while rejecting pre-activation battery data")
+sample(ProcessInfo.processInfo.systemUptime)
+desktop.callback?(headset); ui.drain(); drain()
+expect(accessory.desktopNotices.last?.title == "Connected · 64%"
+       && accessory.desktopNotices.last?.detail == "AirPods Pro" && accessory.desktopNotices.last?.symbol == "airpodspro",
+       "desktop connection preserves current battery, name and device icon")
+desktop.callback?(keyboard); ui.drain()
+expect(accessory.desktopNotices.last?.audioHandoff == false, "non-audio devices do not trigger audio handoff")
+let notice = accessory.desktopNotices.last!
+accessory.pending = [(notice, "Keyboard", Date().addingTimeInterval(30)),
+                     (notice, "AirPods Pro", Date().addingTimeInterval(30))]
+locked.callback?(.disconnected(name: "Keyboard")); ui.drain()
+expect(accessory.pending.count == 2, "old-mode disconnect cannot remove a current queued notice")
+desktop.callback?(.disconnected(name: "Keyboard")); ui.drain()
+expect(accessory.pending.map(\.device) == ["AirPods Pro"], "current disconnect removes only its device's queued notice")
+let noticeCount = accessory.desktopNotices.count
+desktop.callback?(headset)
+accessory.suspend(); worker.drain(); ui.drain()
+expect(accessory.desktopNotices.count == noticeCount && desktop.stops == 1 && accessory.pending.isEmpty,
+       "sleep cleans up the monitor and rejects queued presentation")
+expect(SystemMonitor.shared.samplerChanges == [true, false], "desktop suspension releases its sampler ownership")
+accessory.startLockScreenMonitoring(); worker.drain()
+expect(arrivals.count == 2, "wake starts observation without replaying previous events")
+accessory.stopLockScreenMonitoring(); worker.drain()
+expect(SystemMonitor.shared.samplerChanges == [true, false], "lock stop leaves desktop sampler ownership unchanged")
 print("PASS: \(checks) accessory lock-monitor lifecycle checks")
 '''.replace("ACCESSORY_METHODS", accessory_methods)
 with tempfile.TemporaryDirectory(prefix="notch-lock-accessory-") as directory:
@@ -448,6 +493,7 @@ with tempfile.TemporaryDirectory(prefix="notch-lock-accessory-") as directory:
     binary = Path(directory) / "check"
     subprocess.run(["xcrun", "swiftc", "-sdk", "/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk",
                     str(source), "Sources/Vorssaint/Services/Notch/NotchAccessorySupport.swift",
+                    "Sources/Vorssaint/Services/Notch/NotchAccessoryConnectionMonitor.swift",
                     "Sources/Vorssaint/Services/Metrics/PeripheralBatterySupport.swift", "-o", str(binary)],
                    check=True, cwd=repo)
     # The fixture enables one fake route in an isolated preferences home.
