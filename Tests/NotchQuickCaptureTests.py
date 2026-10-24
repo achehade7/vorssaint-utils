@@ -397,6 +397,10 @@ chooseAction(.saveSnippet)
 expect(SnippetLibraryService.shared.received.last == actionText,
        "without a selection the thought Actions button sends the whole current field to Snip")
 _ = focusEditor(); actionEditor.setSelectedRange(chosenRange)
+key(50, .option); chooseAction(.transform)
+expect(TextTransformController.received.last == selectedText && draft.text == actionText,
+       "Text tools receive only the selected thought without modifying the capture")
+_ = focusEditor(); actionEditor.setSelectedRange(chosenRange)
 key(40, .command)
 expect(actionWindow() == nil && forwardedCommandK.count == 1,
        "Cmd-K reaches the normal application command from the thought editor")
@@ -492,11 +496,19 @@ expect(SnippetLibraryService.shared.received.last == "selected phrase"
        && draft.extracts[0].text == ocrBeforeActions.text && draft.extracts[0].id == ocrBeforeActions.id,
        "OCR Option-backtick sends only the selected text to Snip and retains the editable extract")
 actionPreview.makeKeyAndOrderFront(nil); actionPreview.makeFirstResponder(actionOCR)
+key(50, .option, target: actionPreview); chooseAction(.transform)
+expect(TextTransformController.received.last == "selected phrase" && draft.extracts[0].text == ocrBeforeActions.text,
+       "Text tools receive selected Quick Capture OCR without changing the extract")
+actionPreview.makeKeyAndOrderFront(nil); actionPreview.makeFirstResponder(actionOCR)
 actionOCR.setSelectedRange(NSRange(location: (actionOCR.string as NSString).length, length: 0))
 expect(press(actionPreview.contentView!, id: "notch.quickCapture.previewActions"), "OCR preview Actions button is reachable")
 chooseAction(.before)
 expect(ClipboardDiffService.shared.received.last?.0 == ocrBeforeActions.text,
        "OCR Actions button snapshots the whole current field without a selection")
+actionPreview.makeKeyAndOrderFront(nil); actionPreview.makeFirstResponder(actionOCR)
+key(50, .option, target: actionPreview); chooseAction(.transform)
+expect(TextTransformController.received.last == ocrBeforeActions.text && draft.extracts[0].id == ocrBeforeActions.id,
+       "Text tools receive the whole OCR field when no text is selected and preserve attachment identity")
 actionPreview.makeKeyAndOrderFront(nil); actionPreview.makeFirstResponder(actionOCR)
 key(50, .option, target: actionPreview); waitUntil { actionWindow() != nil }
 key(13, .command, target: actionPreview)

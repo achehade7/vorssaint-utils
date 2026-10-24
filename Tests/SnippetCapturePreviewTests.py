@@ -12,6 +12,24 @@ import AppKit
 import SwiftUI
 import Combine
 
+
+enum ShortcutCapture { static var isCapturing = false }
+struct GlobalShortcut {
+    let keyCode: Int64
+    let modifiers: NSEvent.ModifierFlags
+}
+final class QuickToolHotkey {
+    static var registered: [UInt32: QuickToolHotkey] = [:]
+    let id: UInt32
+    var onPress: (() -> Void)?
+    init(id: UInt32) { self.id = id }
+    @discardableResult func sync(enabled: Bool, shortcut: GlobalShortcut, storageKey: String) -> Bool {
+        if enabled { Self.registered[id] = self } else { unregister() }
+        return true
+    }
+    func unregister() { Self.registered[id] = nil }
+}
+
 enum AppLanguage { case enUS, ptBR, tr, ru, es, sk, de, fr, it, ja, ko, uk, zhHans, zhTW, zhHK }
 enum FeatureStrings {}
 enum Defaults { static let defaultSnippetSoundName = "Tink" }
@@ -21,7 +39,7 @@ final class L10n: ObservableObject {
     struct Strings { let ocrCopied = "Text copied", uninstallerCancel = "Cancel" }
     let s = Strings()
 }
-enum AppFeature { case textSnippets; var isAvailable: Bool { true } }
+enum AppFeature { case textSnippets, screenOCR; var isAvailable: Bool { true } }
 enum NotchNeonPalette {
     static let purple = Color(red: 0.73, green: 0.49, blue: 1)
     static let blue = Color(red: 0.43, green: 0.56, blue: 1)
@@ -34,6 +52,11 @@ final class SnippetLibraryService {
     func hide() { hides += 1 }
     func refreshPanelLayout() {}
 }
+enum TextTransformStrings { static let edit = "Edit" }
+enum TextTransformController {
+    static var received: [String] = []
+    static func showInIsland(text: String) { received.append(text) }
+}
 final class NotchService {
     static let shared = NotchService()
     var acceptsSystemFeedback = true, expanded = false
@@ -44,6 +67,7 @@ final class NotchService {
         self.content = content; self.previewID = id; self.tookFocus = takeFocus; self.height = height
         return true
     }
+    func isCaptureVisible(id: UUID) -> Bool { previewID == id && acceptsSystemFeedback }
     func removeCapture(id: UUID) { if previewID == id { content = nil; previewID = nil } }
 }
 let app = NSApplication.shared
@@ -74,18 +98,18 @@ func render(_ host: NSView, to path: String) throws {
 }
 try render(preview, to: "/tmp/island-ocr-snippet-preview.png")
 // Use the actual SwiftUI action through native accessibility.
-func pressSave(_ element: AnyObject) -> Bool {
-    if element.accessibilityIdentifier?() == "ocr.saveSnippet" {
+func pressEdit(_ element: AnyObject) -> Bool {
+    if element.accessibilityIdentifier?() == "ocr.edit" {
         return element.accessibilityPerformPress?() ?? false
     }
     for child in element.accessibilityChildren?() ?? [] {
-        if pressSave(child as AnyObject) { return true }
+        if pressEdit(child as AnyObject) { return true }
     }
     return false
 }
-precondition(pressSave(preview), "optional Save snippet action is clickable")
-precondition(SnippetLibraryService.shared.captured == "SAP-531\nTransport ready\n01 12345" && island.previewID == nil,
-             "action transfers the exact OCR result and closes preview")
+precondition(pressEdit(preview), "Edit opens OCR tools directly")
+precondition(TextTransformController.received == ["SAP-531\nTransport ready\n01 12345"] && island.previewID == nil,
+             "Edit transfers the exact OCR result and closes the timed preview")
 precondition(controller.show(text: "paste immediately"))
 RunLoop.main.run(until: Date().addingTimeInterval(3.15))
 precondition(island.previewID == nil, "unattended preview still disappears after three seconds")
@@ -105,7 +129,7 @@ app.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [
 RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 precondition(SnippetLibraryService.shared.saves == 1, "Return from name field invokes save")
 window.orderOut(nil)
-print("PASS: OCR optional action, exact-result draft, no focus, three-second expiry, form render and Return")
+print("PASS: OCR edit action, exact result, no focus, three-second expiry, form render and Return")
 '''
 with tempfile.TemporaryDirectory(prefix='snippet-capture-preview-') as folder:
     main = Path(folder) / 'main.swift'; main.write_text(code)

@@ -12,8 +12,21 @@ from generate_sources import declaration
 repo = Path(__file__).resolve().parents[1]
 fixture = r'''
 import AppKit
+import SwiftUI
 import Carbon.HIToolbox
 import ObjectiveC
+enum ShortcutCapture { static var isCapturing = false }
+struct GlobalShortcut: Equatable {
+    let keyCode: Int64
+    let modifiers: NSEvent.ModifierFlags
+    var carbonKeyCode: UInt32 { UInt32(keyCode) }
+    var carbonModifiers: UInt32 { precondition(modifiers == .command); return UInt32(cmdKey) }
+}
+enum SystemShortcutTakeover {
+    static var claims = Set<String>()
+    static func claim(_ key: String, shortcut: GlobalShortcut) { claims.insert(key) }
+    static func release(_ key: String) { claims.remove(key) }
+}
 extension NSScreen {
     var displayID: CGDirectDisplayID { deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0 }
 }
@@ -88,10 +101,39 @@ enum ScreenTextService {
         completions.append(completion)
     }
 }
+enum NotchNeonPalette { static let purple = Color.purple }
 final class NotchService {
     static let shared = NotchService()
     var presentationWindow: NSPanel?
+    var acceptsSystemFeedback = true, expanded = false, routes = true
+    var captureControls: Int?
+    var captureID: UUID?, content: AnyView?, closeHandler: (() -> Void)?
+    var tookFocus = false
+    func presentCapture(id: UUID, content: AnyView, height: CGFloat, takeFocus: Bool, closeOnCollapse: Bool,
+                        fallback: @escaping () -> Void, close: @escaping () -> Void, hover: @escaping (Bool) -> Void) -> Bool {
+        guard routes, let panel = presentationWindow else { return false }
+        captureID = id; self.content = content; closeHandler = close; expanded = true; tookFocus = takeFocus
+        panel.setContentSize(NSSize(width: 600, height: height))
+        // Match NotchView.page: captures sit in a vertical scroll view, which
+        // proposes no height. A bare hosting window masks collapsed editors.
+        panel.contentView = NSHostingView(rootView: ScrollView {
+            content.frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.bottom, 4).contentShape(Rectangle())
+        })
+        if takeFocus { panel.makeKeyAndOrderFront(nil) } else { panel.orderFrontRegardless() }
+        return true
+    }
+    func isCaptureVisible(id: UUID) -> Bool { captureID == id && expanded && acceptsSystemFeedback }
+    func removeCapture(id: UUID) {
+        guard captureID == id else { return }
+        captureID = nil; content = nil; closeHandler = nil; expanded = false
+        // NotchService.collapse explicitly resigns its nonactivating panel.
+        presentationWindow?.resignKey()
+        presentationWindow?.contentView = nil
+        presentationWindow?.orderOut(nil)
+    }
 }
+
 struct CommandBarEntry {
     enum Icon { case symbol(String) }
     let id: String
@@ -109,6 +151,7 @@ enum TestBrowser {
 enum CommandBarTicketSearch {
     // TICKET_METHODS
 }
+// JSON_FORMATTER
 final class Bar {
     enum Mode: Equatable { case search, actions(entryID: String) }
     enum Presentation { case floating, island }
@@ -135,6 +178,37 @@ guard (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsL
 }
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
+let previewKeyTag: Int64 = 0x564F4352
+let helperKeysURL = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("focus-keys")
+if CommandLine.arguments.contains("--focus-helper") {
+    let helperWindow = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 360, height: 100),
+                                styleMask: [.titled], backing: .buffered, defer: false)
+    helperWindow.title = "Text tools focus fixture"
+    helperWindow.contentView = NSTextField(labelWithString: "Isolated focus test")
+    var received = ""
+    try! received.write(to: helperKeysURL, atomically: true, encoding: .utf8)
+    let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        guard event.cgEvent?.getIntegerValueField(.eventSourceUserData) == previewKeyTag,
+              event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command,
+              let letter = event.charactersIgnoringModifiers, ["e", "v"].contains(letter) else { return event }
+        received += letter
+        try! received.write(to: helperKeysURL, atomically: true, encoding: .utf8)
+        return nil
+    }
+    defer { if let monitor { NSEvent.removeMonitor(monitor) } }
+    helperWindow.makeKeyAndOrderFront(nil); app.activate(ignoringOtherApps: true)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 30) { app.terminate(nil) }
+    app.run(); exit(0)
+}
+let axGetter = NSSelectorFromString("accessibilityAttributeValue:")
+let axSetter = NSSelectorFromString("accessibilitySetValue:forAttribute:")
+let previousAX = app.perform(axGetter, with: "AXEnhancedUserInterface")?.takeUnretainedValue()
+app.perform(axSetter, with: true, with: "AXEnhancedUserInterface")
+defer { app.perform(axSetter, with: previousAX, with: "AXEnhancedUserInterface") }
+let editMenu = NSMenu(title: "Edit")
+editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+let editRoot = NSMenuItem(); editRoot.submenu = editMenu
+app.mainMenu = NSMenu(); app.mainMenu!.addItem(editRoot)
 let actualClipboard = NSPasteboard.general
 let actualChangeCount = actualClipboard.changeCount
 final class TestPasteboard: NSObject {
@@ -218,7 +292,7 @@ func verifyMenuLayout(_ window: NSWindow) {
     check(frames.allSatisfy { content.bounds.contains($0) && $0.minX >= 6
           && content.bounds.maxX - $0.maxX >= 6 && $0.width == 32 && $0.height == 32 },
           "icons have equal usable targets and even outer padding")
-    check(content.bounds.width <= 190 && content.bounds.height == 40,
+    check(content.bounds.width <= 226 && content.bounds.height == 40,
           "menu is a compact forty-point-high icon strip")
     check(views(content).compactMap { $0 as? NSTextField }.allSatisfy(\.isHidden),
           "ready menu has no visible heading, source text or labels")
@@ -237,8 +311,8 @@ entry.text = "later source mutation"
 let first = menu()!
 check(SharedToolActions.owns(window: first, owner: owner), "menu belongs to the source owner")
 check(actionButtons(first).map(\.title) == [SnippetCaptureStrings.localized(.enUS).save,
-      SharedToolActionStrings.inspect, SharedToolActionStrings.before, SharedToolActionStrings.after],
-      "text actions put Save snippet first, Inspect second, then comparison sides")
+      SharedToolActionStrings.inspect, TextTransformStrings.title, SharedToolActionStrings.before, SharedToolActionStrings.after],
+      "text actions put Save snippet first, Inspect second, then Text tools and comparison sides")
 verifyMenuLayout(first)
 key(first, code: kVK_Return, characters: "\r")
 check(SnippetLibraryService.shared.received.last == "original selected payload" && menu() == nil,
@@ -246,11 +320,13 @@ check(SnippetLibraryService.shared.received.last == "original selected payload" 
 let comparison = open(.text("comparison selected payload"))
 key(comparison, code: kVK_DownArrow)
 key(comparison, code: kVK_DownArrow)
+key(comparison, code: kVK_DownArrow)
 key(comparison, code: kVK_Return, characters: "\r")
 check(ClipboardDiffService.shared.received.last?.0 == "comparison selected payload"
       && ClipboardDiffService.shared.received.last?.1 == true && menu() == nil,
-      "two Down presses and Return choose Left after reordered text actions")
+      "three Down presses and Return choose Left after text tools")
 let rightComparison = open(.text("right selected payload"))
+key(rightComparison, code: kVK_DownArrow)
 key(rightComparison, code: kVK_DownArrow)
 key(rightComparison, code: kVK_DownArrow)
 key(rightComparison, code: kVK_RightArrow)
@@ -315,8 +391,8 @@ for text in ["no ticket here", "SAP-0", "SAP-531 OPS-42"] {
 }
 let jiraMenu = open(.text("Private context sap-531; https://untrusted.example/browse/SAP-531"))
 check(actionButtons(jiraMenu).map(\.title) == [SnippetCaptureStrings.localized(.enUS).save,
-      SharedToolActionStrings.inspect, "Jira", SharedToolActionStrings.before, SharedToolActionStrings.after],
-      "Jira follows Snippet and Inspect, before the two comparison icons")
+      SharedToolActionStrings.inspect, TextTransformStrings.title, "Jira", SharedToolActionStrings.before, SharedToolActionStrings.after],
+      "Jira follows Snippet, Inspect and Text tools, before the two comparison icons")
 check(actionButtons(jiraMenu).first { $0.title == "Jira" }?.toolTip == "Jira · J"
       && actionButtons(jiraMenu).first { $0.title == SharedToolActionStrings.inspect }?.toolTip?.hasSuffix(" · I") == true,
       "tooltips advertise the distinct Jira and Inspect shortcuts")
@@ -340,6 +416,7 @@ check(TestBrowser.urls.count == beforeRemovedJira, "a removed Jira destination i
 configureJira([jiraLink])
 let arrowJira = open(.text("SAP-531"))
 key(arrowJira, code: kVK_RightArrow); key(arrowJira, code: kVK_RightArrow)
+key(arrowJira, code: kVK_RightArrow)
 key(arrowJira, code: kVK_Return, characters: "\r")
 check(TestBrowser.urls.count == beforeRemovedJira + 1, "horizontal arrows navigate all icons to Jira")
 
@@ -356,7 +433,7 @@ let scopedLetters = open(.text("scoped shortcuts SAP-531"))
 let callsBeforeScope = destinationCalls()
 let foreign = NSPanel(contentRect: .zero, styleMask: [.nonactivatingPanel], backing: .buffered, defer: false)
 foreign.isReleasedWhenClosed = false
-for (letter, code) in letterActions {
+for (letter, code) in letterActions + [("t", kVK_ANSI_T)] {
     key(scopedLetters, code: code, characters: letter, repeatPress: true)
     check(menu() === scopedLetters && destinationCalls() == callsBeforeScope,
           "held \(letter) cannot invoke an action from a repeated key event")
@@ -419,7 +496,7 @@ AppFeature.available = [.textSnippets]
 let gated = open(.text("only snippet"))
 check(actionButtons(gated).map(\.title) == [SnippetCaptureStrings.localized(.enUS).save], "disabled destinations are absent")
 let callsBeforeUnavailable = destinationCalls()
-for (letter, code) in letterActions where letter != "s" {
+for (letter, code) in letterActions + [("t", kVK_ANSI_T)] where letter != "s" {
     key(gated, code: code, characters: letter)
     check(menu() === gated && destinationCalls() == callsBeforeUnavailable,
           "unavailable \(letter) leaves the menu open without invoking its selected action")
@@ -479,7 +556,7 @@ for (letter, code) in letterActions where letter == "l" || letter == "r" {
 }
 let imageTextLetters = open(.image(pixels))
 let callsBeforeImageLetters = destinationCalls()
-for (letter, code) in letterActions where ["s", "j", "i"].contains(letter) {
+for (letter, code) in letterActions + [("t", kVK_ANSI_T)] where ["s", "j", "i", "t"].contains(letter) {
     key(imageTextLetters, code: code, characters: letter)
     check(menu() === imageTextLetters && destinationCalls() == callsBeforeImageLetters,
           "text-only \(letter) cannot invoke a different image action")
@@ -556,81 +633,313 @@ for (letter, code) in letterActions where letter == "l" || letter == "r" {
 }
 SharedToolActions.cancel(owner: owner)
 
-// OCR owns independent editable results; only Copy writes our fixture clipboard.
-let imageMenu = open(.image(pixels))
-click(imageMenu, title: SharedToolActionStrings.extract)
-func results() -> [NSWindow] { app.windows.filter { $0.isVisible && $0.title == SharedToolActionStrings.extract } }
+// Both extracted and selected text use one compact transform/editor surface.
+func textResults(_ title: String = TextTransformStrings.title) -> [NSWindow] {
+    app.windows.filter { $0.isVisible && $0.title == title }
+}
+func editor(_ window: NSWindow) -> NSTextView { views(window.contentView!).compactMap { $0 as? NSTextView }.first! }
+func toolButton(_ window: NSWindow, _ title: String) -> NSButton {
+    views(window.contentView!).compactMap { $0 as? NSButton }.first { $0.title == title }!
+}
+func choose(_ window: NSWindow, _ kind: TextTransform.Kind) {
+    let button = toolButton(window, TextTransformStrings.title(for: kind))
+    wait { button.isEnabled }; button.performClick(nil); drain()
+}
+func openText(_ text: String) -> NSWindow {
+    let previous = Set(textResults().map(\.windowNumber))
+    let toolbar = open(.text(text))
+    key(toolbar, code: kVK_ANSI_T, characters: "t")
+    check(menu() == nil, "T closes Actions and opens text tools")
+    wait { textResults().contains { !previous.contains($0.windowNumber) } }
+    return textResults().first { !previous.contains($0.windowNumber) }!
+}
+func verifyTools(_ window: NSWindow) {
+    window.contentView!.layoutSubtreeIfNeeded()
+    let buttons = views(window.contentView!).compactMap { $0 as? SharedToolActionButton }
+    check(buttons.count == 7, "one row holds five transforms, Edit and Copy")
+    let frames = buttons.map { $0.convert($0.bounds, to: window.contentView) }
+    check(frames.allSatisfy { $0.width == 32 && $0.height == 32 && window.contentView!.bounds.contains($0) }
+          && zip(frames, frames.dropFirst()).allSatisfy { abs($0.minY - $1.minY) < 1 && $0.maxX < $1.minX },
+          "all tools use the same small square targets in a thin horizontal bar")
+    check(buttons.allSatisfy { $0.image != nil && $0.imagePosition == .imageOnly && $0.accessibilityLabel() == $0.title
+          && $0.toolTip?.contains($0.title) == true }, "icons have valid symbols, names and shortcut tooltips")
+    check(!views(window.contentView!).contains { $0 is NSPopUpButton }
+          && !buttons.contains { $0.title == SharedToolActionStrings.actions || $0.title == SnippetCaptureStrings.localized(.enUS).save },
+          "text tools have no dropdown, second Actions menu or Snip button")
+}
+let sourceText = "  Broken  sentence\n across two lines.\n\nNext paragraph.  "
+var entryForTools = ClipboardHistoryEntry(text: sourceText)
+SharedToolActions.present(entry: entryForTools, from: parent, owner: owner)
+wait { menu() != nil }; entryForTools.text = "later mutation"
+key(menu()!, code: kVK_ANSI_T, characters: "t")
+wait { textResults().count == 1 }
+let toolsWindow = textResults()[0], working = editor(textResults()[0])
+check(working.string == sourceText && !working.isEditable && toolButton(toolsWindow, "Copy").isEnabled,
+      "selected text is a fixed snapshot, immediately copyable, with explicit Edit")
+verifyTools(toolsWindow)
+wait { toolButton(toolsWindow, TextTransformStrings.title(for: .joinLines)).isEnabled }
+key(toolsWindow, code: kVK_ANSI_J, characters: "j", repeatPress: true)
+key(toolsWindow, code: kVK_ANSI_J, characters: "j", modifiers: .command)
+key(parent, code: kVK_ANSI_J, characters: "j")
+check(working.string == sourceText, "repeat, modified and other-window keys cannot transform text")
+key(toolsWindow, code: kVK_ANSI_J, characters: "j")
+check(working.string == "Broken  sentence across two lines. Next paragraph." && !working.isEditable,
+      "J joins lines and keeps the toolbar ready for another shortcut")
+key(toolsWindow, code: kVK_ANSI_Z, characters: "z", modifiers: .command)
+check(working.string == sourceText, "Cmd-Z undoes a transformation before entering edit mode")
+key(toolsWindow, code: kVK_ANSI_E, characters: "e", modifiers: .command)
+check(working.isEditable && toolsWindow.firstResponder === working, "Cmd-E enables editing and focuses the text")
+working.setSelectedRange(NSRange(location: 0, length: (working.string as NSString).length))
+for (letter, code) in [("j", kVK_ANSI_J), ("s", kVK_ANSI_S), ("f", kVK_ANSI_F), ("u", kVK_ANSI_U), ("b", kVK_ANSI_B)] {
+    key(toolsWindow, code: code, characters: letter)
+}
+check(working.string == "jsfub", "all letter shortcuts become ordinary typing in edit mode")
+working.breakUndoCoalescing()
+working.insertText("Edited  first\n second line", replacementRange: NSRange(location: 0, length: (working.string as NSString).length))
+working.breakUndoCoalescing(); drain()
+choose(toolsWindow, .cleanSpacing)
+check(working.string == "Edited first\nsecond line", "transformation uses the latest manual edits")
+key(toolsWindow, code: kVK_ANSI_Z, characters: "z", modifiers: .command)
+check(working.string == "Edited  first\n second line", "undo preserves preceding edits")
+let editToggle = toolButton(toolsWindow, TextTransformStrings.edit) as! SharedToolActionButton
+let editSelection = NSRange(location: 0, length: 6)
+working.setSelectedRange(editSelection)
+editToggle.performClick(nil); drain()
+check(!working.isEditable && !editToggle.menuSelected && toolsWindow.firstResponder === toolsWindow
+      && working.string == "Edited  first\n second line" && working.selectedRange() == editSelection,
+      "pencil toggles editing off, retains text/selection, and returns focus to shortcuts")
+key(toolsWindow, code: kVK_ANSI_J, characters: "j")
+check(working.string == "Edited  first second line" && !working.isEditable,
+      "J transforms immediately after editing is toggled off")
+key(toolsWindow, code: kVK_ANSI_Z, characters: "z", modifiers: .command)
+check(working.string == "Edited  first\n second line", "undo survives the edit-mode toggle")
+key(toolsWindow, code: kVK_ANSI_E, characters: "e", modifiers: .command)
+key(toolsWindow, code: kVK_ANSI_E, characters: "e", modifiers: .command, repeatPress: true)
+check(working.isEditable && editToggle.menuSelected && toolsWindow.firstResponder === working,
+      "Cmd-E toggles editing back on once per press and restores text focus")
+check(TestPasteboard.board.changeCount == fixtureChangeCount, "editing and transformation do not copy automatically")
+for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+    toolsWindow.appearance = NSAppearance(named: appearance); drain()
+    capture(toolsWindow, "/tmp/vorssaint-text-tools-\(name).png")
+}
+toolsWindow.setContentSize(NSSize(width: 360, height: 240)); drain(); verifyTools(toolsWindow)
+key(toolsWindow, code: kVK_Escape, characters: "\u{1b}")
+check(!toolsWindow.isVisible && TestPasteboard.board.changeCount == fixtureChangeCount, "Escape closes without copying")
+
+for (source, kind, expected) in [("line one\nline two", TextTransform.Kind.joinLines, "line one line two"),
+                               (" a   b ", .cleanSpacing, "a b"),
+                               (#"{"id":9007199254740993}"#, .formatJSON, "{\n  \"id\": 9007199254740993\n}"),
+                               ("Hello%20world%21", .decodeURL, "Hello world!"),
+                               ("U0FQLTUzMQ==", .decodeBase64, "SAP-531")] {
+    let window = openText(source)
+    let operation = toolButton(window, TextTransformStrings.title(for: kind))
+    check(operation.toolTip?.hasSuffix(kind.shortcut.uppercased()) == true, "transform tooltip advertises its actual key")
+    wait { operation.isEnabled }
+    key(window, code: kVK_ANSI_X, characters: kind.shortcut)
+    check(editor(window).string == expected, "typed-character shortcut performs \(kind)")
+    key(window, code: kVK_ANSI_C, characters: "c", modifiers: .command)
+    check(!window.isVisible && TestPasteboard.board.string(forType: .string) == expected,
+          "Cmd-C copies the complete transformed result and closes")
+}
+let directCopy = openText("copy without transforming")
+key(directCopy, code: kVK_ANSI_C, characters: "c", modifiers: .command)
+check(!directCopy.isVisible && TestPasteboard.board.string(forType: .string) == "copy without transforming",
+      "Cmd-C works immediately without choosing an operation")
+let selectedCopy = openText("selected remainder")
+editor(selectedCopy).setSelectedRange(NSRange(location: 0, length: 8))
+key(selectedCopy, code: kVK_ANSI_C, characters: "c", modifiers: .command)
+check(!selectedCopy.isVisible && TestPasteboard.board.string(forType: .string) == "selected", "Cmd-C copies the selection and closes")
+let emptyWindow = openText("")
+let beforeEmpty = TestPasteboard.board.changeCount
+key(emptyWindow, code: kVK_Return, characters: "\r")
+key(emptyWindow, code: kVK_ANSI_C, characters: "c", modifiers: .command)
+check(emptyWindow.isVisible && TestPasteboard.board.changeCount == beforeEmpty, "empty text neither copies nor closes")
+emptyWindow.close()
+let oversized = openText(String(repeating: "x", count: TextTransform.maxBytes + 1))
+check(editor(oversized).string.isEmpty && !toolButton(oversized, "Copy").isEnabled, "oversized input is bounded before rendering")
+oversized.close()
+TextTransformController.show(text: sourceText); textResults()[0].close(); drain()
+check(textResults().isEmpty, "late transform preparation cannot reopen a closed result")
+let disabledTools = open(.text(sourceText)); AppFeature.available.remove(.clipboardHistory)
+key(disabledTools, code: kVK_ANSI_T, characters: "t")
+check(textResults().isEmpty, "T rechecks feature availability")
+AppFeature.available = Set(AppFeature.allCases)
+
+// Image extraction has an editable result with the same direct toolbar, never another Actions step.
+let extraction = open(.image(pixels)); click(extraction, title: SharedToolActionStrings.extract)
+func results() -> [NSWindow] { textResults(SharedToolActionStrings.extract) }
 wait { results().count == 1 && ScreenTextService.completions.count == 1 }
-let discarded = results()[0]
-discarded.close()
+let discarded = results()[0]; discarded.close()
+let beforeRecognition = TestPasteboard.board.changeCount
 ScreenTextService.completions[0](.success("late discarded text")); drain()
-check(results().isEmpty && TestPasteboard.board.changeCount == fixtureChangeCount, "closed OCR result rejects recognition without automatic copy")
+check(results().isEmpty && TestPasteboard.board.changeCount == beforeRecognition, "closed extraction rejects late text without copying")
 ExtractedTextController.show(image: pixels)
 wait { results().count == 1 && ScreenTextService.completions.count == 2 }
-let hiddenResult = results()[0]
-hiddenResult.orderOut(nil)
-ScreenTextService.completions[1](.success("retained hidden recognition")); drain()
-check(!hiddenResult.isVisible && views(hiddenResult.contentView!).compactMap { $0 as? NSTextView }.first!.string == "retained hidden recognition",
-      "hiding pending OCR retains recognition without reopening its window")
-hiddenResult.close()
-ExtractedTextController.show(image: pixels)
-wait { results().count == 1 && ScreenTextService.completions.count == 3 }
 let result = results()[0]
-ScreenTextService.completions[2](.success("Recognized first line\nSecond line")); drain()
-let editor = views(result.contentView!).compactMap { $0 as? NSTextView }.first!
-check(editor.isEditable && editor.allowsUndo && editor.string == "Recognized first line\nSecond line",
-      "OCR returns preserved lines to native editable result")
-check(TestPasteboard.board.changeCount == fixtureChangeCount, "recognized OCR does not automatically replace clipboard")
-editor.undoManager!.beginUndoGrouping()
-editor.insertText("Edited capture\nSecond edited line", replacementRange: NSRange(location: 0, length: (editor.string as NSString).length))
-editor.undoManager!.endUndoGrouping()
-editor.undoManager!.undo()
-check(editor.string == "Recognized first line\nSecond line", "OCR editor native undo restores recognition")
-editor.undoManager!.redo()
-let edited = editor.string
-let resultButtons = views(result.contentView!).compactMap { $0 as? NSButton }
-editor.setSelectedRange(NSRange(location: 0, length: 6))
-key(result, code: kVK_ANSI_K, characters: "k", modifiers: .command)
-check(menu() == nil, "OCR Cmd-K remains available to native text editing")
-key(result, code: kVK_ANSI_Grave, characters: "`", modifiers: .option)
-wait { menu() != nil }
-click(menu()!, title: SnippetCaptureStrings.localized(.enUS).save)
-check(SnippetLibraryService.shared.received.last == "Edited", "OCR Option grave saves selected text as snippet")
-check(editor.string == edited && editor.undoManager!.canUndo && TestPasteboard.board.changeCount == fixtureChangeCount,
-      "selected-text actions preserve native OCR editor, undo and clipboard")
-editor.setSelectedRange(NSRange(location: 0, length: 0))
-key(result, code: kVK_ANSI_Grave, characters: "`", modifiers: .option)
-wait { menu() != nil }
-click(menu()!, title: SnippetCaptureStrings.localized(.enUS).save)
-check(SnippetLibraryService.shared.received.last == edited, "OCR Option grave without a selection uses all edited text")
-result.makeKeyAndOrderFront(nil); result.makeFirstResponder(editor)
-editor.undoManager!.undo()
-check(editor.string == "Recognized first line\nSecond line", "shared actions leave native OCR undo intact")
-editor.undoManager!.redo()
-resultButtons.first { $0.title == SnippetCaptureStrings.localized(.enUS).save }!.performClick(nil)
-check(SnippetLibraryService.shared.received.last == edited && TestPasteboard.board.changeCount == fixtureChangeCount,
-      "snippet handoff uses edited OCR without changing clipboard")
-resultButtons.first { $0.title == "Copy" }!.performClick(nil)
-check(TestPasteboard.board.string(forType: .string) == edited, "explicit Copy writes exact edited OCR")
-result.setContentSize(NSSize(width: 400, height: 260)); drain()
-for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-    result.appearance = NSAppearance(named: appearance); drain()
-    capture(result, "/tmp/vorssaint-extracted-text-minimum-\(name).png")
+ScreenTextService.completions[1](.success("Recognized first line\nsecond line")); drain()
+let extracted = editor(result)
+check(extracted.isEditable && result.firstResponder === extracted && extracted.allowsUndo,
+      "explicit extraction opens directly in edit mode")
+verifyTools(result)
+extracted.setSelectedRange(NSRange(location: (extracted.string as NSString).length, length: 0))
+key(result, code: kVK_Return, characters: "\r", modifiers: .shift)
+check(extracted.string == "Recognized first line\nsecond line\n" && result.isVisible
+      && TestPasteboard.board.changeCount == beforeRecognition, "Shift-Enter adds a line without copying or closing")
+key(result, code: kVK_ANSI_Z, characters: "z", modifiers: .command)
+check(extracted.string == "Recognized first line\nsecond line", "Cmd-Z keeps ordinary text undo")
+extracted.setSelectedRange(NSRange(location: 0, length: 10))
+key(result, code: kVK_Return, characters: "\r")
+check(!result.isVisible && TestPasteboard.board.string(forType: .string) == "Recognized first line\nsecond line",
+      "Enter copies the full value despite a selection and closes")
+ExtractedTextController.show(text: "copy button value")
+let copyResult = results()[0]; toolButton(copyResult, "Copy").performClick(nil); drain()
+check(!copyResult.isVisible && TestPasteboard.board.string(forType: .string) == "copy button value", "Copy button also copies and closes")
+
+// The OCR confirmation does not take focus; an explicit click opens editing inside the island.
+let island = NotchService.shared
+let islandPanel = NSPanel(contentRect: NSRect(x: 200, y: 200, width: 600, height: 150),
+                          styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
+islandPanel.isReleasedWhenClosed = false
+islandPanel.title = "Island OCR fixture"
+island.presentationWindow = islandPanel
+parent.makeKeyAndOrderFront(nil); parent.makeFirstResponder(parentField)
+let frontBeforePreview = NSWorkspace.shared.frontmostApplication?.processIdentifier
+let beforePreview = TestPasteboard.board.changeCount
+let fullOCR = "OCR line one\nline two\n" + String(repeating: "untruncated text ", count: 180)
+check(ScreenTextPreviewController.shared.show(text: fullOCR), "OCR confirmation appears")
+drain()
+check(!island.tookFocus && parent.isKeyWindow
+      && NSWorkspace.shared.frontmostApplication?.processIdentifier == frontBeforePreview,
+      "OCR confirmation keeps keyboard focus and the frontmost app unchanged")
+check(SystemShortcutTakeover.claims.contains("screenTextPreviewEditShortcut"), "visible preview registers Command-E")
+check(TestPasteboard.board.changeCount == beforePreview, "showing the confirmation itself performs no extra copy")
+func pressEdit(_ element: AnyObject) -> Bool {
+    if element.accessibilityIdentifier?() == "ocr.edit" { return element.accessibilityPerformPress?() ?? false }
+    return (element.accessibilityChildren?() ?? []).contains { pressEdit($0 as AnyObject) }
 }
-capture(result, "/tmp/vorssaint-extracted-text-minimum.png")
-check(resultButtons.allSatisfy { result.contentView!.bounds.contains($0.convert($0.bounds, to: result.contentView)) },
-      "OCR action controls fit minimum window width")
-key(result, code: kVK_ANSI_Grave, characters: "`", modifiers: [.control, .option])
-check(menu() == nil, "OCR Control-Option grave does not invoke actions")
-editor.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
-key(result, code: kVK_ANSI_Grave, characters: "`", modifiers: .option)
-check(menu() == nil, "OCR IME composition owns Option grave")
-editor.unmarkText()
-resultButtons.first { $0.title.hasPrefix(SharedToolActionStrings.actions) }!.performClick(nil)
-wait { menu() != nil }
-let resultMenu = menu()!
-result.close()
-check(!resultMenu.isVisible && menu() == nil, "closing OCR result cancels its selected-text action menu")
+check(pressEdit(islandPanel.contentView!), "island offers an explicit Edit control")
+wait { views(islandPanel.contentView!).contains { $0 is NSTextView } && editor(islandPanel).isEditable }
+let islandEditor = editor(islandPanel)
+wait { islandPanel.firstResponder === islandEditor }
+check(island.tookFocus && islandEditor.string == fullOCR && results().isEmpty,
+      "clicking the preview opens the complete text in island edit mode, with no separate window")
+check(!SystemShortcutTakeover.claims.contains("screenTextPreviewEditShortcut"), "clicking Edit releases the preview hotkey")
+check((islandEditor.enclosingScrollView?.contentView.bounds.height ?? 0) >= 120
+      && islandEditor.visibleRect.height >= 120 && islandEditor.visibleRect.width > 0,
+      "OCR editor keeps a readable viewport inside the island's outer scroll view")
+verifyTools(islandPanel)
+capture(islandPanel, "/tmp/vorssaint-ocr-island-editor.png")
+let activeEditor = island.captureID
+RunLoop.main.run(until: Date().addingTimeInterval(3.2))
+check(island.captureID == activeEditor && islandPanel.isVisible, "old confirmation timer cannot dismiss the editor")
+islandEditor.insertText("  correction\n second line ", replacementRange: NSRange(location: 0, length: (islandEditor.string as NSString).length)); drain()
+let islandEditToggle = toolButton(islandPanel, TextTransformStrings.edit) as! SharedToolActionButton
+key(islandPanel, code: kVK_ANSI_E, characters: "e", modifiers: .command)
+check(!islandEditor.isEditable && !islandEditToggle.menuSelected && islandPanel.firstResponder === islandPanel,
+      "Cmd-E turns off automatic OCR editing and makes island shortcuts available")
+key(islandPanel, code: kVK_ANSI_S, characters: "s")
+check(islandEditor.string == "correction\nsecond line", "island transform uses current edits")
+islandEditToggle.performClick(nil); drain()
+check(islandEditor.isEditable && islandEditToggle.menuSelected && islandPanel.firstResponder === islandEditor,
+      "island pencil toggles editing back on")
+islandEditor.setSelectedRange(NSRange(location: (islandEditor.string as NSString).length, length: 0))
+key(islandPanel, code: kVK_ANSI_J, characters: "j")
+check(islandEditor.string == "correction\nsecond linej", "letters type normally after OCR editing is re-enabled")
+key(islandPanel, code: kVK_ANSI_Z, characters: "z", modifiers: .command)
+check(islandEditor.string == "correction\nsecond line", "text undo remains intact after switching modes")
+islandEditor.setSelectedRange(NSRange(location: 0, length: 10))
+key(islandPanel, code: kVK_ANSI_C, characters: "c", modifiers: .command)
+check(island.captureID == nil && !islandPanel.isVisible && TestPasteboard.board.string(forType: .string) == "correction",
+      "island Cmd-C copies its selection and closes the editor")
+parent.makeKeyAndOrderFront(nil)
+check(ScreenTextPreviewController.shared.show(text: "expire quietly"), "another no-focus confirmation can open")
+let beforeExpiry = TestPasteboard.board.changeCount
+RunLoop.main.run(until: Date().addingTimeInterval(3.2))
+check(island.captureID == nil && parent.isKeyWindow && TestPasteboard.board.changeCount == beforeExpiry,
+      "unattended confirmation expires without stealing focus or changing the clipboard")
+check(!SystemShortcutTakeover.claims.contains("screenTextPreviewEditShortcut"), "preview expiry releases Command-E")
+weak var displacedController: TextTransformController?
+let replacementID = UUID()
+autoreleasepool {
+    TextTransformController.showInIsland(text: "Replacement lifecycle fixture"); drain()
+    displacedController = editor(islandPanel).delegate as? TextTransformController
+    check(displacedController != nil, "island editor has a live controller before replacement")
+    _ = island.presentCapture(id: replacementID, content: AnyView(Text("Replacement")), height: 150,
+                              takeFocus: false, closeOnCollapse: true, fallback: {}, close: {}, hover: { _ in })
+}
+drain()
+check(displacedController == nil && island.captureID == replacementID,
+      "replacing the island editor releases it without removing the new capture")
+island.removeCapture(id: replacementID)
+
+// Copy-and-close returns the actual frontmost source application for immediate paste.
+var helper = Process(); helper.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]); helper.arguments = ["--focus-helper"]
+try! helper.run()
+wait { NSWorkspace.shared.frontmostApplication?.processIdentifier == helper.processIdentifier }
+func helperKeys() -> String { (try? String(contentsOf: helperKeysURL, encoding: .utf8)) ?? "" }
+func postHelperKey(_ code: Int) {
+    check(NSWorkspace.shared.frontmostApplication?.processIdentifier == helper.processIdentifier,
+          "native shortcut probe only posts while its controlled helper is frontmost")
+    for down in [true, false] {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: down)!
+        event.flags = .maskCommand
+        event.setIntegerValueField(.eventSourceUserData, value: previewKeyTag)
+        event.post(tap: .cghidEventTap)
+    }
+}
+@MainActor func pumpUntil(_ message: String, _ condition: @MainActor () -> Bool) async {
+    let deadline = Date().addingTimeInterval(2)
+    while !condition() && Date() < deadline { try? await Task.sleep(nanoseconds: 10_000_000) }
+    if !condition() {
+        fputs("Shortcut delivery: \(message), helper keys=\(helperKeys()), source focused=\(NSWorkspace.shared.frontmostApplication?.processIdentifier == helper.processIdentifier), island key=\(islandPanel.isKeyWindow), preview active=\(island.captureID != nil)\n", stderr)
+    }
+    check(condition(), message)
+}
+// Carbon and nonactivating panel focus are dispatched by the real application
+// loop. Mixing posted system keys with direct sendEvent calls misses that handoff.
+Task { @MainActor in
+    let beforeKeyboardPreview = TestPasteboard.board.changeCount
+    check(ScreenTextPreviewController.shared.show(text: "Keyboard OCR\nsecond line"), "keyboard preview opens")
+    drain()
+    check(NSWorkspace.shared.frontmostApplication?.processIdentifier == helper.processIdentifier && !island.tookFocus,
+          "preview leaves the other app focused before Command-E")
+    postHelperKey(kVK_ANSI_V); await pumpUntil("Command-V reaches the focused source") { helperKeys() == "v" }
+    check(!views(islandPanel.contentView!).contains { $0 is NSTextView }, "Command-V reaches the source app without opening Edit")
+    postHelperKey(kVK_ANSI_E)
+    await pumpUntil("Command-E opens the OCR editor") {
+        islandPanel.contentView.map { views($0).contains { $0 is NSTextView } } == true
+    }
+    let shortcutEditor = editor(islandPanel)
+    check(shortcutEditor.string == "Keyboard OCR\nsecond line" && shortcutEditor.isEditable
+          && helperKeys() == "v" && !SystemShortcutTakeover.claims.contains("screenTextPreviewEditShortcut")
+          && TestPasteboard.board.changeCount == beforeKeyboardPreview,
+          "global Command-E consumes only that command, transfers the full text, and releases itself without copying")
+    postHelperKey(kVK_ANSI_E); await pumpUntil("native Command-E toggles editing off") { !shortcutEditor.isEditable }
+    check(!shortcutEditor.isEditable, "Command-E inside the keyboard-opened editor still toggles editing off")
+    postHelperKey(kVK_ANSI_E); await pumpUntil("native Command-E toggles editing on") { shortcutEditor.isEditable }
+    check(shortcutEditor.isEditable, "Command-E still toggles editing back on")
+    postHelperKey(kVK_ANSI_C); await pumpUntil("native Command-C copies and closes") { island.captureID == nil }
+    // Establish a real keyboard target before checking global registration
+    // cleanup; frontmostApplication alone does not prove a window has focus.
+    helper.terminate(); helper.waitUntilExit()
+    helper = Process(); helper.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]); helper.arguments = ["--focus-helper"]
+    try! helper.run()
+    await pumpUntil("fresh source has focus") { NSWorkspace.shared.frontmostApplication?.processIdentifier == helper.processIdentifier }
+    postHelperKey(kVK_ANSI_E); await pumpUntil("Command-E is released after closing") { helperKeys() == "e" }
+    check(island.captureID == nil, "after closing, Command-E reaches another app without reopening the editor")
+    islandPanel.close(); island.presentationWindow = nil
+    app.stop(nil)
+    app.postEvent(NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [],
+        timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0)!, atStart: false)
+}
+app.run()
+TextTransformController.show(text: "return to source")
+wait { textResults().count == 1 && NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid() }
+key(textResults()[0], code: kVK_ANSI_C, characters: "c", modifiers: .command)
+wait { NSWorkspace.shared.frontmostApplication?.processIdentifier == helper.processIdentifier }
+check(TestPasteboard.board.string(forType: .string) == "return to source" && textResults().isEmpty,
+      "copy-and-close restores the external source app ready for paste")
+helper.terminate(); helper.waitUntilExit()
 
 let closingParent = open(.text("close parent"))
 parent.close(); drain()
@@ -642,6 +951,8 @@ ticket_source = 'Sources/Vorssaint/Services/CommandBar/CommandBarTicketSearch.sw
 fixture = fixture.replace('// TICKET_METHODS', '\n'.join(declaration(ticket_source, prefix)
     .replace('NSWorkspace.shared.open(url)', 'TestBrowser.open(url)')
     for prefix in ['    static func ticketKeys(in', '    static func directEntry(query:']))
+fixture = fixture.replace('// JSON_FORMATTER', declaration(
+    'Sources/Vorssaint/Services/Clipboard/ClipboardHistorySupport.swift', 'enum ClipboardJSONFormat'))
 bar_source = 'Sources/Vorssaint/Services/CommandBar/CommandBarService.swift'
 fixture = fixture.replace('// BAR_METHODS', '\n'.join(declaration(bar_source, prefix).replace('private ', '', 1)
     for prefix in ['    private func clipboardEntry(for', '    var canOpenActions:', '    func openActions()']))
@@ -652,6 +963,11 @@ with tempfile.TemporaryDirectory(prefix='shared-tool-actions-ui-') as temporary:
     binary = folder / 'check'
     paths = ['Sources/Vorssaint/Services/QuickTools/SharedToolActions.swift',
              'Sources/Vorssaint/Services/QuickTools/ExtractedTextController.swift',
+             'Sources/Vorssaint/Services/QuickTools/ScreenTextPreviewController.swift',
+             'Sources/Vorssaint/Services/QuickTools/QuickToolHotkey.swift',
+             'Sources/Vorssaint/Services/QuickTools/TextTransform.swift',
+             'Sources/Vorssaint/Services/QuickTools/TextTransformController.swift',
+             'Sources/Vorssaint/Core/TextTransformStrings.swift',
              'Sources/Vorssaint/UI/ToolAppearance.swift', 'Sources/Vorssaint/Core/SharedToolActionStrings.swift',
              'Sources/Vorssaint/Core/SharedActionShortcut.swift', 'Sources/Vorssaint/Core/AppKitExtensions.swift',
              'Sources/Vorssaint/Core/SnippetCaptureStrings.swift',
