@@ -3217,8 +3217,9 @@ struct KeepAwakeCard: View {
     }
 }
 
-/// Use AppKit's complete switch control in the island's separately hosted card.
-/// SwiftUI's switch can leave just its track visible in this presentation.
+/// Draw the track and thumb together: the system switch's thumb can disappear
+/// in the island's long-lived, masked hosting view. NSButton retains native
+/// checkbox input and accessibility without depending on that switch renderer.
 private struct KeepAwakeSwitch: NSViewRepresentable {
     let title: String
     @Binding var isOn: Bool
@@ -3226,25 +3227,31 @@ private struct KeepAwakeSwitch: NSViewRepresentable {
     var controlSize: NSControl.ControlSize = .regular
     @Environment(\.isEnabled) private var isEnabled
 
-    func makeNSView(context: Context) -> NSSwitch {
-        let control = NSSwitch()
-        control.target = context.coordinator
-        control.action = #selector(Coordinator.changed(_:))
+    func makeNSView(context: Context) -> Control {
+        let control = Control(title: title, target: context.coordinator, action: #selector(Coordinator.changed(_:)))
+        control.setButtonType(.switch)
+        control.isBordered = false
         control.setContentHuggingPriority(.required, for: .horizontal)
         control.setContentCompressionResistancePriority(.required, for: .horizontal)
         return control
     }
 
-    func updateNSView(_ control: NSSwitch, context: Context) {
+    func updateNSView(_ control: Control, context: Context) {
         context.coordinator.isOn = $isOn
         control.controlSize = controlSize
+        control.invalidateIntrinsicContentSize()
         control.state = isOn ? .on : .off
         control.isEnabled = isEnabled
+        control.title = title
+        control.setAccessibilityElement(true)
+        control.setAccessibilityRole(.checkBox)
         control.setAccessibilityLabel(title)
         control.setAccessibilityIdentifier(identifier)
+        control.setAccessibilityValue(isOn ? 1 : 0)
+        control.needsDisplay = true
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSwitch, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: Control, context: Context) -> CGSize? {
         nsView.intrinsicContentSize
     }
 
@@ -3252,7 +3259,39 @@ private struct KeepAwakeSwitch: NSViewRepresentable {
     final class Coordinator: NSObject {
         var isOn: Binding<Bool>
         init(isOn: Binding<Bool>) { self.isOn = isOn }
-        @objc func changed(_ control: NSSwitch) { isOn.wrappedValue = control.state == .on }
+        @objc func changed(_ control: Control) { isOn.wrappedValue = control.state == .on }
+    }
+
+    final class Control: NSButton {
+        override var acceptsFirstResponder: Bool { isEnabled }
+        override func accessibilityPerformPress() -> Bool {
+            guard isEnabled else { return false }
+            performClick(nil)
+            return true
+        }
+        override var intrinsicContentSize: NSSize {
+            controlSize == .mini ? NSSize(width: 36, height: 16) : NSSize(width: 54, height: 24)
+        }
+        override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+        override func draw(_ dirtyRect: NSRect) {
+            let size = intrinsicContentSize
+            let track = NSRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
+                               width: size.width, height: size.height)
+            let alpha: CGFloat = isEnabled ? 1 : 0.5
+            (state == .on ? NSColor.controlAccentColor : NSColor(white: 0.18, alpha: 1))
+                .withAlphaComponent(alpha).setFill()
+            NSBezierPath(roundedRect: track, xRadius: size.height / 2, yRadius: size.height / 2).fill()
+            let inset = size.height / 12
+            let thumbWidth = size.width * 0.6
+            let x = state == .on ? track.maxX - inset - thumbWidth : track.minX + inset
+            let thumb = NSRect(x: x, y: track.minY + inset, width: thumbWidth, height: size.height - inset * 2)
+            NSColor(white: isHighlighted ? 0.85 : 0.95, alpha: alpha).setFill()
+            NSBezierPath(roundedRect: thumb, xRadius: thumb.height / 2, yRadius: thumb.height / 2).fill()
+        }
+        override var focusRingMaskBounds: NSRect { bounds }
+        override func drawFocusRingMask() {
+            NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+        }
     }
 }
 

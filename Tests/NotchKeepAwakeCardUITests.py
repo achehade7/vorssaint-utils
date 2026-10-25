@@ -177,10 +177,13 @@ struct CardContainer: View {
         .padding(12).background(Color.black)
     }
 }
-func nativeSwitches(_ view: NSView) -> [NSSwitch] {
-    (view as? NSSwitch).map { [$0] } ?? view.subviews.flatMap(nativeSwitches)
+func nativeSwitches(_ view: NSView) -> [NSButton] {
+    if let control = view as? NSButton, control.accessibilityIdentifier().hasPrefix("keepAwake.") {
+        return [control]
+    }
+    return view.subviews.flatMap(nativeSwitches)
 }
-func click(_ control: NSSwitch) {
+func click(_ control: NSButton) {
     let point = control.convert(NSPoint(x: control.bounds.midX, y: control.bounds.midY), to: nil)
     for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
         let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
@@ -213,6 +216,12 @@ func capture(_ name: String, width: CGFloat) {
     drain(); host.layoutSubtreeIfNeeded()
     let elements = children(host)
     let names = elements.map(label)
+    if !names.contains("Clamshell mode") {
+        fputs("Awake accessibility labels: \(names)\n", stderr)
+        for control in nativeSwitches(host) {
+            fputs("Control \(control.accessibilityIdentifier()): label=\(String(describing: control.accessibilityLabel())) title=\(String(describing: control.accessibilityTitle())) role=\(String(describing: control.accessibilityRole()))\n", stderr)
+        }
+    }
     for title in ["15 minutes", "30 minutes", "1 hour", "2 hours", "4 hours", "8 hours", "Indefinite", "Until"] {
         expect(names.contains(title), "\(name) exposes \(title)")
     }
@@ -222,23 +231,36 @@ func capture(_ name: String, width: CGFloat) {
         elements.first { $0.accessibilityIdentifier?() == identifier }
     }
     expect(switches.count == 2, "both awake and lid controls remain accessible switches")
-    let bitmap = windowPixels(window)
     let controls = nativeSwitches(host)
-    expect(controls.count == 2, "card uses native AppKit switches for session and lid")
-    let scale = CGFloat(bitmap.pixelsWide) / window.frame.width
-    for control in controls {
-        let frame = control.convert(control.bounds, to: nil)
-        let x0 = max(0, Int(frame.minX * scale)), x1 = min(bitmap.pixelsWide, Int(frame.maxX * scale))
-        let y0 = max(0, Int((window.frame.height - frame.maxY) * scale)), y1 = min(bitmap.pixelsHigh, Int((window.frame.height - frame.minY) * scale))
-        var lightPixels = 0
-        if x0 < x1 && y0 < y1 {
-            for y in y0..<y1 { for x in x0..<x1 {
-                if let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), min(c.redComponent, c.greenComponent, c.blueComponent) > 0.65 { lightPixels += 1 }
-            } }
+    expect(controls.count == 2, "card exposes both session and lid controls")
+    for cycle in 0..<3 {
+        if cycle > 0 {
+            window.orderOut(nil)
+            mask.opacity = 0
+            drain()
+            mask.opacity = 1
+            window.orderFrontRegardless()
+            drain()
         }
-        expect(lightPixels > 30, "\(name) switch thumb is visible in actual WindowServer pixels")
+        let bitmap = windowPixels(window)
+        let scale = CGFloat(bitmap.pixelsWide) / window.frame.width
+        for control in controls {
+            let frame = control.convert(control.bounds, to: nil)
+            let x0 = max(0, Int(frame.minX * scale)), x1 = min(bitmap.pixelsWide, Int(frame.maxX * scale))
+            let y0 = max(0, Int((window.frame.height - frame.maxY) * scale)), y1 = min(bitmap.pixelsHigh, Int((window.frame.height - frame.minY) * scale))
+            var lightPixels = 0
+            if x0 < x1 && y0 < y1 {
+                for y in y0..<y1 { for x in x0..<x1 {
+                    if let c = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                       min(c.redComponent, c.greenComponent, c.blueComponent) > (control.isEnabled ? 0.65 : 0.3) { lightPixels += 1 }
+                } }
+            }
+            expect(lightPixels > 30, "\(name), cycle \(cycle): switch thumb is visible in actual WindowServer pixels")
+            expect(control.accessibilityRole() == .checkBox, "\(name) retains native checkbox accessibility")
+        }
+        if cycle == 0 { try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "/tmp/vorssaint-awake-card-\(name).png")) }
     }
-    try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "/tmp/vorssaint-awake-card-\(name).png"))
+    window.makeKey()
     if name == "off" {
         let session = controls.first { $0.accessibilityIdentifier() == "keepAwake.session" }!
         let lid = controls.first { $0.accessibilityIdentifier() == "keepAwake.clamshell" }!
@@ -250,6 +272,33 @@ func capture(_ name: String, width: CGFloat) {
         expect(awake.clamshellPreferred, "lid switch enables the existing clamshell preference")
         click(lid)
         expect(!awake.clamshellPreferred, "lid switch can turn the preference off")
+        expect(session.accessibilityPerformPress(), "session supports accessibility activation")
+        drain()
+        expect(awake.isActive && session.state == .on && session.accessibilityValue() as? Int == 1, "accessibility activation updates the binding and value")
+        expect(session.accessibilityPerformPress(), "accessibility can stop the session")
+        drain()
+        expect(!awake.isActive && session.state == .off && session.accessibilityValue() as? Int == 0, "accessibility reports the stopped value")
+        window.makeFirstResponder(session)
+        for type: NSEvent.EventType in [.keyDown, .keyUp] {
+            app.sendEvent(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49)!)
+        }
+        drain()
+        expect(awake.isActive && session.state == .on, "Space activates the focused switch")
+        click(session)
+        expect(!awake.isActive, "session returns to off after keyboard check")
+        awake.objectWillChange.send()
+        awake.clamshellSetupInProgress = true
+        drain()
+        expect(!lid.isEnabled, "setup in progress disables the lid switch")
+        expect(!lid.accessibilityPerformPress(), "disabled lid switch rejects accessibility activation")
+        click(lid)
+        expect(!awake.clamshellPreferred, "disabled lid switch cannot change the preference")
+        awake.objectWillChange.send()
+        awake.clamshellSetupInProgress = false
+        drain()
+        expect(lid.isEnabled, "lid switch re-enables after setup")
     }
     print("\(name): \(Int(width)) × \(Int(height))")
     window.orderOut(nil)
@@ -266,6 +315,8 @@ awake.activate(until: Date().addingTimeInterval(3600))
 capture("until-small", width: 340)
 awake.toggle(); awake.blockedPercent = 15
 capture("battery-small", width: 340)
+awake.blockedPercent = nil; awake.clamshellSetupInProgress = true
+capture("setup-disabled", width: 340)
 expect(NSPasteboard.general.changeCount == clipCount, "card checks never touch the clipboard")
 print("PASS: \(checks) production awake card checks; screenshots /tmp/vorssaint-awake-card-*.png")
 '''
