@@ -16,6 +16,7 @@ enum NotchAgentTests {
         pricing(suite)
         claudeParsing(suite)
         claudeTurns(suite)
+        claudeTranscriptBookkeeping(suite)
         offlineTurns(suite)
         codexParsing(suite)
         openCodeParsing(suite)
@@ -492,6 +493,68 @@ enum NotchAgentTests {
         _ = feed(claudeUser(time: "2026-09-21T23:50:00.000Z"))
         store.closeIdleTurns(now: AgentTimestamp.parse("2026-09-22T00:05:00.000Z")!, after: NotchAgentSupport.idleTurn)
         suite.expect(store.live.isEmpty, "a turn that has written nothing for a while stops showing as working")
+    }
+
+    private static func claudeTranscriptBookkeeping(_ suite: TestSuite) {
+        let now = AgentTimestamp.parse("2026-10-25T19:55:18.000Z")!
+        let boundary = line(#"{"type":"system","subtype":"compact_boundary","timestamp":"2026-10-25T19:55:17.249Z","compactMetadata":{"trigger":"auto"}}"#)
+        for flags in [#""isCompactSummary":true,"isVisibleInTranscriptOnly":true"#,
+                      #""isCompactSummary":true"#, #""isVisibleInTranscriptOnly":true"#] {
+            let summary = line(#"{"type":"user","timestamp":"2026-10-25T19:55:17.244Z","sessionId":"s1",\#(flags),"message":{"role":"user","content":"Summary of previous work"}}"#)
+            var state = AgentLogState()
+            let store = AgentUsageStore()
+            func feed(_ data: Data) -> [AgentLogEntry] {
+                let entries = AgentLogParser.parseClaude(data, state: &state, now: now)
+                _ = store.apply(entries, file: "main", provider: .claude, tracksTurns: true, modified: now, now: now)
+                return entries
+            }
+            _ = feed(claudeUser())
+            _ = feed(claudeAssistant(stop: "end_turn"))
+            _ = feed(boundary)
+            suite.expect(feed(summary).isEmpty && !state.turnOpen && store.live.isEmpty,
+                         "a saved compaction summary or transcript-only message cannot restart an idle timer")
+            _ = feed(claudeUser(time: "2026-10-25T19:55:18.000Z"))
+            suite.expect(state.turnOpen && store.live.count == 1,
+                         "a real prompt after compaction still starts its turn")
+            state.runningCommands = ["toolu_pending"]
+            let active = state
+            let lastActivity = store.live.first?.lastActivity
+            _ = feed(boundary)
+            suite.expect(feed(summary).isEmpty && state == active && store.live.first?.lastActivity == lastActivity,
+                         "compaction bookkeeping neither refreshes an active timer nor forgets its pending command")
+        }
+
+        var state = AgentLogState()
+        _ = AgentLogParser.parseClaude(claudeUser(), state: &state, now: now)
+        let nested = line(#"{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]},"toolUseResult":{"isCompactSummary":true,"isVisibleInTranscriptOnly":true}}"#)
+        suite.expect(AgentLogParser.parseClaude(nested, state: &state, now: now) == [.turnActive(nil)] && state.turnOpen,
+                     "summary flags nested in tool output do not suppress real activity")
+
+        let store = AgentUsageStore()
+        store.reportsTransitions = true
+        func feed(_ data: Data) -> [AgentUsageEvent] {
+            store.apply(AgentLogParser.parseClaude(data, state: &state, now: now), file: "main", provider: .claude,
+                        tracksTurns: true, modified: now, now: now)
+        }
+        state = AgentLogState()
+        for stream in ["stdout", "stderr"] {
+            _ = feed(claudeUser("<command-name>/clear</command-name>"))
+            let output = line(#"{"type":"system","subtype":"local_command","timestamp":"2026-10-24T21:42:03.631Z","content":"<local-command-\#(stream)></local-command-\#(stream)>"}"#)
+            suite.expect(feed(output).isEmpty && !state.turnOpen && store.live.isEmpty,
+                         "system local-command output stops its timer without a completion notice")
+            suite.expect(feed(output).isEmpty && !state.turnOpen && store.live.isEmpty,
+                         "system local-command output alone starts no timer")
+        }
+        _ = feed(claudeUser())
+        for other in [
+            #"{"type":"system","subtype":"local_command","isSidechain":true,"content":"<local-command-stdout></local-command-stdout>"}"#,
+            #"{"type":"system","subtype":"other","content":"<local-command-stdout></local-command-stdout>"}"#,
+            #"{"type":"system","subtype":"local_command","content":"Quoted <local-command-stdout> output"}"#,
+        ] {
+            _ = feed(line(other))
+            suite.expect(state.turnOpen && store.live.count == 1,
+                         "only the main session's actual local-command output stops its turn")
+        }
     }
 
     // MARK: Codex logs

@@ -11,7 +11,24 @@ struct ClaudeReader: AgentHarnessReader {
 
     func parse(_ line: Data, state: inout AgentLogState, now: Date) -> [AgentLogEntry] {
         if AgentLogParser.contains(line, #""type":"assistant""#) { return claudeAssistant(line, state: &state, now: now) }
+        // Newer Claude versions write local command output as a system row.
+        if AgentLogParser.contains(line, #""type":"system""#),
+           let json = AgentLogParser.object(line), json["type"] as? String == "system",
+           json["subtype"] as? String == "local_command", json["isSidechain"] as? Bool != true,
+           let content = json["content"] as? String, content.hasPrefix("<local-command-std") {
+            let open = state.turnOpen
+            state.turnOpen = false
+            return open ? [.turnEnded(nil, completed: false, duration: nil)] : []
+        }
         guard AgentLogParser.contains(line, #""type":"user""#) else { return [] }
+        // Compaction saves history as a user row, even while the session is
+        // idle. It is neither a new prompt nor activity in an existing turn.
+        if AgentLogParser.contains(line, #""isCompactSummary":true"#)
+            || AgentLogParser.contains(line, #""isVisibleInTranscriptOnly":true"#),
+           let json = AgentLogParser.object(line), json["type"] as? String == "user",
+           json["isCompactSummary"] as? Bool == true || json["isVisibleInTranscriptOnly"] as? Bool == true {
+            return []
+        }
         // A local command prints its output without asking the model anything,
         // so the command line that opened a turn closes it again. Only the
         // person's own text counts: a tool result can quote the same words.
