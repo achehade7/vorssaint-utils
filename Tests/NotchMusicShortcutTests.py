@@ -10,17 +10,17 @@ repo = Path(__file__).resolve().parents[1]
 source = (repo / "Sources/Vorssaint/UI/Notch/NotchQuickAccessView.swift").read_text()
 
 
-def declaration(marker):
-    start = source.index(marker)
-    opening = source.index("{", start)
+def declaration(marker, text=source):
+    start = text.index(marker)
+    opening = text.index("{", start)
     depth, end = 1, opening + 1
     while depth:
-        if source[end] == "{":
+        if text[end] == "{":
             depth += 1
-        elif source[end] == "}":
+        elif text[end] == "}":
             depth -= 1
         end += 1
-    return source[start:end]
+    return text[start:end]
 
 
 swift = r'''
@@ -126,18 +126,20 @@ expect(writes == [0.125, 1.0 / 32], "a noisy event cannot leave queued volume ju
 // Execute the view's real adjustment route against a fake output. No hardware
 // volume or playback state changes during this test.
 final class AppVolumeMixer {
+    OUTPUT_RESULT
     static let shared = AppVolumeMixer()
     var systemOutputVolume: Double? = 0.5
     var systemOutputMuted: Bool? = false
-    var succeeds = true, writes = 0
+    var result = OutputKeyResult.applied, writes = 0
     var beforeWrite: (() -> Void)?
-    func requestOutputStep(level: (Double) -> Double, completion: (Bool) -> Void) {
+    func requestOutputStep(level: (Double) -> Double, completion: (OutputKeyResult) -> Void) {
         writes += 1
         beforeWrite?()
-        guard succeeds, let current = systemOutputVolume else { completion(false); return }
+        guard let current = systemOutputVolume else { completion(.fallback); return }
+        guard result == .applied else { completion(result); return }
         systemOutputVolume = level(systemOutputMuted == true ? 0 : current)
         systemOutputMuted = systemOutputVolume == 0
-        completion(true)
+        completion(.applied)
     }
 }
 final class Motion { var interactive = true }
@@ -164,10 +166,16 @@ expect(mixer.systemOutputVolume == 1 && shortcut.musicVolumeFeedback == 1, "upwa
 shortcut.adjust(-2)
 expect(mixer.systemOutputVolume == 0 && shortcut.musicVolumeFeedback == 0, "downward volume remains bounded and shows muted state")
 shortcut.musicVolumeFeedback = nil
-mixer.succeeds = false
-shortcut.adjust(0.1)
-expect(shortcut.musicVolumeFeedback == nil, "failed writes do not pretend the volume changed")
-mixer.succeeds = true; mixer.systemOutputVolume = nil
+shortcut.musicVolumeFeedbackID = nil
+for result: AppVolumeMixer.OutputKeyResult in [.fallback, .superseded, .unconfirmed] {
+    mixer.result = result
+    let suppression = shortcut.service.suppression
+    shortcut.adjust(0.1)
+    expect(shortcut.musicVolumeFeedback == nil && shortcut.musicVolumeFeedbackID == nil
+           && shortcut.service.suppression == suppression + 1,
+           "only confirmed applied writes may display or renew volume feedback")
+}
+mixer.result = .applied; mixer.systemOutputVolume = nil
 shortcut.adjust(0.1)
 expect(shortcut.musicVolumeFeedback == nil, "an output without volume control shows no false arc")
 shortcut.motion.interactive = false
@@ -180,6 +188,8 @@ print("NotchMusicShortcutTests: \(checks) checks passed")
 '''
 swift = swift.replace("PRODUCTION", declaration("struct NotchMusicShortcutScroll:"))
 swift = swift.replace("ADJUSTMENT", declaration("    private func adjustMusicVolume("))
+swift = swift.replace("OUTPUT_RESULT", declaration("    enum OutputKeyResult:",
+    (repo / "Sources/Vorssaint/Services/Audio/AppVolumeMixer.swift").read_text()))
 with tempfile.TemporaryDirectory(prefix="notch-music-shortcut-") as temp:
     path = Path(temp) / "main.swift"
     binary = Path(temp) / "tests"

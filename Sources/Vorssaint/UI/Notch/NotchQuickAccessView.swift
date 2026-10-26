@@ -181,8 +181,8 @@ struct NotchQuickAccessView: View {
         guard motion.interactive else { return }
         let mixer = AppVolumeMixer.shared
         service.noteOwnLevelAdjustment(.volume)
-        mixer.requestOutputStep(level: { min(1, max(0, $0 + amount)) }) { applied in
-            guard applied, motion.interactive, let level = mixer.systemOutputVolume else { return }
+        mixer.requestOutputStep(level: { min(1, max(0, $0 + amount)) }) { result in
+            guard result == .applied, motion.interactive, let level = mixer.systemOutputVolume else { return }
             service.noteOwnLevelAdjustment(.volume)
             musicVolumeFeedback = mixer.systemOutputMuted == true ? 0 : level
             musicVolumeFeedbackID = UUID()
