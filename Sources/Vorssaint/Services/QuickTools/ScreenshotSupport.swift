@@ -214,7 +214,7 @@ enum ScreenshotSupport {
 
     // MARK: - Preferences
 
-    static let recentCaptureLimit = 12
+    static let recentCaptureLimit = 30
     static let recentCaptureMaximumBytes: Int64 = 256 * 1024 * 1024
 
     /// Keep selection attached to its capture even as a new item arrives at

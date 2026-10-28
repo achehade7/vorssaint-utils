@@ -3,6 +3,7 @@
 # Copyright (C) 2026 Vorssaint
 """Check detail-only token colors and exact payload preservation without opening UI."""
 from pathlib import Path
+from generate_sources import declaration
 import subprocess
 import tempfile
 
@@ -105,7 +106,8 @@ print("PASS: \(checks) payload detail highlighting checks")
 with tempfile.TemporaryDirectory(prefix="payload-highlighting-") as directory:
     folder = Path(directory)
     main = folder / "main.swift"
-    main.write_text(fixture)
+    main.write_text(fixture + "\n" + declaration(
+        "Sources/Vorssaint/Services/Clipboard/ClipboardHistorySupport.swift", "enum ClipboardJSONFormat"))
     executable = folder / "check"
     sources = [
         "Sources/Vorssaint/Services/Clipboard/PayloadInspector.swift",

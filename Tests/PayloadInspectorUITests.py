@@ -3,6 +3,7 @@
 # Copyright (C) 2026 Vorssaint
 """Exercise the production AppKit inspector in its own process; never send global keys."""
 from pathlib import Path
+from generate_sources import declaration
 import subprocess
 import os
 import sys
@@ -232,6 +233,43 @@ expect(source.string.utf8.elementsEqual(pasted.utf8) && settled(first), "Unicode
 privateClipboard.releaseGlobally()
 capture(first, "source", width: 760, height: 540)
 
+let formatButton = view(first, "formatSource", NSButton.self)
+expect(!formatButton.isHidden && view(first, "search", NSSearchField.self).isHidden,
+       "Source replaces the tree search with Format")
+let unformatted = #"{"large":900719925474099312345,"value":1.2300e+4,"text":"line\nnext"}"#
+edit(first, unformatted)
+expect(settled(first), "format fixture parses")
+source.undoManager!.removeAllActions()
+formatButton.performClick(nil)
+expect(!formatButton.isEnabled, "format is disabled while work is pending")
+let formatted = try! PayloadInspector.formatted(unformatted)
+expect(until { source.string == formatted } && settled(first), "Format updates the source through the native editor")
+expect(first.firstResponder === source && source.undoManager!.canUndo, "format keeps editor focus and supports undo")
+source.undoManager!.undo()
+expect(source.string == unformatted && settled(first), "one Undo restores the complete exact source")
+source.undoManager!.redo()
+expect(source.string == formatted && settled(first), "Redo reapplies formatting")
+formatButton.performClick(nil)
+expect(settled(first) && source.string == formatted, "repeated formatting does not change the result")
+edit(first, "{broken")
+formatButton.performClick(nil)
+expect(until { summary(first).contains("Invalid JSON") } && source.string == "{broken" && formatButton.isEnabled,
+       "format failure leaves source intact and allows correction")
+edit(first, unformatted)
+formatButton.performClick(nil)
+edit(first, #"{"newer":"typing wins"}"#)
+expect(settled(first) && source.string == #"{"newer":"typing wins"}"#,
+       "editing invalidates pending formatting before it can replace newer text")
+mode(first, 0)
+expect(formatButton.isHidden && !view(first, "search", NSSearchField.self).isHidden,
+       "Tree retains its search and hides the source action")
+mode(first, 1)
+edit(first, "<r><a>one</a><p>before<b/> after</p></r>")
+formatButton.performClick(nil)
+expect(until { source.string == "<r>\n  <a>one</a>\n  <p>before<b/> after</p>\n</r>" } && settled(first),
+       "Format supports XML without changing mixed text")
+capture(first, "formatted-source", width: 640, height: 460)
+
 let xml = "<orders environment=\"Q\">\n  <order id=\"10023\"><status>approved</status><amount currency=\"EUR\">1250.00</amount></order>\n  <order id=\"10024\"><status>pending</status></order>\n</orders>"
 edit(first, xml)
 expect(settled(first), "editing automatically switches the parser to XML")
@@ -267,6 +305,8 @@ service.show(text: json)
 let german = window()
 expect(until { view(german, "tree", NSOutlineView.self).numberOfRows > 0 }, "localized inspector opens")
 capture(german, "german-small", width: 640, height: 460)
+mode(german, 1)
+capture(german, "german-source-small", width: 640, height: 460)
 german.close()
 L10n.shared.language = .enUS
 service.show(text: "")
@@ -275,10 +315,12 @@ expect(view(empty, "mode", NSSegmentedControl.self).selectedSegment == 1, "empty
 expect(until { summary(empty) == strings.empty }, "empty launch settles before capture")
 capture(empty, "empty-source", width: 640, height: 460)
 edit(empty, json)
+view(empty, "formatSource", NSButton.self).performClick(nil)
+expect(!view(empty, "formatSource", NSButton.self).isEnabled, "close fixture has pending formatting")
 empty.close()
 service.show(text: "")
 let reopened = window()
-expect(until { summary(reopened) == strings.empty } && view(reopened, "source", NSTextView.self).string.isEmpty, "closed-window results never enter a reopened inspector")
+expect(until { summary(reopened) == strings.empty } && view(reopened, "source", NSTextView.self).string.isEmpty, "closed-window parsing and formatting never enter a reopened inspector")
 reopened.close()
 
 // Action handoff preserves current editor/undo until replacement is confirmed.
@@ -350,7 +392,8 @@ print("PASS: \(modelChecks) payload model and \(suite.checks - modelChecks) nati
 with tempfile.TemporaryDirectory(prefix="payload-inspector-ui-") as directory:
     folder = Path(directory)
     main = folder / "main.swift"
-    main.write_text(fixture)
+    main.write_text(fixture + "\n" + declaration(
+        "Sources/Vorssaint/Services/Clipboard/ClipboardHistorySupport.swift", "enum ClipboardJSONFormat"))
     executable = folder / "check"
     sources = [
         "Sources/Vorssaint/Services/Clipboard/PayloadInspector.swift",

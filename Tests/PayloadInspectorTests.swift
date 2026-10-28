@@ -66,9 +66,34 @@ enum PayloadInspectorTests {
         suite.expect(failure("<!DOCTYPE a [<!ENTITY x \"expanded\">]><a>&x;</a>") == .unsupportedXML, "internal entity expansion is rejected before parsing")
         suite.expect(failure(String(repeating: "<a>", count: 66) + String(repeating: "</a>", count: 66)) == .tooComplex, "XML nesting is bounded during parsing")
         suite.expect(failure("<a>" + String(repeating: "<b/>", count: 10_000) + "</a>") == .tooComplex, "XML node count is bounded during parsing")
+        let precise = #"{"n":900719925474099312345,"n":1.2300e+4,"s":"\u00e9\/","empty":[]}"#
+        let pretty = try! PayloadInspector.formatted(precise)
+        suite.expect(pretty == "{\n  \"n\": 900719925474099312345,\n  \"n\": 1.2300e+4,\n  \"s\": \"\\u00e9\\/\",\n  \"empty\": []\n}",
+                     "JSON formatting changes only whitespace, preserving duplicate keys, escapes and numbers")
+        suite.expect(try! PayloadInspector.formatted(pretty) == pretty, "JSON formatting is idempotent")
+        for scalar in ["1e400", "-0", "false", "null", #""line\nquote\"""#] {
+            suite.expect(try! PayloadInspector.formatted(" \n" + scalar + "\t") == scalar, "scalar JSON formats without re-encoding")
+        }
+        let beyondClipboardLimit = #"{"s":""# + String(repeating: "x", count: 300_000) + #""}"#
+        suite.expect((try? PayloadInspector.formatted(beyondClipboardLimit)) != nil, "inspector formatting supports its own 1 MB input limit")
+        let xmlSource = #"<?xml version='1.0'?><r xmlns:p='urn:test'><!-- note > --><p:a x='a&#10;b &gt; c'> A &amp; B </p:a><b/><p>one<i/>two</p><raw><![CDATA[ <literal> ]]></raw><keep xml:space='pre&#115;erve'><a/><b/></keep></r>"#
+        let xmlFormatted = try! PayloadInspector.formatted(xmlSource)
+        suite.expect(xmlFormatted == "<?xml version='1.0'?>\n<r xmlns:p='urn:test'>\n  <!-- note > -->\n  <p:a x='a&#10;b &gt; c'> A &amp; B </p:a>\n  <b/>\n  <p>one<i/>two</p>\n  <raw><![CDATA[ <literal> ]]></raw>\n  <keep xml:space='pre&#115;erve'><a/><b/></keep>\n</r>",
+                     "XML formatting preserves raw attributes, entities, namespaces, comments, mixed text, CDATA and xml:space")
+        suite.expect(try! PayloadInspector.formatted(xmlFormatted) == xmlFormatted, "XML formatting is idempotent")
+        for preserved in ["<p>  </p>", "<p>before<b/> after</p>", "<r xml:space='preserve'><a/><b/></r>",
+                          "<p>\u{00a0}<b/></p>", "<p><![CDATA[]]><b/></p>"] {
+            suite.expect(try! PayloadInspector.formatted(preserved) == preserved, "significant XML whitespace and mixed content remain exact")
+        }
+        for invalid in ["", "{", "[1,]", "<r><a></r>", "<!DOCTYPE a SYSTEM 'file:///nope'><a/>"] {
+            suite.expect((try? PayloadInspector.formatted(invalid)) == nil, "invalid or unsupported source is never repaired or partially formatted")
+        }
+        let nearLimit = #"{"s":""# + String(repeating: "x", count: PayloadInspector.maxBytes - 8) + #""}"#
+        suite.expect((try? PayloadInspector.parse(nearLimit)) != nil && (try? PayloadInspector.formatted(nearLimit)) == nil,
+                     "output exceeding the inspector limit is refused without truncation")
         for language in AppLanguage.allCases {
             let strings = PayloadInspectorStrings.localized(language)
-            suite.expect(!strings.title.isEmpty && !strings.search.isEmpty && !strings.copyValue.isEmpty && !strings.copyPath.isEmpty,
+            suite.expect(!strings.title.isEmpty && !strings.search.isEmpty && !strings.copyValue.isEmpty && !strings.copyPath.isEmpty && !strings.formatSource.isEmpty,
                          "payload controls exist in every locale")
             suite.expect(!strings.message(PayloadInspector.Failure.invalidJSON(7)).contains("%d"), "error byte formats in every locale")
         }

@@ -3822,11 +3822,11 @@ enum ScreenshotFeatureTests {
                "guessable ids and short deletion tokens are rejected")
         suite.expect(Defaults.registeredDefaults[DefaultsKey.panelUtilityScreenshot] as? Bool == true,
                "the panel row ships visible like its siblings")
-        let recentCaptureIDs = (0..<14).map { _ in UUID() }
+        let recentCaptureIDs = (0..<32).map { _ in UUID() }
         suite.expect(ScreenshotSupport.cappedRecentCaptureIDs(recentCaptureIDs)
-                == Array(recentCaptureIDs.prefix(12))
-                && ScreenshotSupport.recentCaptureLimit == 12,
-               "recent captures keeps only the newest bounded set")
+                == Array(recentCaptureIDs.prefix(30))
+                && ScreenshotSupport.recentCaptureLimit == 30,
+               "recent captures keeps the newest 30 entries and evicts older ones")
         let oversizedCaptureIDs = Array(recentCaptureIDs.prefix(3))
         suite.expect(ScreenshotSupport.cappedRecentCaptureIDs(
             oversizedCaptureIDs,

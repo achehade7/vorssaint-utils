@@ -53,6 +53,85 @@ enum PayloadInspector {
         return Document(format: "JSON", root: root, nodeCount: reader.count)
     }
 
+    static func formatted(_ source: String) throws -> String {
+        let document = try parse(source)
+        let result: String
+        if document.format == "JSON" {
+            guard let layout = ClipboardJSONFormat.layoutValidated(source, maxOutputBytes: maxBytes) else {
+                throw Failure.tooLarge
+            }
+            result = layout
+        } else {
+            result = try formatXML(source)
+        }
+        // Formatting must still fit the inspector's size/complexity limits.
+        _ = try parse(result)
+        return result
+    }
+
+    private static func formatXML(_ source: String) throws -> String {
+        // Tokenize only after XMLReader validates the complete input. Keep raw
+        // tags, attribute quoting, entities, comments and CDATA intact.
+        let pattern = #"<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<(?:[^>"']|"[^"]*"|'[^']*')*>|[^<]+"#
+        let regex = try NSRegularExpression(pattern: pattern)
+        let input = source as NSString
+        let tokens = regex.matches(in: source, range: NSRange(location: 0, length: input.length))
+            .map { input.substring(with: $0.range) }
+        let blanks = CharacterSet(charactersIn: " \t\r\n")
+        func isBlank(_ text: String) -> Bool { text.unicodeScalars.allSatisfy(blanks.contains) }
+        var stack: [Int] = [], ends: [Int: Int] = [:]
+        var verbatim: Set<Int> = [], hasChildren: Set<Int> = []
+        for (index, token) in tokens.enumerated() {
+            try Task.checkCancellation()
+            if token.hasPrefix("</") {
+                if let start = stack.popLast() { ends[start] = index }
+            } else if token.hasPrefix("<![CDATA[") || !token.hasPrefix("<") {
+                if let parent = stack.last, !isBlank(token) { verbatim.insert(parent) }
+            } else if token.hasPrefix("<!--") || token.hasPrefix("<?") {
+                if let parent = stack.last { hasChildren.insert(parent) }
+            } else {
+                if let parent = stack.last { hasChildren.insert(parent) }
+                // Conservatively preserve the entire subtree for any xml:space
+                // declaration, including escaped attribute values.
+                if token.range(of: #"\sxml:space\s*="#, options: .regularExpression) != nil {
+                    verbatim.insert(index)
+                }
+                if !token.hasSuffix("/>") { stack.append(index) }
+            }
+        }
+        var output = ""
+        var size = 0
+        func append(_ text: String) throws {
+            size += text.utf8.count
+            guard size <= maxBytes else { throw Failure.tooLarge }
+            output += text
+        }
+        func render(_ index: Int, depth: Int) throws -> Int {
+            try Task.checkCancellation()
+            guard let end = ends[index] else { try append(tokens[index]); return index + 1 }
+            if verbatim.contains(index) || !hasChildren.contains(index) {
+                for token in tokens[index...end] { try append(token) }
+            } else {
+                try append(tokens[index])
+                var child = index + 1
+                while child < end {
+                    if isBlank(tokens[child]) { child += 1; continue }
+                    try append("\n" + String(repeating: "  ", count: depth + 1))
+                    child = try render(child, depth: depth + 1)
+                }
+                try append("\n" + String(repeating: "  ", count: depth) + tokens[end])
+            }
+            return end + 1
+        }
+        var index = 0
+        while index < tokens.count {
+            if isBlank(tokens[index]) { index += 1; continue }
+            if !output.isEmpty { try append("\n") }
+            index = try render(index, depth: 0)
+        }
+        return output
+    }
+
     private struct JSONReader {
         let bytes: [UInt8]
         var position = 0

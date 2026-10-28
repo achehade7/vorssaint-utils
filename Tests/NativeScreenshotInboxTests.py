@@ -19,7 +19,7 @@ struct InboxDefaults {
 enum Event { case capture }
 enum NotchSupport { static func routes(_ event: Event) -> Bool { true } }
 enum ScreenshotSupport {
- static let recentCaptureLimit = 12
+ static let recentCaptureLimit = 30
  static func confirmationPreviewDismissInterval() -> TimeInterval? { 3 }
 }
 class NotchService { static let shared = NotchService(); var acceptsSystemFeedback = true }

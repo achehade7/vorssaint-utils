@@ -460,6 +460,12 @@ enum ClipboardJSONFormat {
               let first = text.first(where: { !$0.isWhitespace }), first == "{" || first == "[",
               (try? JSONSerialization.jsonObject(with: Data(text.utf8))) != nil
         else { return nil }
+        return layoutValidated(text)
+    }
+
+    /// Whitespace-only layout for callers that have already validated JSON.
+    /// Keep the original tokens, including large numbers and duplicate keys.
+    static func layoutValidated(_ text: String, maxOutputBytes: Int = Self.maxOutputBytes) -> String? {
         let scalars = Array(text.unicodeScalars)
         let blanks: Set<Unicode.Scalar> = [" ", "\t", "\n", "\r"]
         var out = String.UnicodeScalarView()
@@ -522,7 +528,8 @@ enum ClipboardJSONFormat {
                 out.append(scalar)
             }
         }
-        return String(out)
+        let result = String(out)
+        return result.utf8.count <= maxOutputBytes ? result : nil
     }
 }
 

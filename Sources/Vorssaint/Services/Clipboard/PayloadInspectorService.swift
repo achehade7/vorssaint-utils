@@ -22,6 +22,7 @@ final class PayloadInspectorService: NSObject, NSWindowDelegate, NSTextViewDeleg
     private var copyPath: NSButton?
     private var openJSON: NSButton?
     private var back: NSButton?
+    private var formatSource: NSButton?
     private var detailViews: [NSView] = []
     private var document: PayloadInspector.Document?
     private var parents: [PayloadInspector.Document] = []
@@ -31,6 +32,8 @@ final class PayloadInspectorService: NSObject, NSWindowDelegate, NSTextViewDeleg
     private var pending: Task<Void, Never>?
     private var parsing: Task<PayloadInspector.Document, Error>?
     private var filtering: Task<Void, Never>?
+    private var formatting: Task<Void, Never>?
+    private var formatWork: Task<String, Error>?
     private var replacementAlert: NSAlert?
     private var strings: PayloadInspectorStrings { .localized(L10n.shared.language) }
 
@@ -113,6 +116,8 @@ final class PayloadInspectorService: NSObject, NSWindowDelegate, NSTextViewDeleg
         search.controlSize = .small
         search.textColor = ToolAppearance.text
         search.delegate = self
+        let formatSource = button(strings.formatSource, id: "payload.formatSource", action: #selector(formatSourceText))
+        formatSource.isHidden = true
         let topRule = NSBox(), bottomRule = NSBox(), statusRule = NSBox()
         for rule in [topRule, bottomRule, statusRule] {
             rule.boxType = .custom; rule.borderWidth = 0
@@ -179,7 +184,7 @@ final class PayloadInspectorService: NSObject, NSWindowDelegate, NSTextViewDeleg
         local.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         local.lineBreakMode = .byTruncatingTail
 
-        for view in [header, detail, icon, format, back, mode, search, topRule, treeScroll, sourceScroll, empty, bottomRule,
+        for view in [header, detail, icon, format, back, mode, search, formatSource, topRule, treeScroll, sourceScroll, empty, bottomRule,
                      statusRule, summary, local] {
             view.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(view)
@@ -209,6 +214,9 @@ final class PayloadInspectorService: NSObject, NSWindowDelegate, NSTextViewDeleg
             search.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
             search.widthAnchor.constraint(equalTo: content.widthAnchor, multiplier: 0.32),
             search.centerYAnchor.constraint(equalTo: icon.centerYAnchor),
+            formatSource.leadingAnchor.constraint(greaterThanOrEqualTo: mode.trailingAnchor, constant: 16),
+            formatSource.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
+            formatSource.centerYAnchor.constraint(equalTo: icon.centerYAnchor),
             topRule.topAnchor.constraint(equalTo: content.topAnchor, constant: 62),
             topRule.leadingAnchor.constraint(equalTo: content.leadingAnchor), topRule.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             topRule.heightAnchor.constraint(equalToConstant: 1),
@@ -257,6 +265,7 @@ final class PayloadInspectorService: NSObject, NSWindowDelegate, NSTextViewDeleg
         self.treeScroll = treeScroll; self.outline = outline; self.search = search; self.mode = mode
         self.summary = summary; self.empty = empty; self.path = path; self.value = value; self.format = format
         self.copyValue = copyValue; self.copyPath = copyPath; self.openJSON = openJSON; self.back = back
+        self.formatSource = formatSource
         self.detailViews = [bottomRule, detail]
         source.string = text ?? NSPasteboard.general.string(forType: .string)
             ?? ClipboardHistoryService.shared.entries.filter { $0.kind == .text }.max(by: { $0.copiedAt < $1.copiedAt })?.text ?? ""
@@ -310,6 +319,9 @@ final class PayloadInspectorService: NSObject, NSWindowDelegate, NSTextViewDeleg
     private func refresh() {
         revision += 1
         pending?.cancel(); parsing?.cancel(); filtering?.cancel()
+        formatting?.cancel(); formatWork?.cancel()
+        formatting = nil; formatWork = nil
+        formatSource?.isEnabled = source?.string.isEmpty == false
         parents = []; document = nil; root = nil; back?.isEnabled = false
         outline?.reloadData(); selectionChanged()
         let input = source?.string ?? ""
@@ -370,7 +382,46 @@ final class PayloadInspectorService: NSObject, NSWindowDelegate, NSTextViewDeleg
         detailViews.forEach { $0.isHidden = showSource }
         empty?.isHidden = (showSource && source?.string.isEmpty != true) || root != nil
         search?.isEnabled = !showSource
+        search?.isHidden = showSource
+        formatSource?.isHidden = !showSource
         if showSource, let source { panel?.makeFirstResponder(source) }
+    }
+
+    @objc private func formatSourceText() {
+        guard let panel, let source, mode?.selectedSegment == 1,
+              panel.attachedSheet == nil, !source.hasMarkedText(), !source.string.isEmpty,
+              formatting == nil else { return }
+        pending?.cancel(); parsing?.cancel(); filtering?.cancel()
+        let input = source.string, generation = revision
+        formatSource?.isEnabled = false
+        summary?.stringValue = strings.loading
+        formatting = Task { @MainActor [weak self, weak panel] in
+            guard let self, let panel, self.panel === panel, self.revision == generation,
+                  !Task.isCancelled else { return }
+            let work = Task.detached(priority: .userInitiated) { try PayloadInspector.formatted(input) }
+            self.formatWork = work
+            let result = await work.result
+            guard self.panel === panel, self.revision == generation,
+                  !Task.isCancelled else { return }
+            self.formatting = nil; self.formatWork = nil
+            self.formatSource?.isEnabled = true
+            guard !source.hasMarkedText() else { self.refresh(); return }
+            switch result {
+            case .success(let text):
+                guard !text.utf8.elementsEqual(input.utf8) else { self.refresh(); return }
+                source.breakUndoCoalescing()
+                let undo = source.undoManager
+                undo?.beginUndoGrouping()
+                source.insertText(text, replacementRange: NSRange(location: 0, length: (input as NSString).length))
+                source.breakUndoCoalescing()
+                undo?.endUndoGrouping()
+                undo?.setActionName(self.strings.formatSource)
+                if self.mode?.selectedSegment == 1 { panel.makeFirstResponder(source) }
+            case .failure(let error):
+                let message = self.strings.message(error)
+                self.summary?.stringValue = message; self.empty?.stringValue = message
+            }
+        }
     }
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
@@ -482,6 +533,8 @@ final class PayloadInspectorService: NSObject, NSWindowDelegate, NSTextViewDeleg
         if let alert, panel?.attachedSheet === alert.window { panel?.endSheet(alert.window, returnCode: .abort) }
         revision += 1; filterRevision += 1
         pending?.cancel(); parsing?.cancel(); filtering?.cancel()
+        formatting?.cancel(); formatWork?.cancel()
+        formatting = nil; formatWork = nil; formatSource = nil
         pending = nil; parsing = nil; filtering = nil
         document = nil; parents = []; root = nil
         source = nil; sourceScroll = nil; treeScroll = nil; outline = nil; search = nil; mode = nil
