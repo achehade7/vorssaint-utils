@@ -1071,12 +1071,17 @@ extension Strings {
         invertVerticalScroll: "Dikey kaydırmayı ters çevir",
         invertHorizontalScroll: "Yatay kaydırmayı ters çevir",
         scrollHorizontalName: "Tuş basılıyken yatay kaydırma",
+        zoomSection: "Yakınlaştırma",
+        zoomControlNote: "Control + kaydırma, macOS ekranı yerine uygulama içeriğini yakınlaştırır. Klavye yakınlaştırması, işaretçinin altındaki pencereyi etkinleştirir.",
+        verticalZoom: "Yakınlaştırma",
+        pinchZoom: "Kısma ile yakınlaştırma",
         scrollHorizontalModifierLabel: "Değiştirici tuş",
         scrollHorizontalCommandKey: "Command",
         scrollHorizontalCaption: "Dikey fare tekerleğiyle yatay kaydırmak için yalnızca seçilen değiştirici tuşu basılı tutun. Diğer tuş birleşimleri değişmez.",
         switcherShowShortcutHints: "Kısayol ipuçlarını göster",
         switcherShowShortcutHintsCaption: "Simge sırasının altında uygulama ve pencere kısayollarını gösterir.",
         uninstallerHomebrewPackageFormat: "%@, Homebrew’den de kaldırılacak.",
+        uninstallerHomebrewCheckFailed: "Bu uygulamanın Homebrew tarafından yönetilip yönetilmediği doğrulanamadı. Yenile düğmesiyle tekrar deneyin veya Homebrew üzerinden kaldırın.",
         shelfEdgeToggle: "Ekran kenarına yaklaşınca aç",
         shelfEdgeCaption: "Bir dosyayı ekran kenarına doğru sürüklediğinde raf belirmeye başlar. Bıraktığın yerde kalır, ya da geri çekersen raf da geri çekilir.",
         focusFollowsMouseName: "Odak fareyi takip etsin",
@@ -1109,6 +1114,8 @@ extension Strings {
         shelfShortcutFinderSelection: "Kısayolla Finder seçimini ekle",
         shelfShortcutFinderSelectionCaption: "Finder öndeyken kısayol, rafı seçili dosyalar içinde olacak şekilde açar. Hiçbir şey seçili değilse her zamanki gibi açılır.",
         spacesOrderName: "Space sırasını sabit tut",
-        spacesOrderCaption: "macOS’un Space’leri son kullanıma göre yeniden sıralamasını engeller, böylece belirlediğiniz sırada kalırlar. Seçenek kapatıldığında önceki ayar geri yüklenir. Değişikliği uygulamak için Dock bir kez yeniden başlayabilir."
+        spacesOrderCaption: "macOS’un Space’leri son kullanıma göre yeniden sıralamasını engeller, böylece belirlediğiniz sırada kalırlar. Seçenek kapatıldığında önceki ayar geri yüklenir. Değişikliği uygulamak için Dock bir kez yeniden başlayabilir.",
+        quitAppsName: "Uygulamaları kapat",
+        quitAppsCaption: "Açık uygulamalarınızı tek tek, hepsini birden ya da öndeki dışında hepsini kapatmak için listeler. Herhangi biri kapanmadan önce listeyi her zaman gösterir."
     )
 }

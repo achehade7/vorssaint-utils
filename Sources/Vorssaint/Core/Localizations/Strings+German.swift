@@ -1071,12 +1071,17 @@ extension Strings {
         invertVerticalScroll: "Vertikales Scrollen umkehren",
         invertHorizontalScroll: "Horizontales Scrollen umkehren",
         scrollHorizontalName: "Mit gedrückter Taste horizontal scrollen",
+        zoomSection: "Zoom",
+        zoomControlNote: "Control + Scrollen zoomt den App-Inhalt statt des macOS-Bildschirms. Tastatur-Zoom aktiviert das Fenster unter dem Zeiger.",
+        verticalZoom: "Zoom",
+        pinchZoom: "Pinch-Zoom",
         scrollHorizontalModifierLabel: "Zusatztaste",
         scrollHorizontalCommandKey: "Befehlstaste",
         scrollHorizontalCaption: "Halten Sie nur die gewählte Zusatztaste gedrückt, um mit dem vertikalen Mausrad horizontal zu scrollen. Andere Tastenkombinationen bleiben unverändert.",
         switcherShowShortcutHints: "Kurzbefehlhinweise anzeigen",
         switcherShowShortcutHintsCaption: "Zeigt die Kurzbefehle für Apps und Fenster unter den Symbolen.",
         uninstallerHomebrewPackageFormat: "%@ wird auch aus Homebrew entfernt.",
+        uninstallerHomebrewCheckFailed: "Es konnte nicht geprüft werden, ob Homebrew diese App verwaltet. Aktualisiere die Liste, um es erneut zu versuchen, oder deinstalliere sie über Homebrew.",
         shelfEdgeToggle: "In der Nähe eines Bildschirmrands öffnen",
         shelfEdgeCaption: "Ziehe eine Datei in Richtung Bildschirmrand, damit die Ablage kurz hervorschaut. Lass sie dort los, oder zieh zurück, und die Ablage verschwindet wieder.",
         focusFollowsMouseName: "Fokus folgt Maus",
@@ -1109,6 +1114,8 @@ extension Strings {
         shelfShortcutFinderSelection: "Finder-Auswahl per Kurzbefehl hinzufügen",
         shelfShortcutFinderSelectionCaption: "Ist der Finder im Vordergrund, öffnet der Kurzbefehl die Ablage bereits mit den ausgewählten Dateien. Ohne Auswahl öffnet sie sich wie gewohnt.",
         spacesOrderName: "Spaces in fester Reihenfolge halten",
-        spacesOrderCaption: "Verhindert, dass macOS die Spaces nach der letzten Nutzung neu anordnet, damit sie in deiner Reihenfolge bleiben. Deine vorherige Einstellung kehrt zurück, wenn du dies ausschaltest. Das Dock startet dafür eventuell einmal neu."
+        spacesOrderCaption: "Verhindert, dass macOS die Spaces nach der letzten Nutzung neu anordnet, damit sie in deiner Reihenfolge bleiben. Deine vorherige Einstellung kehrt zurück, wenn du dies ausschaltest. Das Dock startet dafür eventuell einmal neu.",
+        quitAppsName: "Apps beenden",
+        quitAppsCaption: "Listet deine geöffneten Apps auf, um sie einzeln, alle auf einmal oder alle außer der vorderen zu beenden. Zeigt immer zuerst die Liste, bevor etwas beendet wird."
     )
 }

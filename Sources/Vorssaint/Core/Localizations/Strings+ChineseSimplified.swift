@@ -1071,12 +1071,17 @@ extension Strings {
         invertVerticalScroll: "反转垂直滚动",
         invertHorizontalScroll: "反转水平滚动",
         scrollHorizontalName: "按住按键横向滚动",
+        zoomSection: "缩放",
+        zoomControlNote: "Control + 滚动会缩放应用内容，而不是 macOS 屏幕。键盘缩放会激活指针下的窗口。",
+        verticalZoom: "缩放",
+        pinchZoom: "捏合缩放",
         scrollHorizontalModifierLabel: "修饰键",
         scrollHorizontalCommandKey: "Command",
         scrollHorizontalCaption: "仅按住所选修饰键，即可用鼠标的垂直滚轮进行水平滚动。其他组合键保持不变。",
         switcherShowShortcutHints: "显示快捷键提示",
         switcherShowShortcutHintsCaption: "在图标下方显示 App 和窗口快捷键。",
         uninstallerHomebrewPackageFormat: "%@ 也会从 Homebrew 中移除。",
+        uninstallerHomebrewCheckFailed: "无法确认此 App 是否由 Homebrew 管理。请刷新后重试，或通过 Homebrew 卸载。",
         shelfEdgeToggle: "靠近屏幕边缘时打开",
         shelfEdgeCaption: "将文件拖向屏幕边缘，暂存架就会探出一角。放在那里即可放下，往回拖则会收回去。",
         focusFollowsMouseName: "悬停聚焦",
@@ -1109,6 +1114,8 @@ extension Strings {
         shelfShortcutFinderSelection: "使用快捷键添加访达中的所选项",
         shelfShortcutFinderSelectionCaption: "访达位于前台时，快捷键会打开暂存架并放入所选文件。未选择任何内容时照常打开。",
         spacesOrderName: "固定空间顺序",
-        spacesOrderCaption: "阻止 macOS 按最近使用情况重新排列空间，让它们保持你设定的顺序。关闭此选项后会恢复之前的设置。为应用更改，Dock 可能会重新启动一次。"
+        spacesOrderCaption: "阻止 macOS 按最近使用情况重新排列空间，让它们保持你设定的顺序。关闭此选项后会恢复之前的设置。为应用更改，Dock 可能会重新启动一次。",
+        quitAppsName: "退出应用",
+        quitAppsCaption: "列出打开的应用，可逐个退出、全部退出，或退出最前面应用以外的所有应用。退出任何应用前都会先显示列表。"
     )
 }

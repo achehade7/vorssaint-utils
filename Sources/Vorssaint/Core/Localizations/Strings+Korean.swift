@@ -1072,12 +1072,17 @@ extension Strings {
         invertVerticalScroll: "세로 스크롤 반전",
         invertHorizontalScroll: "가로 스크롤 반전",
         scrollHorizontalName: "키를 눌러 가로 스크롤",
+        zoomSection: "확대/축소",
+        zoomControlNote: "Control + 스크롤은 macOS 화면 대신 앱 콘텐츠를 확대합니다. 키보드 확대는 포인터 아래의 윈도우를 활성화합니다.",
+        verticalZoom: "확대/축소",
+        pinchZoom: "핀치 확대/축소",
         scrollHorizontalModifierLabel: "전환 키",
         scrollHorizontalCommandKey: "Command",
         scrollHorizontalCaption: "선택한 보조 키만 누른 채 마우스 휠을 굴리면 가로로 스크롤합니다. 다른 키 조합은 변경하지 않습니다.",
         switcherShowShortcutHints: "단축키 힌트 보기",
         switcherShowShortcutHintsCaption: "아이콘 아래에 앱 및 윈도우 단축키를 표시합니다.",
         uninstallerHomebrewPackageFormat: "%@도 Homebrew에서 제거됩니다.",
+        uninstallerHomebrewCheckFailed: "Homebrew가 이 앱을 관리하는지 확인할 수 없습니다. 새로 고침하여 다시 시도하거나 Homebrew에서 제거하세요.",
         shelfEdgeToggle: "화면 가장자리 근처에서 열기",
         shelfEdgeCaption: "파일을 화면 가장자리 쪽으로 드래그하면 선반이 살짝 나타납니다. 그 자리에 놓거나, 다시 뒤로 당기면 선반이 들어갑니다.",
         focusFollowsMouseName: "마우스를 따라 포커스",
@@ -1110,6 +1115,8 @@ extension Strings {
         shelfShortcutFinderSelection: "단축키로 Finder 선택 항목 추가",
         shelfShortcutFinderSelectionCaption: "Finder가 앞에 있을 때 단축키를 누르면 선택한 파일이 담긴 선반이 열립니다. 아무것도 선택하지 않았다면 평소처럼 열립니다.",
         spacesOrderName: "공간 순서 고정",
-        spacesOrderCaption: "macOS가 최근 사용 순서에 따라 공간을 재정렬하지 않도록 해 정한 순서를 유지합니다. 끄면 이전 설정으로 돌아갑니다. 변경 사항을 적용하려고 Dock이 한 번 다시 시작될 수 있습니다."
+        spacesOrderCaption: "macOS가 최근 사용 순서에 따라 공간을 재정렬하지 않도록 해 정한 순서를 유지합니다. 끄면 이전 설정으로 돌아갑니다. 변경 사항을 적용하려고 Dock이 한 번 다시 시작될 수 있습니다.",
+        quitAppsName: "앱 종료",
+        quitAppsCaption: "열려 있는 앱을 나열해 하나씩, 한 번에 모두, 또는 맨 앞의 앱을 제외하고 모두 종료할 수 있습니다. 무엇이든 종료하기 전에 항상 목록을 먼저 보여 줍니다."
     )
 }

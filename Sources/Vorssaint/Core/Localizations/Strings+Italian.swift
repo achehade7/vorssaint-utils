@@ -1071,12 +1071,17 @@ extension Strings {
         invertVerticalScroll: "Inverti lo scorrimento verticale",
         invertHorizontalScroll: "Inverti lo scorrimento orizzontale",
         scrollHorizontalName: "Scorrimento orizzontale tenendo premuto un tasto",
+        zoomSection: "Zoom",
+        zoomControlNote: "Control + scorrimento ingrandisce il contenuto dell’app anziché lo schermo di macOS. Lo zoom da tastiera attiva la finestra sotto il puntatore.",
+        verticalZoom: "Zoom",
+        pinchZoom: "Zoom con pizzico",
         scrollHorizontalModifierLabel: "Tasto modificatore",
         scrollHorizontalCommandKey: "Comando",
         scrollHorizontalCaption: "Tieni premuto solo il tasto scelto per scorrere in orizzontale con la rotellina verticale del mouse. Le altre combinazioni di tasti restano invariate.",
         switcherShowShortcutHints: "Mostra suggerimenti scorciatoie",
         switcherShowShortcutHintsCaption: "Mostra le scorciatoie per app e finestre sotto le icone.",
         uninstallerHomebrewPackageFormat: "%@ verrà rimosso anche da Homebrew.",
+        uninstallerHomebrewCheckFailed: "Impossibile verificare se Homebrew gestisce questa app. Aggiorna per riprovare oppure disinstallala da Homebrew.",
         shelfEdgeToggle: "Apri vicino a un bordo dello schermo",
         shelfEdgeCaption: "Trascina un file verso il bordo dello schermo per far intravedere il ripiano. Rilascialo lì, oppure torna indietro e si ritira.",
         focusFollowsMouseName: "Il focus segue il mouse",
@@ -1109,6 +1114,8 @@ extension Strings {
         shelfShortcutFinderSelection: "Aggiungi la selezione del Finder con la scorciatoia",
         shelfShortcutFinderSelectionCaption: "Con il Finder in primo piano, la scorciatoia apre il ripiano con i file selezionati già dentro. Senza selezione si apre come sempre.",
         spacesOrderName: "Mantieni gli Spazi in ordine fisso",
-        spacesOrderCaption: "Impedisce a macOS di riordinare gli Spazi in base all’uso più recente, così restano nell’ordine che hai scelto. L’impostazione precedente torna quando disattivi questa opzione. Il Dock potrebbe riavviarsi una volta per applicare la modifica."
+        spacesOrderCaption: "Impedisce a macOS di riordinare gli Spazi in base all’uso più recente, così restano nell’ordine che hai scelto. L’impostazione precedente torna quando disattivi questa opzione. Il Dock potrebbe riavviarsi una volta per applicare la modifica.",
+        quitAppsName: "Esci dalle app",
+        quitAppsCaption: "Elenca le app aperte per uscirne una alla volta, tutte insieme o tutte tranne quella in primo piano. Mostra sempre l’elenco prima di chiudere qualcosa."
     )
 }

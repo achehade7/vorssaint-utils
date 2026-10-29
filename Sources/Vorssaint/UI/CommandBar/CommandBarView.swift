@@ -935,7 +935,10 @@ struct CommandBarView: View {
     /// small floating window, so nothing here is rebuilt from scratch.
     @ViewBuilder
     private var uninstallHomebrewStatus: some View {
-        if let package = uninstaller.selectedHomebrewPackage {
+        if uninstaller.homebrewCheckFailed {
+            UninstallerHomebrewFailureNote(onRetry: uninstaller.retryHomebrewCheck)
+                .padding(.horizontal, 17)
+        } else if let package = uninstaller.selectedHomebrewPackage {
             if let status = homebrew.operationStatus,
                status.action == .uninstall,
                status.package?.id == package.id {
@@ -1088,7 +1091,7 @@ struct CommandBarView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
             .tint(.red)
-            .disabled(!uninstaller.items.contains(where: \.include)
+            .disabled(!uninstaller.canRemoveSelected
                       || (uninstaller.selectedHomebrewPackage != nil && homebrew.isBusy))
         }
         .padding(.horizontal, 17)

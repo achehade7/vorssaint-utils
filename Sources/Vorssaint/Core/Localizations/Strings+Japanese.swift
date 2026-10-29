@@ -1071,12 +1071,17 @@ extension Strings {
         invertVerticalScroll: "縦スクロールを反転",
         invertHorizontalScroll: "横スクロールを反転",
         scrollHorizontalName: "キーを押して横スクロール",
+        zoomSection: "ズーム",
+        zoomControlNote: "Control キーを押しながらスクロールすると、macOS の画面ではなくアプリの内容が拡大されます。キーボードズームはポインタの下のウインドウをアクティブにします。",
+        verticalZoom: "ズーム",
+        pinchZoom: "ピンチズーム",
         scrollHorizontalModifierLabel: "修飾キー",
         scrollHorizontalCommandKey: "Command",
         scrollHorizontalCaption: "選択した修飾キーだけを押しながらマウスの縦ホイールを回すと、横にスクロールします。他のキーの組み合わせは変更しません。",
         switcherShowShortcutHints: "ショートカットのヒントを表示",
         switcherShowShortcutHintsCaption: "アイコンの下にアプリとウインドウのショートカットを表示します。",
         uninstallerHomebrewPackageFormat: "%@ も Homebrew から削除されます。",
+        uninstallerHomebrewCheckFailed: "このアプリがHomebrewで管理されているか確認できませんでした。更新して再試行するか、Homebrewからアンインストールしてください。",
         shelfEdgeToggle: "画面の端に近づけたら開く",
         shelfEdgeCaption: "ファイルを画面の端に向けてドラッグすると、シェルフが少しだけ現れます。そこでドロップするか、手を戻すとシェルフは引っ込みます。",
         focusFollowsMouseName: "マウス追従フォーカス",
@@ -1109,6 +1114,8 @@ extension Strings {
         shelfShortcutFinderSelection: "ショートカットで Finder の選択項目を追加",
         shelfShortcutFinderSelectionCaption: "Finder が最前面にあるとき、ショートカットで選択中のファイルが入った状態のシェルフを開きます。何も選択していない場合は通常どおり開きます。",
         spacesOrderName: "スペースの順序を固定",
-        spacesOrderCaption: "最近の使用状況に応じてmacOSがスペースを並べ替えないようにし、設定した順序を保ちます。オフにすると以前の設定に戻ります。変更を適用するためにDockが一度再起動することがあります。"
+        spacesOrderCaption: "最近の使用状況に応じてmacOSがスペースを並べ替えないようにし、設定した順序を保ちます。オフにすると以前の設定に戻ります。変更を適用するためにDockが一度再起動することがあります。",
+        quitAppsName: "アプリを終了",
+        quitAppsCaption: "開いているアプリを一覧表示し、1つずつ、すべてまとめて、または最前面以外をすべて終了できます。何かを終了する前に必ず一覧を表示します。"
     )
 }

@@ -1071,12 +1071,17 @@ extension Strings {
         invertVerticalScroll: "Invertir el desplazamiento vertical",
         invertHorizontalScroll: "Invertir el desplazamiento horizontal",
         scrollHorizontalName: "Desplazamiento horizontal al mantener una tecla",
+        zoomSection: "Zoom",
+        zoomControlNote: "Control + desplazamiento amplía el contenido de la app en lugar de la pantalla de macOS. El zoom por teclado activa la ventana bajo el puntero.",
+        verticalZoom: "Zoom",
+        pinchZoom: "Zoom con pellizco",
         scrollHorizontalModifierLabel: "Tecla modificadora",
         scrollHorizontalCommandKey: "Comando",
         scrollHorizontalCaption: "Mantén pulsada solo la tecla elegida para desplazar horizontalmente con la rueda vertical del ratón. Las demás combinaciones de teclas no cambian.",
         switcherShowShortcutHints: "Mostrar indicaciones de atajos",
         switcherShowShortcutHintsCaption: "Muestra los atajos de apps y ventanas debajo de los iconos.",
         uninstallerHomebrewPackageFormat: "%@ también se eliminará de Homebrew.",
+        uninstallerHomebrewCheckFailed: "No se pudo comprobar si Homebrew gestiona esta app. Actualiza para volver a intentarlo o desinstálala desde Homebrew.",
         shelfEdgeToggle: "Abrir cerca de un borde de la pantalla",
         shelfEdgeCaption: "Arrastra un archivo hacia el borde de la pantalla para que el estante asome. Suéltalo ahí, o retíralo y el estante se repliega.",
         focusFollowsMouseName: "El foco sigue al ratón",
@@ -1109,6 +1114,8 @@ extension Strings {
         shelfShortcutFinderSelection: "Añadir la selección del Finder con el atajo",
         shelfShortcutFinderSelectionCaption: "Con el Finder al frente, el atajo abre el estante con los archivos seleccionados ya dentro. Sin selección, se abre como siempre.",
         spacesOrderName: "Mantener los Espacios en un orden fijo",
-        spacesOrderCaption: "Evita que macOS reorganice los Espacios según el uso más reciente, para que sigan en el orden que elegiste. Tu ajuste anterior vuelve al desactivar esta opción. El Dock puede reiniciarse una vez para aplicar el cambio."
+        spacesOrderCaption: "Evita que macOS reorganice los Espacios según el uso más reciente, para que sigan en el orden que elegiste. Tu ajuste anterior vuelve al desactivar esta opción. El Dock puede reiniciarse una vez para aplicar el cambio.",
+        quitAppsName: "Salir de apps",
+        quitAppsCaption: "Muestra tus apps abiertas para salir de ellas una a una, todas a la vez o todas menos la del frente. La lista siempre aparece antes de que se cierre alguna."
     )
 }

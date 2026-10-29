@@ -1071,12 +1071,17 @@ extension Strings {
         invertVerticalScroll: "Inverser le défilement vertical",
         invertHorizontalScroll: "Inverser le défilement horizontal",
         scrollHorizontalName: "Défilement horizontal avec une touche",
+        zoomSection: "Zoom",
+        zoomControlNote: "Contrôle + défilement agrandit le contenu de l’application plutôt que l’écran macOS. Le zoom au clavier active la fenêtre sous le pointeur.",
+        verticalZoom: "Zoom",
+        pinchZoom: "Zoom par pincement",
         scrollHorizontalModifierLabel: "Touche de modification",
         scrollHorizontalCommandKey: "Commande",
         scrollHorizontalCaption: "Maintenez uniquement la touche choisie pour faire défiler horizontalement avec la molette verticale. Les autres combinaisons de touches restent inchangées.",
         switcherShowShortcutHints: "Afficher les raccourcis",
         switcherShowShortcutHintsCaption: "Affiche les raccourcis des apps et des fenêtres sous les icônes.",
         uninstallerHomebrewPackageFormat: "%@ sera aussi retiré de Homebrew.",
+        uninstallerHomebrewCheckFailed: "Impossible de vérifier si Homebrew gère cette app. Actualisez pour réessayer ou désinstallez-la depuis Homebrew.",
         shelfEdgeToggle: "Ouvrir près d’un bord de l’écran",
         shelfEdgeCaption: "Faites glisser un fichier vers le bord de l’écran pour entrevoir l’étagère. Déposez-le là, ou reculez et elle se retire.",
         focusFollowsMouseName: "Le focus suit la souris",
@@ -1109,6 +1114,8 @@ extension Strings {
         shelfShortcutFinderSelection: "Ajouter la sélection du Finder avec le raccourci",
         shelfShortcutFinderSelectionCaption: "Quand le Finder est au premier plan, le raccourci ouvre l’étagère avec les fichiers sélectionnés déjà dedans. Sans sélection, elle s’ouvre comme d’habitude.",
         spacesOrderName: "Garder les Espaces dans un ordre fixe",
-        spacesOrderCaption: "Empêche macOS de réorganiser les Espaces selon leur utilisation récente, pour qu’ils restent dans l’ordre choisi. Votre réglage précédent revient quand cette option est désactivée. Le Dock peut redémarrer une fois pour appliquer le changement."
+        spacesOrderCaption: "Empêche macOS de réorganiser les Espaces selon leur utilisation récente, pour qu’ils restent dans l’ordre choisi. Votre réglage précédent revient quand cette option est désactivée. Le Dock peut redémarrer une fois pour appliquer le changement.",
+        quitAppsName: "Quitter des apps",
+        quitAppsCaption: "Liste vos apps ouvertes pour les quitter une par une, toutes à la fois ou toutes sauf celle au premier plan. La liste s’affiche toujours avant toute fermeture."
     )
 }

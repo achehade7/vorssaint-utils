@@ -1071,12 +1071,17 @@ extension Strings {
         invertVerticalScroll: "Obrátiť zvislé rolovanie",
         invertHorizontalScroll: "Obrátiť vodorovné rolovanie",
         scrollHorizontalName: "Rolovať do strán pri podržaní klávesu",
+        zoomSection: "Priblíženie",
+        zoomControlNote: "Control + posúvanie zväčšuje obsah aplikácie namiesto obrazovky macOS. Zväčšovanie klávesnicou aktivuje okno pod kurzorom.",
+        verticalZoom: "Priblíženie",
+        pinchZoom: "Priblíženie stiahnutím",
         scrollHorizontalModifierLabel: "Modifikačný kláves",
         scrollHorizontalCommandKey: "Command",
         scrollHorizontalCaption: "Podržaním samotného zvoleného modifikátora budete zvislým kolieskom myši rolovať vodorovne. Ostatné kombinácie klávesov ostávajú nezmenené.",
         switcherShowShortcutHints: "Zobraziť nápovedu ku skratkám",
         switcherShowShortcutHintsCaption: "Zobrazí skratky pre aplikácie a okná pod ikonami.",
         uninstallerHomebrewPackageFormat: "%@ sa odstráni aj z Homebrew.",
+        uninstallerHomebrewCheckFailed: "Nepodarilo sa overiť, či túto aplikáciu spravuje Homebrew. Obnovte zoznam a skúste to znova alebo ju odinštalujte cez Homebrew.",
         shelfEdgeToggle: "Otvoriť pri okraji obrazovky",
         shelfEdgeCaption: "Potiahnite súbor k okraju obrazovky a polica sa vysunie. Buď na ňu súbor pustíte, alebo sa potiahnutím späť zasunie.",
         focusFollowsMouseName: "Zameranie sleduje myš",
@@ -1109,6 +1114,8 @@ extension Strings {
         shelfShortcutFinderSelection: "Pridať výber z Findera skratkou",
         shelfShortcutFinderSelectionCaption: "Keď je Finder v popredí, skratka otvorí policu už s vybranými súbormi. Ak nie je nič vybraté, otvorí sa ako zvyčajne.",
         spacesOrderName: "Udržať plochy v pevnom poradí",
-        spacesOrderCaption: "Zabráni systému macOS meniť poradie plôch podľa posledného použitia, takže zostanú v poradí, ktoré ste nastavili. Po vypnutí sa vráti predchádzajúce nastavenie. Dock sa môže raz reštartovať, aby sa zmena použila."
+        spacesOrderCaption: "Zabráni systému macOS meniť poradie plôch podľa posledného použitia, takže zostanú v poradí, ktoré ste nastavili. Po vypnutí sa vráti predchádzajúce nastavenie. Dock sa môže raz reštartovať, aby sa zmena použila.",
+        quitAppsName: "Ukončenie aplikácií",
+        quitAppsCaption: "Zobrazí otvorené aplikácie, aby ste ich mohli ukončiť jednu po druhej, všetky naraz alebo všetky okrem tej vpredu. Zoznam sa vždy zobrazí skôr, než sa čokoľvek ukončí."
     )
 }
