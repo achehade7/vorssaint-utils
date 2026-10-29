@@ -108,7 +108,6 @@ final class MeetingService {
     var captureControls: Bool?
     var neonMeetingAt: Date?
     var lastMeetingReminderStart: Date?
-    var lastMeetingFinalReminderStart: Date?
     var lastMeetingAnnouncementStart: Date?
     var reminderClock: Date?
     var notices: [NotchNotice] = []
@@ -422,32 +421,27 @@ expect(linkedReminder.notices.first?.meetingURL?.absoluteString == joinLink,
 let clock = Date(timeIntervalSince1970: 1_800_000_000)
 let staged = MeetingService(), stagedStart = clock.addingTimeInterval(600)
 staged.reminderClock = clock
-staged.signalMeetingReminder(title: "Planning", start: stagedStart, at: clock, url: joinLink)
-expect(staged.notices.count == 1 && staged.lastMeetingReminderStart == stagedStart
-       && staged.lastMeetingFinalReminderStart == nil,
+staged.signalMeetingReminder(title: "Planning", start: stagedStart, at: clock, url: joinLink,
+                             calendarItemIdentifier: "calendar-item")
+expect(staged.notices.count == 1 && staged.lastMeetingReminderStart == stagedStart,
        "the ten-minute stage records only its own deduplication key")
 staged.reminderClock = clock.addingTimeInterval(540)
 staged.signalMeetingReminder(title: "Planning", start: stagedStart, at: staged.reminderClock!, url: joinLink,
                              calendarItemIdentifier: "calendar-item")
-expect(staged.notices.count == 2 && staged.notices[1].detail == "1 min"
-       && staged.notices[1].meetingReminder && !staged.notices[1].meetingStartsNow
-       && staged.notices[1].meetingURL?.absoluteString == joinLink
-       && staged.notices[1].meetingCalendarItemIdentifier == "calendar-item"
-       && staged.notices[1].meetingStart == stagedStart
-       && staged.lastMeetingFinalReminderStart == stagedStart,
-       "the same event gets a separate one-minute reminder with the exact call link")
+expect(staged.notices.count == 1 && staged.lastMeetingReminderStart == stagedStart,
+       "legacy one-minute delivery stays silent so it cannot replace the continuous countdown")
 staged.signalMeetingReminder(title: "Duplicate", start: stagedStart, at: staged.reminderClock!, url: joinLink)
-expect(staged.notices.count == 2, "duplicate delivery cannot repeat the one-minute stage")
+expect(staged.notices.count == 1, "repeated one-minute delivery stays silent")
 staged.reminderClock = clock
 staged.signalMeetingReminder(title: "Duplicate", start: stagedStart, at: clock, url: joinLink)
-expect(staged.notices.count == 2, "the later stage does not erase ten-minute deduplication")
+expect(staged.notices.count == 1, "ignored final reminder does not erase ten-minute deduplication")
 for seconds in [60.0, 600.0] {
     for delta in [0.001, 0, -3, -3.001] {
         let boundary = MeetingService()
         boundary.reminderClock = clock
         boundary.signalMeetingReminder(title: "Boundary", start: clock.addingTimeInterval(seconds + delta), at: clock)
-        expect(boundary.notices.count == ((delta <= 0 && delta >= -3) ? 1 : 0),
-               "each reminder accepts only its exact three-second delivery window")
+        expect(boundary.notices.count == ((seconds == 600 && delta <= 0 && delta >= -3) ? 1 : 0),
+               "only ten-minute deliveries are accepted; the final minute stays banner-free")
     }
     for condition in 0..<10 {
         let blocked = MeetingService()
@@ -466,16 +460,15 @@ for seconds in [60.0, 600.0] {
         default: start = Date(timeIntervalSince1970: .nan)
         }
         blocked.signalMeetingReminder(title: "Ignored", start: start, at: timestamp)
-        expect(blocked.notices.isEmpty && blocked.lastMeetingReminderStart == nil
-               && blocked.lastMeetingFinalReminderStart == nil,
+        expect(blocked.notices.isEmpty && blocked.lastMeetingReminderStart == nil,
                "both stages reject unavailable surfaces and stale, future or wrong-threshold messages")
     }
 }
 let localized = MeetingService()
 localized.reminderClock = clock
 L10n.shared.language = .de
-localized.signalMeetingReminder(title: "Planung", start: clock.addingTimeInterval(60), at: clock)
-expect(localized.notices.first?.detail == "1 Min.", "one-minute detail uses the selected app language")
+localized.signalMeetingReminder(title: "Planung", start: clock.addingTimeInterval(600), at: clock)
+expect(localized.notices.first?.detail == "10 Min.", "ten-minute detail uses the selected app language")
 L10n.shared.language = .enUS
 let suppressed = MeetingService()
 suppressed.reminderClock = clock
@@ -488,8 +481,8 @@ suppressed.signalMeetingReminder(title: "Late", start: stagedStart, at: suppress
 expect(suppressed.notices.isEmpty, "a suppressed reminder cannot replay after its delivery window")
 suppressed.reminderClock = clock.addingTimeInterval(540)
 suppressed.signalMeetingReminder(title: "Planning", start: stagedStart, at: suppressed.reminderClock!)
-expect(suppressed.notices.count == 1 && suppressed.notices[0].detail == "1 min",
-       "missing a ten-minute reminder still permits the fresh one-minute stage")
+expect(suppressed.notices.isEmpty,
+       "missing a ten-minute reminder does not re-enable the one-minute popup")
 for offset in [-5.0, 5.0] {
     let late = MeetingService()
     late.signalMeetingStarted(at: Date(), title: "Missed", start: Date().addingTimeInterval(offset), url: joinLink)
@@ -511,7 +504,7 @@ let calendar = NotchCalendarService.shared, notes = MeetingNoteService.shared
 let exactEvent = NotchCalendarEvent(calendarItemIdentifier: "calendar-item", start: stagedStart,
                                     meetingURL: URL(string: joinLink))
 calendar.events = [exactEvent]
-let commandClicks = MeetingClickHost(), commandNotice = staged.notices[1]
+let commandClicks = MeetingClickHost(), commandNotice = staged.notices[0]
 func settleMeetingClick() { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
 commandClicks.click(commandNotice, modifiers: .command)
 settleMeetingClick()

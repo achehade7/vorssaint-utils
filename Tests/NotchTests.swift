@@ -3796,8 +3796,18 @@ enum NotchTests {
         defaults.set(0, forKey: DefaultsKey.notchCalendarCountdownLead)
         let shortest = NotchCalendarSupport.countdownLeadTime(in: defaults)
         defaults.set(10_000, forKey: DefaultsKey.notchCalendarCountdownLead)
-        suite.expect(shortest == 5 * 60 && NotchCalendarSupport.countdownLeadTime(in: defaults) == 240 * 60,
-                     "a restored or hand-edited lead stays between five minutes and four hours")
+        suite.expect(shortest == 60 && NotchCalendarSupport.countdownLeadTime(in: defaults) == 240 * 60,
+                     "a restored or hand-edited lead stays between one minute and four hours")
+        defaults.set(1, forKey: DefaultsKey.notchCalendarCountdownLead)
+        let minute = NotchCalendarSupport.countdownLeadTime(in: defaults)
+        let soon = event("in one minute", 60, 660)
+        suite.expect(minute == 60 && countdownFor([soon], at: -1, lead: minute) == nil
+                     && countdownFor([soon], lead: minute)?.event == soon
+                     && countdownFor([soon], at: 59, lead: minute)?.event == soon
+                     && countdownFor([soon], at: 60, lead: minute) == nil,
+                     "one-minute countdown shows continuously from 60 seconds before a start until the start")
+        suite.expect(transition([event("in two minutes", 120, 720)], lead: minute) == now.addingTimeInterval(60),
+                     "one-minute countdown schedules its refresh at the start of the last minute")
         defaults.removeObject(forKey: DefaultsKey.notchCalendarCountdownLead)
         // A meeting that ends in 30 minutes, 15 minutes before the next one starts.
         let meeting = event("meeting", -1800, 1800)

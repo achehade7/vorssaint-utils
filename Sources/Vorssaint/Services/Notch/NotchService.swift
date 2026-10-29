@@ -170,7 +170,6 @@ final class NotchService: ObservableObject {
     @Published private(set) var neonCopyAt: Date?
     @Published private(set) var neonMeetingAt: Date?
     private var lastMeetingReminderStart: Date?
-    private var lastMeetingFinalReminderStart: Date?
     private var lastMeetingAnnouncementStart: Date?
     @Published private(set) var nightPalette: Double = 0
     @Published private(set) var routingFileDrag = false
@@ -1724,20 +1723,19 @@ final class NotchService: ObservableObject {
         }
     }
 
-    /// Ten-minute and one-minute notices from SketchyBar's existing calendar feed.
+    /// Ten-minute notices from SketchyBar; the final minute uses the calendar countdown.
     /// Missed reminders never queue behind quiet mode, sleep or an open tool.
     func signalMeetingReminder(title: String, start: Date, at date: Date, url: String? = nil,
                                calendarItemIdentifier: String? = nil) {
         let now = Date()
         let remaining = start.timeIntervalSince(now)
-        let finalReminder = (57...60).contains(remaining)
         guard acceptsSystemFeedback, noticeCanPresent,
               (0..<2).contains(now.timeIntervalSince(date)),
-              finalReminder || (597...600).contains(remaining),
-              (finalReminder ? lastMeetingFinalReminderStart : lastMeetingReminderStart) != start else { return }
+              (597...600).contains(remaining),
+              lastMeetingReminderStart != start else { return }
         let label = String(title.components(separatedBy: .controlCharacters).joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
-        let detail = Duration.seconds(finalReminder ? 60 : 600).formatted(.units(allowed: [.minutes], width: .abbreviated)
+        let detail = Duration.seconds(600).formatted(.units(allowed: [.minutes], width: .abbreviated)
             .locale(Locale(identifier: L10n.shared.language.rawValue)))
         if show(NotchNotice(event: .systemNotification,
                             title: label.isEmpty ? FeatureStrings.notchCalendar(L10n.shared.language).untitled : label,
@@ -1745,8 +1743,7 @@ final class NotchService: ObservableObject {
                             meetingURL: NotchCalendarSupport.meetingURL(
                                 url: url.flatMap(URL.init(string:)), location: nil, notes: nil),
                             meetingCalendarItemIdentifier: calendarItemIdentifier, meetingStart: start)) {
-            if finalReminder { lastMeetingFinalReminderStart = start }
-            else { lastMeetingReminderStart = start }
+            lastMeetingReminderStart = start
         }
     }
 

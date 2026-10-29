@@ -80,8 +80,8 @@ enum NotchCalendarSupport {
     /// Minutes before a start the countdown appears; the settings menu
     /// offers the presets, and any stored value is held to the range.
     static let defaultCountdownLeadMinutes = 60
-    static let countdownLeadPresets = [15, 30, 60, 120]
-    static let countdownLeadRange = 5...240
+    static let countdownLeadPresets = [1, 5, 15, 30, 60, 120]
+    static let countdownLeadRange = 1...240
 
     static func countdownLeadMinutes(_ minutes: Int) -> Int {
         min(countdownLeadRange.upperBound, max(countdownLeadRange.lowerBound, minutes))
