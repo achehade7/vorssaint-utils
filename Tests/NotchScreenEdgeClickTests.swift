@@ -12,6 +12,8 @@ enum NotchScreenEdgeClickTests {
         struct Screen { let frame = CGRect(x: 0, y: 0, width: 1470, height: 956) }
     }
     final class NSEvent {
+        typealias ModifierFlags = AppKit.NSEvent.ModifierFlags
+        var modifierFlags: ModifierFlags = []
         typealias EventType = AppKit.NSEvent.EventType
         typealias EventTypeMask = AppKit.NSEvent.EventTypeMask
         struct CGEvent { let location: CGPoint }
@@ -55,7 +57,8 @@ enum NotchScreenEdgeClickTests {
         var hoverState = NotchHoverState()
         var compactActivity: NotchCompactActivity?
         var openings = 0, countdownOpenings = 0
-        func openCountdownEvent() { countdownOpenings += 1; expanded = true }
+        var countdownModifiers: NSEvent.ModifierFlags = []
+        func activateCountdownEvent(modifiers: NSEvent.ModifierFlags = []) { countdownOpenings += 1; countdownModifiers = modifiers; expanded = true }
     }
 
     static func run(_ suite: TestSuite) {
@@ -167,6 +170,16 @@ enum NotchScreenEdgeClickTests {
         countdown.handleScreenEdgeClick(.leftMouseUp, at: countdownPoint, isNotchWindow: false)
         suite.expect(countdown.countdownOpenings == 1 && countdown.openings == 0,
                      "clicking the top edge over an event countdown opens on its event")
+        let commandCountdown = Service()
+        commandCountdown.compactActivity = .calendar
+        commandCountdown.syncScreenEdgeClicks()
+        let press = NSEvent(.leftMouseDown, point: countdownPoint)
+        let release = NSEvent(.leftMouseUp, point: countdownPoint)
+        release.modifierFlags = .command
+        commandCountdown.handleScreenEdgeEvent(press)
+        commandCountdown.handleScreenEdgeEvent(release)
+        suite.expect(commandCountdown.countdownOpenings == 1 && commandCountdown.countdownModifiers == .command,
+                     "screen-edge countdown click forwards Command from the release event")
         // A capsule floats below the top edge; the menu bar above it still
         // opens it, and the capsule itself takes its own clicks.
         for (depth, opens) in [(CGFloat(0), true), (1.5, true), (2.5, true), (3.5, false)] {

@@ -411,6 +411,11 @@ enum CommandBarCatalog {
                 run: { _ in afterBeat { ColorSamplerService.shared.pick() } }))
         }
         if AppFeature.screenshot.isAvailable {
+            entries.append(CommandBarEntry(
+                id: "action.compose", title: "Compose", subtitle: "Combine images with a title and captions",
+                keywords: "compose images screenshots collage grid", icon: .symbol("square.grid.2x2"),
+                matchTitle: "compose",
+                run: { _ in afterBeat(0.1) { ComposeController.shared.show() } }))
             let compare = ScreenCompareStrings.localized(language)
             entries.append(CommandBarEntry(
                 id: "action.screenCompare", title: compare[.title],

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Vorssaint
 
 import AppKit
+import EventKit
 import Combine
 import IOKit.ps
 import SwiftUI
@@ -1569,6 +1570,20 @@ final class NotchService: ObservableObject {
     func openActivity(_ module: NotchModule) {
         let opensActivity = UserDefaults.standard.object(forKey: DefaultsKey.notchOpensActivity) as? Bool ?? true
         if opensActivity { open(module) } else { open() }
+    }
+
+    /// Both countdown surfaces and the screen-edge click use the displayed occurrence.
+    func activateCountdownEvent(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+        guard NotchCalendarSupport.isEnabled(), EKEventStore.authorizationStatus(for: .event) == .fullAccess,
+              let event = NotchCalendarService.shared.countdown?.event,
+              !event.allDay, event.end > Date(),
+              let url = NotchCalendarSupport.meetingURL(url: event.meetingURL, location: nil, notes: nil) else {
+            openCountdownEvent()
+            return
+        }
+        collapse()
+        if modifiers.contains(.command) { MeetingNoteService.shared.show(event) }
+        else { NSWorkspace.shared.open(url) }
     }
 
     /// Opens the Calendar page scrolled to the countdown's event.
@@ -3168,7 +3183,7 @@ final class NotchService: ObservableObject {
                 // The capsule's button covers its music bars too, which play or pause there.
                 else if self.geometry.floats, self.musicStripShowsControl { self.toggleMusicStripSong() }
                 else if !self.expanded, self.compactActivity == .calendar {
-                    self.openCountdownEvent()
+                    self.activateCountdownEvent()
                 } else { self.toggle() }
             })
         // A move between displays brings the window back on the next turn, once
@@ -3697,11 +3712,12 @@ final class NotchService: ObservableObject {
     private func bringIsland(to id: CGDirectDisplayID) {
         guard running, !suspended, showsOnAllDisplays, id != displayID else { return }
         if expanded || peeking { collapse() }
+        let modifiers = NSEvent.modifierFlags
         windowHost?.whenSettled { [weak self] in
             guard let self, self.running, !self.suspended, self.canFollowPointer,
                   let screen = NSScreen.screens.first(where: { $0.notchDisplayID == id }) else { return }
             self.move(to: screen)
-            if self.compactActivity == .calendar { self.openCountdownEvent() } else { self.open() }
+            if self.compactActivity == .calendar { self.activateCountdownEvent(modifiers: modifiers) } else { self.open() }
         }
     }
 
@@ -3737,10 +3753,11 @@ final class NotchService: ObservableObject {
             return
         }
         handleScreenEdgeClick(event.type, at: CGPoint(x: location.x, y: primary.frame.maxY - location.y),
-                              isNotchWindow: event.window === panel)
+                              isNotchWindow: event.window === panel, modifiers: event.modifierFlags)
     }
 
-    private func handleScreenEdgeClick(_ type: NSEvent.EventType, at point: CGPoint, isNotchWindow: Bool) {
+    private func handleScreenEdgeClick(_ type: NSEvent.EventType, at point: CGPoint, isNotchWindow: Bool,
+                                       modifiers: NSEvent.ModifierFlags = []) {
         guard let area = screenEdgeClickArea else { screenEdgePressArea = nil; return }
         let local = CGPoint(x: point.x - area.minX, y: area.maxY - point.y)
         switch type {
@@ -3761,7 +3778,7 @@ final class NotchService: ObservableObject {
             guard let pressed = pressedArea,
                   NotchSupport.screenEdgeArea(pressed, contains: point) || NotchSupport.screenEdgeArea(area, contains: point),
                   windowHost?.containsDestination(point) == true else { return }
-            if compactActivity == .calendar { openCountdownEvent() } else { open() }
+            if compactActivity == .calendar { activateCountdownEvent(modifiers: modifiers) } else { open() }
         case .leftMouseDragged:
             // A press at the screen's edge reports a drag at once, often without
             // moving. Only a drag that leaves the island cancels the click.

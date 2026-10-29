@@ -11,6 +11,7 @@ import Combine
 enum NotchPresentationRefreshContract {
     typealias DispatchQueue = NotchScreenRefreshContract.DispatchQueue
     enum NSEvent {
+        typealias ModifierFlags = AppKit.NSEvent.ModifierFlags
         static var mouseLocation = CGPoint.zero
         static var monitorRemovals = 0
         static func removeMonitor(_ token: Any) { monitorRemovals += 1 }
@@ -297,7 +298,7 @@ enum NotchPresentationRefreshContract {
         func removeHiddenHoverMonitors() {}
         func toggle() { expanded.toggle() }
         var countdownOpenings = 0
-        func openCountdownEvent() { countdownOpenings += 1; expanded = true }
+        func activateCountdownEvent(modifiers: NSEvent.ModifierFlags = []) { countdownOpenings += 1; expanded = true }
         func collapse() { expanded = false }
         var edgeClicksEnabled = false
         func syncScreenEdgeClicks() { edgeClicksEnabled = true }
