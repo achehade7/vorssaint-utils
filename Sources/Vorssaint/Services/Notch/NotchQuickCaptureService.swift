@@ -199,13 +199,14 @@ final class NotchQuickCaptureService: ObservableObject {
     private func selectMeeting(_ choice: MeetingChoice) {
         guard let draft = draftID else { return }
         selectedMeeting = choice
-        meeting = .init(title: choice.title, start: choice.input.start, note: nil)
+        let title = MeetingNoteStore.suggestedTopic(choice.input)
+        meeting = .init(title: title, start: choice.input.start, note: nil)
         let token = beginOperation(); meetingToken = token
         resolveNote(choice) { [weak self] result in
             guard let self, self.finishOperation(token, draft: draft), self.meetingToken == token else { return }
             self.meetingToken = nil
             switch result {
-            case .success(let file): self.meeting = .init(title: choice.title, start: choice.input.start, note: file)
+            case .success(let file): self.meeting = .init(title: title, start: choice.input.start, note: file)
             case .failure: self.meetingFailed = true; self.error = .meeting
             }
             self.advanceSave()

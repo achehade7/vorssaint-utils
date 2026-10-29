@@ -28,10 +28,9 @@ private actor NotchCalendarReader {
                                       start: start, end: end, allDay: event.isAllDay,
                                       location: event.location ?? "",
                                       notePeople: (event.attendees ?? []).compactMap { person in
-                                          guard person.participantType == .person || person.participantType == .unknown,
-                                                let name = person.name,
-                                                !name.contains("@"), !name.contains(":") else { return nil }
-                                          return MeetingNotePerson(name: name, isCurrentUser: person.isCurrentUser)
+                                          guard person.participantType == .person || person.participantType == .unknown else { return nil }
+                                          return MeetingNotePerson.attendee(name: person.name, url: person.url,
+                                                                            isCurrentUser: person.isCurrentUser)
                                       },
                                       noteEventKey: MeetingNoteKey.google(externalIdentifier: event.calendarItemExternalIdentifier,
                                                                           start: start),

@@ -119,6 +119,36 @@ try expect(try store.prepare(manualInput, topic: "Planning").file == manual, "ma
 let tomorrow = MeetingNoteInput(identity: MeetingNoteKey.google(externalIdentifier: "5kn4208capdumknrj3p8s9dfo0@google.com", start: start.addingTimeInterval(86400)), title: "Anwar / Andreas", start: start.addingTimeInterval(86400), end: start.addingTimeInterval(88200), people: people)
 let tomorrowNote = try store.prepare(tomorrow, topic: topic).file
 try expect(tomorrowNote != renamed && tomorrowNote.lastPathComponent.hasPrefix("2026-10-23"), "recurrence gets a note only for explicitly requested occurrence")
+
+// Missing/email-only attendee display names retain aliases and initials.
+let emailOnly = MeetingNotePerson.attendee(name: nil, url: URL(string: "mailto:zorvyn.reed@example.invalid"), isCurrentUser: false)!
+let emailDisplay = MeetingNotePerson.attendee(name: "tavi.moss@example.invalid", url: URL(string: "mailto:tavi.moss@example.invalid"), isCurrentUser: false)!
+let me = MeetingNotePerson(name: "Anwar Chehade", isCurrentUser: true)
+try expect(emailOnly.name == "zorvyn reed" && emailOnly.initials == "Z.R.", "missing display name derives both name components from mailto")
+let emailInput = MeetingNoteInput(identity: "email-only", title: "O3 - Anwar - Zorvyn", start: start, end: start.addingTimeInterval(1800), people: [me, emailOnly])
+try expect(MeetingNoteStore.suggestedTopic(emailInput) == "O3 - Z.R.", "first-name alias from email is replaced and empty separator collapsed")
+let emailNote = try store.prepare(emailInput, topic: emailInput.title).file
+let emailBody = try String(contentsOf: emailNote, encoding: .utf8)
+try expect(emailNote.lastPathComponent == "2026-10-22 O3 - Z.R..md", "email-only attendee never leaks into filename")
+try expect(emailBody.contains("14:00–14:30, A.C., Z.R.") && !emailBody.localizedCaseInsensitiveContains("zorvyn") && !emailBody.contains("@"), "email-only attendee appears as initials in Purpose and note text")
+let three = MeetingNoteInput(identity: "three-attendees", title: "O3 - Anwar - Zorvyn - Tavi", start: start, end: start.addingTimeInterval(1800), people: [me, emailOnly, emailDisplay])
+try expect(MeetingNoteStore.suggestedTopic(three) == "O3 - Z.R. - T.M.", "three attendees retain both email-only aliases")
+try expect(MeetingNoteStore.purpose(three) == "14:00–14:30, A.C., Z.R., T.M.", "Purpose includes all three attendees as initials")
+try expect(MeetingNoteStore.topic("O3 - Anwar - Andreas", people: people) == "O3 - A.B.", "self between separators leaves no empty segment")
+try expect(MeetingNoteStore.topic("O3 — Anwar – Andreas", people: people) == "O3 — A.B.", "mixed dash separators collapse after self removal")
+try expect(MeetingNoteStore.topic("SAP-531 one-on-one", people: []) == "SAP-531 one-on-one", "ordinary hyphenated words and ticket keys are preserved")
+try expect(MeetingNoteStore.topic("Review Reed", people: [emailOnly]) == "Review Z.R.", "last-name aliases from email are also replaced")
+let blank = MeetingNotePerson.attendee(name: " \n ", url: URL(string: "mailto:first.last%2Bcalendar@example.invalid"), isCurrentUser: true)!
+try expect(blank.name == "first last" && blank.initials == "F.L." && blank.isCurrentUser, "blank names fall back to decoded mailto without plus tags and keep self identity")
+try expect(MeetingNotePerson.attendee(name: "Preferred Name", url: URL(string: "mailto:other.person@example.invalid"), isCurrentUser: false)?.name == "Preferred Name", "usable display names take precedence")
+for address in ["https://example.invalid/first.last", "mailto:12345@example.invalid", "mailto:first.last@", "mailto:@example.invalid"] {
+    try expect(MeetingNotePerson.attendee(name: nil, url: URL(string: address), isCurrentUser: false) == nil, "non-mail and opaque addresses are not guessed as names")
+}
+// Known limit: no Contacts lookup is performed. A lone non-attendee name can
+// survive NLTagger on the supported macOS runtime; do not claim anonymization.
+let outsider = MeetingNoteStore.topic("O3 - Zorvyn", people: [me])
+try expect(outsider == "O3 - Zorvyn", "documents unrecognized non-attendee first-name limit; review suggested topics")
+
 // Map exact Jira properties, not all SAP keys to the same project.
 for name in ["sap-support", "abs"] { try fm.createDirectory(at: root.appendingPathComponent("projects/" + name), withIntermediateDirectories: true) }
 try "---\njira: [SAP-531]\n---\n".write(to: root.appendingPathComponent("projects/sap-support/ticket.md"), atomically: true, encoding: .utf8)

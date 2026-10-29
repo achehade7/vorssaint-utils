@@ -77,6 +77,29 @@ func choice(_ id: String = "meeting", title: String = "Weekly review", start: Da
                                            end: opening.addingTimeInterval(60), people: []))
 }
 
+
+// Meeting context uses the same anonymized topic with and without an existing note.
+for linked in [false, true] {
+    let fixture = try Fixture()
+    let people = [MeetingNotePerson(name: "Anwar Chehade", isCurrentUser: true),
+                  MeetingNotePerson.attendee(name: nil, url: URL(string: "mailto:zorvyn.reed@example.invalid"), isCurrentUser: false)!]
+    let input = MeetingNoteInput(identity: "private-meeting", title: "O3 - Anwar - Zorvyn", start: opening,
+                                 end: opening.addingTimeInterval(1800), people: people)
+    let selection = Capture.MeetingChoice(id: "private-meeting", title: input.title, input: input)
+    let note = fixture.vault.appendingPathComponent("meetings/O3 Z.R..md")
+    var resolve: ((Result<URL?, Error>) -> Void)?
+    let draft = fixture.service(load: { _, done in done(.success([selection])) }, resolve: { _, done in resolve = done })
+    draft.open(); draft.text = "Meeting thought"
+    check(draft.meeting?.title == "O3 - Z.R.", "pending meeting context already uses cleaned title")
+    resolve?(.success(linked ? note : nil))
+    check(draft.meeting?.title == "O3 - Z.R.", "note resolution retains cleaned title")
+    draft.save(); wait { !draft.saving }
+    let body = try fixture.body()
+    let expected = linked ? "Meeting: [O3 - Z.R.](<meetings/O3%20Z.R..md>)" : "Meeting: O3 - Z.R."
+    check(body.contains(expected + " · 2026-10-23T11:19:00+02:00"), "Meeting line preserves link and timestamp format")
+    check(!body.contains("Anwar") && !body.contains("Zorvyn") && !body.contains("@"), "capture metadata contains only initials")
+}
+
 // Original stale-count regression, including both ordinary and repeated shots.
 let seven = try Fixture()
 let draft = seven.service()

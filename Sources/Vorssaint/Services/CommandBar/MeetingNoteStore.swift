@@ -70,7 +70,9 @@ struct MeetingNoteStore {
         }
         value = value.replacingOccurrences(of: ##"[/\\:<>|?*\"#\[\]{}\x00-\x1F\x7F]"##, with: " ", options: .regularExpression)
             .components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
-            .trimmingCharacters(in: CharacterSet(charactersIn: " -·&"))
+            // Removing a name can leave an empty segment: "O3 - - A.B.".
+            .replacingOccurrences(of: #"([–—·&-])(?:\s+[–—·&-])+"#, with: "$1", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: " -–—·&"))
         while value.hasPrefix(".") { value.removeFirst() }
         value = String(value.prefix(80))
         while value.utf8.count > 160 { value.removeLast() }
