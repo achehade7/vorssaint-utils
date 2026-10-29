@@ -3,6 +3,23 @@
 
 struct MeetingNoteStrings {
     let title: String, join: String, ready: String, created: String, failed: String
+    static func startsIn(_ duration: String, _ language: AppLanguage) -> String {
+        switch language {
+        case .enUS, .de: return "in \(duration)"
+        case .ptBR: return "em \(duration)"
+        case .tr: return "\(duration) sonra"
+        case .ru: return "через \(duration)"
+        case .es: return "en \(duration)"
+        case .sk: return "o \(duration)"
+        case .fr: return "dans \(duration)"
+        case .it: return "tra \(duration)"
+        case .ja: return "\(duration)後"
+        case .ko: return "\(duration) 후"
+        case .uk: return "через \(duration)"
+        case .zhHans: return "\(duration)后"
+        case .zhTW, .zhHK: return "\(duration)後"
+        }
+    }
     static func started(_ elapsed: String?, _ language: AppLanguage) -> String {
         switch language {
         case .enUS: return elapsed.map { "Started \($0)" } ?? "Just started"

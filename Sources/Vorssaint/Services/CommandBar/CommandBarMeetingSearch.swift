@@ -89,8 +89,13 @@ final class CommandBarMeetingSearch {
                 let calendar = Calendar.current
                 let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
                                                     to: calendar.startOfDay(for: event.start)).day ?? 0
-                relative = days > 0 ? formatter.localizedString(from: DateComponents(day: days))
-                    : formatter.localizedString(for: event.start, relativeTo: now)
+                if days > 0 {
+                    relative = formatter.localizedString(from: DateComponents(day: days))
+                } else {
+                    let duration = Duration.seconds(ceil(remaining / 60) * 60).formatted(
+                        .units(allowed: [.hours, .minutes], width: .abbreviated).locale(formatter.locale))
+                    relative = MeetingNoteStrings.startsIn(duration, L10n.shared.language)
+                }
             }
             return CommandBarEntry(id: (noteFilter == nil ? "action.meet." : "action.note.upcoming.") + event.id,
                                     title: event.title.isEmpty ? strings.untitled : event.title,

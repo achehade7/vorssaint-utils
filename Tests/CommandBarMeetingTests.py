@@ -221,6 +221,7 @@ precondition(search.rows(noteFilter: "local").first?.id == "action.note.upcoming
 precondition(search.rows().first?.id == "action.meet.empty", "late-join window does not invent missing call URLs")
 for language in AppLanguage.allCases {
     precondition(!MeetingNoteStrings.started(nil, language).isEmpty && MeetingNoteStrings.started("relative-time", language).contains("relative-time"), "all languages preserve the localized relative time")
+    precondition(MeetingNoteStrings.startsIn("duration", language).contains("duration"), "all languages preserve the full hours-and-minutes duration")
 }
 let previousTimeZone = NSTimeZone.default
 NSTimeZone.default = TimeZone(identifier: "Europe/Berlin")!
@@ -234,7 +235,11 @@ for (nowText, startText, prefix) in [
     ("2026-10-24T23:30:00+02:00", "2026-10-26T00:15:00+01:00", "in 2 days"),
     ("2026-10-31T23:00:00+01:00", "2026-11-02T00:15:00+01:00", "in 2 days"),
     ("2026-10-23T23:30:00+02:00", "2026-10-24T00:15:00+02:00", "in 45 min"),
-    ("2026-10-23T12:04:00+02:00", "2026-10-23T14:04:00+02:00", "in 2 hr")
+    ("2026-10-23T12:04:00+02:00", "2026-10-23T14:04:00+02:00", "in 2 hr"),
+    ("2026-10-29T12:49:00+01:00", "2026-10-29T14:30:00+01:00", "in 1 hr, 41 min"),
+    ("2026-10-29T12:49:00+01:00", "2026-10-29T13:49:00+01:00", "in 1 hr ·"),
+    ("2026-10-29T12:48:59+01:00", "2026-10-29T13:49:00+01:00", "in 1 hr, 1 min"),
+    ("2026-10-29T12:49:01+01:00", "2026-10-29T14:49:00+01:00", "in 2 hr ·")
 ] {
     meetingClock = iso.date(from: nowText)!
     let starts = iso.date(from: startText)!
@@ -244,7 +249,7 @@ for (nowText, startText, prefix) in [
     precondition(search.rows()[0].subtitle.hasPrefix(prefix), "meet uses calendar-day distance across midnight and DST while preserving short countdowns: \(nowText) → \(startText)")
     precondition(search.rows(noteFilter: "")[0].subtitle.hasPrefix(prefix), "note uses the same calendar-aware label")
 }
-print("Meeting command: calendar-day labels across midnight/DST, ceiling countdowns, five-minute late join in meet/note, elapsed labels, exact identity, stale actions, cancellation and permission gates passed")
+print("Meeting command: hours-and-minutes labels, calendar-day labels across midnight/DST, ceiling countdowns, five-minute late join in meet/note, elapsed labels, exact identity, stale actions, cancellation and permission gates passed")
 '''
 with tempfile.TemporaryDirectory(prefix="meeting-command-tests-") as temporary:
     folder = Path(temporary)
