@@ -88,12 +88,18 @@ struct NotchQuickCaptureView: View {
             if !draft.images.isEmpty || !draft.extracts.isEmpty { attachments }
             HStack(spacing: 10) {
                 Button { draft.captureRegion() } label: {
-                    Label(text.region, systemImage: "viewfinder")
+                    HStack(spacing: 4) {
+                        Label(text.region, systemImage: "viewfinder")
+                        Text("⌘R").font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
                 }
                 .disabled(!draft.canEdit).help(text.screenshot + " · ⌘R")
                 .accessibilityIdentifier("notch.quickCapture.region")
                 Button { draft.captureText() } label: {
-                    Label(text.captureText, systemImage: "text.viewfinder")
+                    HStack(spacing: 4) {
+                        Label(text.captureText, systemImage: "text.viewfinder")
+                        Text("⌘T").font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
                 }
                 .disabled(!draft.canEdit).help(text.textExtract + " · ⌘T")
                 .accessibilityIdentifier("notch.quickCapture.ocr")

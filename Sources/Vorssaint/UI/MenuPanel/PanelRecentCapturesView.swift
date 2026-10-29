@@ -152,6 +152,18 @@ struct RecentCapturesView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.mini)
+                    if entry.kind == .screenshot {
+                        Button {
+                            history.copyScreenshot(entry)
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .help(FeatureStrings.screenshot(l10n.language).copyButton)
+                        .accessibilityLabel(FeatureStrings.screenshot(l10n.language).copyButton)
+                    }
                     Button {
                         history.remove(entry)
                     } label: {
@@ -186,7 +198,7 @@ struct RecentCapturesView: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .frame(width: 104, height: 68)
+        .frame(width: notchSize == nil ? 104 : 88, height: 68)
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)

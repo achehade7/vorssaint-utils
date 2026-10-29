@@ -958,7 +958,7 @@ final class ScreenshotService: ObservableObject {
     }
 
     @discardableResult
-    private func copyDirect(_ capture: ScreenshotSelectionController.Capture) -> Bool {
+    func copyDirect(_ capture: ScreenshotSelectionController.Capture) -> Bool {
         guard let export = flatten(capture) else { return false }
         guard ScreenshotEditorController.copyImage(
             export, fileNamePrefix: strings.fileNamePrefix) else {

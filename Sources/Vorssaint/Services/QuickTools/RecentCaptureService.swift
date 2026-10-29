@@ -368,6 +368,15 @@ final class RecentCaptureService: ObservableObject {
         }
     }
 
+    func copyScreenshot(_ entry: RecentCaptureEntry) {
+        guard entry.kind == .screenshot, AppFeature.screenshot.isAvailable else { return }
+        screenshot(for: entry) { capture in
+            guard AppFeature.screenshot.isAvailable else { return }
+            guard let capture else { NSSound.beep(); return }
+            ScreenshotService.shared.copyDirect(capture)
+        }
+    }
+
     private func restoreScreenshot(_ entry: RecentCaptureEntry) {
         queue.async { [weak self] in
             guard let self, let capture = self.loadScreenshot(entry) else {
