@@ -20,6 +20,7 @@
 # Maintainers: official releases use the protected release-signing environment.
 # Run this only to get the same permission-preserving behavior for local builds.
 set -euo pipefail
+cd "$(dirname "$0")/.."
 
 IDENTITY="Vorssaint Utils Signing"
 KC="$HOME/Library/Keychains/vorssaint-signing.keychain-db"
@@ -30,11 +31,11 @@ KCPASS="vorssaint-signing"
 identity_can_sign() {
     local probe signed=1
     # Locked after every reboot; a locked keychain cannot sign, and a false
-    # answer here would delete it and reissue the identity.
+    # answer must never replace an existing identity.
     security unlock-keychain -p "$KCPASS" "$KC" 2>/dev/null || true
     probe="$(mktemp)"
     cp /bin/echo "$probe"
-    codesign --force --strip-disallowed-xattrs --sign "$IDENTITY" "$probe" >/dev/null 2>&1 && signed=0
+    ./Tools/codesign-local.sh --force --strip-disallowed-xattrs --sign "$IDENTITY" "$probe" >/dev/null 2>&1 && signed=0
     rm -f "$probe"
     return $signed
 }
@@ -44,8 +45,14 @@ if identity_can_sign; then
     exit 0
 fi
 
+if [[ -e "$KC" ]]; then
+    echo "✗ Existing signing keychain could not sign. Preserved; repair it instead of regenerating the identity." >&2
+    exit 1
+fi
+
+ORIGINAL_KEYCHAINS=("${(@f)$(security list-keychains -d user | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')}")
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+trap 'rm -rf "$WORK"; security list-keychains -d user -s "${ORIGINAL_KEYCHAINS[@]}"' EXIT
 
 openssl req -x509 -newkey rsa:2048 -keyout "$WORK/key.pem" -out "$WORK/cert.pem" -days 3650 -nodes \
     -subj "/CN=$IDENTITY/O=Vorssaint" \
@@ -63,14 +70,12 @@ openssl pkcs12 -export -inkey "$WORK/key.pem" -in "$WORK/cert.pem" \
     exit 1
 }
 
-security delete-keychain "$KC" 2>/dev/null || true
 security create-keychain -p "$KCPASS" "$KC"
 security set-keychain-settings "$KC"            # no auto-lock
 security unlock-keychain -p "$KCPASS" "$KC"
 security import "$WORK/id.p12" -k "$KC" -P "$KCPASS" -T /usr/bin/codesign
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KCPASS" "$KC" >/dev/null 2>&1
-EXISTING=$(security list-keychains -d user | sed 's/"//g' | xargs)
-security list-keychains -d user -s "$KC" ${=EXISTING}
+security list-keychains -d user -s "${ORIGINAL_KEYCHAINS[@]}"
 
 # Import succeeding is not evidence codesign can sign with it: read it back the
 # same way build.sh looks it up, so a broken search list fails here and not as

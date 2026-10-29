@@ -84,7 +84,7 @@ legacy_identity_installed() {
         "$HOME/Library/Keychains/vorssaint-signing.keychain-db" 2>/dev/null || true
     probe="$(mktemp)"
     cp /bin/echo "$probe"
-    /usr/bin/codesign --force --strip-disallowed-xattrs --sign "$LEGACY_IDENTITY" "$probe" \
+    ./Tools/codesign-local.sh --force --strip-disallowed-xattrs --sign "$LEGACY_IDENTITY" "$probe" \
         >/dev/null 2>&1 && signed=0
     rm -f "$probe"
     return $signed
@@ -103,11 +103,8 @@ if (( DEV || INSTALL )) && [[ -z "$(developer_id_identity)" ]] \
     && ! legacy_identity_installed; then
     echo "▸ No signing identity installed; creating the stable local one…"
     if ! ./Tools/setup-signing.sh; then
-        echo "  ⚠ Tools/setup-signing.sh failed; signing ad-hoc instead." >&2
-        echo "    Accessibility and Screen Recording grants will not survive rebuilds:" >&2
-        echo "    System Settings will show them as granted while the app is not trusted." >&2
-        echo "    After fixing the identity, clear the stale grant once with:" >&2
-        echo "      tccutil reset Accessibility $APP_BUNDLE_ID" >&2
+        echo "✗ Stable signing setup failed. Build stopped; existing identity and app preserved." >&2
+        exit 1
     fi
 fi
 
@@ -166,11 +163,11 @@ finalize_installed_bundle_after_child() {
         codesign_with_timestamp_retry --force --strip-disallowed-xattrs --options runtime --timestamp \
             --entitlements "$ENTITLEMENTS" --sign "$devid" "$bundle"
     elif legacy_identity_installed; then
-        [[ -f "$helper" ]] && /usr/bin/codesign --force --strip-disallowed-xattrs \
+        [[ -f "$helper" ]] && ./Tools/codesign-local.sh --force --strip-disallowed-xattrs \
             --identifier "$FAN_HELPER_ID" --sign "$LEGACY_IDENTITY" "$helper"
-        [[ -f "$adapter" ]] && /usr/bin/codesign --force --strip-disallowed-xattrs \
+        [[ -f "$adapter" ]] && ./Tools/codesign-local.sh --force --strip-disallowed-xattrs \
             --identifier "$NOW_PLAYING_ADAPTER_ID" --sign "$LEGACY_IDENTITY" "$adapter"
-        /usr/bin/codesign --force --strip-disallowed-xattrs --sign "$LEGACY_IDENTITY" "$bundle"
+        ./Tools/codesign-local.sh --force --strip-disallowed-xattrs --sign "$LEGACY_IDENTITY" "$bundle"
     else
         [[ -f "$helper" ]] && /usr/bin/codesign --force --strip-disallowed-xattrs \
             --identifier "$FAN_HELPER_ID" --sign - "$helper"
@@ -774,7 +771,7 @@ codesign_app() {
         codesign_with_timestamp_retry --force --strip-disallowed-xattrs --options runtime --timestamp \
             --entitlements "$ENTITLEMENTS" --sign "$DEVID" "$target"
     elif legacy_identity_installed; then
-        codesign --force --strip-disallowed-xattrs --sign "$LEGACY_IDENTITY" "$target"
+        ./Tools/codesign-local.sh --force --strip-disallowed-xattrs --sign "$LEGACY_IDENTITY" "$target"
     else
         codesign --force --strip-disallowed-xattrs --sign - "$target"
     fi
@@ -786,7 +783,7 @@ codesign_fan_helper() {
         codesign_with_timestamp_retry --force --strip-disallowed-xattrs --options runtime --timestamp \
             --identifier "$FAN_HELPER_ID" --sign "$DEVID" "$target"
     elif legacy_identity_installed; then
-        codesign --force --strip-disallowed-xattrs --identifier "$FAN_HELPER_ID" \
+        ./Tools/codesign-local.sh --force --strip-disallowed-xattrs --identifier "$FAN_HELPER_ID" \
             --sign "$LEGACY_IDENTITY" "$target"
     else
         codesign --force --strip-disallowed-xattrs --identifier "$FAN_HELPER_ID" --sign - "$target"
@@ -799,7 +796,7 @@ codesign_now_playing_adapter() {
         codesign_with_timestamp_retry --force --strip-disallowed-xattrs --options runtime --timestamp \
             --identifier "$NOW_PLAYING_ADAPTER_ID" --sign "$DEVID" "$target"
     elif legacy_identity_installed; then
-        codesign --force --strip-disallowed-xattrs --identifier "$NOW_PLAYING_ADAPTER_ID" \
+        ./Tools/codesign-local.sh --force --strip-disallowed-xattrs --identifier "$NOW_PLAYING_ADAPTER_ID" \
             --sign "$LEGACY_IDENTITY" "$target"
     else
         codesign --force --strip-disallowed-xattrs --identifier "$NOW_PLAYING_ADAPTER_ID" --sign - "$target"
