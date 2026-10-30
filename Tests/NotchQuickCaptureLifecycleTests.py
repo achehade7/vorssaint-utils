@@ -356,7 +356,18 @@ overlapDraft.open(); overlapDraft.text = "Choose this meeting"
 check(overlapDraft.needsMeetingChoice && !overlapDraft.canSave, "overlap never guesses context")
 overlapDraft.save(); check(try overlap.body().isEmpty, "unresolved overlap cannot publish")
 overlapDraft.chooseMeeting("b"); check(overlapDraft.meeting?.title == "Weekly review", "explicit overlap choice retained")
+overlapDraft.recordingStartedNow()
+let recordingStart = overlapDraft.meeting?.transcriptStart
+check(recordingStart != nil, "chosen meeting accepts recording start")
 overlapDraft.save(); wait { !overlapDraft.saving }
+overlapDraft.open(); overlapDraft.chooseMeeting("a")
+check(overlapDraft.meeting?.transcriptStart == nil, "different meeting does not inherit recording start")
+overlapDraft.chooseMeeting("b")
+check(overlapDraft.meeting?.transcriptStart == recordingStart, "next capture of same meeting retains recording start")
+overlapDraft.setTranscriptStart(nil)
+overlapDraft.discard(); overlapDraft.open(); overlapDraft.chooseMeeting("b")
+check(overlapDraft.meeting?.transcriptStart == nil, "cleared recording start stays cleared in later captures")
+overlapDraft.discard()
 
 // OCR ordering is acquisition ordering, regardless of recognition completion.
 // A failed/empty result aborts waiting Save and can be retried or removed.

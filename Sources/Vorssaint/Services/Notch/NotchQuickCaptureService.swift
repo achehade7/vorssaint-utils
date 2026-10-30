@@ -48,6 +48,7 @@ final class NotchQuickCaptureService: ObservableObject {
     private var startedAt: Date?
     private var operations = Set<UUID>()
     private var meetingToken: UUID?
+    private var transcriptStarts: [String: Date] = [:]
     private var selectedMeeting: MeetingChoice?
     private var meetingFailed = false
     private var fileSession: Store.Session?
@@ -200,18 +201,30 @@ final class NotchQuickCaptureService: ObservableObject {
         guard let draft = draftID else { return }
         selectedMeeting = choice
         let title = MeetingNoteStore.suggestedTopic(choice.input)
-        meeting = .init(title: title, start: choice.input.start, note: nil)
+        meeting = .init(title: title, start: choice.input.start, note: nil, transcriptStart: transcriptStarts[transcriptKey(choice)])
         let token = beginOperation(); meetingToken = token
         resolveNote(choice) { [weak self] result in
             guard let self, self.finishOperation(token, draft: draft), self.meetingToken == token else { return }
             self.meetingToken = nil
             switch result {
-            case .success(let file): self.meeting = .init(title: title, start: choice.input.start, note: file)
+            case .success(let file): self.meeting = .init(title: title, start: choice.input.start, note: file, transcriptStart: self.meeting?.transcriptStart)
             case .failure: self.meetingFailed = true; self.error = .meeting
             }
             self.advanceSave()
         }
     }
+
+    private func transcriptKey(_ choice: MeetingChoice) -> String {
+        choice.id + "|" + String(choice.input.start.timeIntervalSince1970)
+    }
+
+    func setTranscriptStart(_ date: Date?) {
+        guard canEdit, let choice = selectedMeeting, meeting != nil else { return }
+        transcriptStarts[transcriptKey(choice)] = date
+        meeting?.transcriptStart = date
+    }
+
+    func recordingStartedNow() { setTranscriptStart(now()) }
 
     func hide() {
         cancelTextActions()

@@ -242,6 +242,15 @@ expect(draft.extracts.count == 1 && draft.extracts[0].text == "Column A\n00123\n
 expect(draft.imageCount == 3 && NSPasteboard.general.changeCount == pasteboardBefore,
        "capture OCR adds no image and leaves the clipboard unchanged")
 reopen(); fit("meeting + images + OCR")
+draft.recordingStartedNow()
+expect(draft.meeting?.transcriptStart == clock, "recording button uses current acquisition clock")
+fit("meeting transcript start set")
+draft.hide(); reopen()
+expect(draft.meeting?.transcriptStart == clock, "transcript start survives hide and reopen")
+draft.setTranscriptStart(clock.addingTimeInterval(-30))
+expect(draft.meeting?.transcriptStart == clock.addingTimeInterval(-30), "transcript time can be corrected")
+draft.setTranscriptStart(nil)
+expect(draft.meeting?.transcriptStart == nil, "clearing restores optional unset state")
 if let output = CommandLine.arguments.dropFirst().first(where: { !$0.hasPrefix("--") }),
    let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
     host.cacheDisplay(in: host.bounds, to: bitmap)

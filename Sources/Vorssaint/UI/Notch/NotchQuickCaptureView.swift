@@ -43,6 +43,22 @@ struct NotchQuickCaptureView: View {
             .font(.system(size: 11, weight: .semibold))
             .help(text.title + " · ⌃⌥⌘O")
             meetingContext
+            if let meeting = draft.meeting {
+                HStack(spacing: 6) {
+                    if let start = meeting.transcriptStart {
+                        DatePicker("Transcript start (optional)", selection: Binding(
+                            get: { draft.meeting?.transcriptStart ?? start },
+                            set: { draft.setTranscriptStart($0) }), displayedComponents: [.hourAndMinute])
+                            .datePickerStyle(.field)
+                        Button("Clear") { draft.setTranscriptStart(nil) }
+                    } else {
+                        Button("Recording started now (optional)") { draft.recordingStartedNow() }
+                    }
+                }
+                .font(.system(size: 10)).buttonStyle(.plain)
+                .foregroundStyle(.secondary).disabled(!draft.canEdit)
+                .accessibilityIdentifier("notch.quickCapture.transcriptStart")
+            }
             HStack(spacing: 8) {
                 TextField(text.labelPrompt, text: $draft.label)
                     .textFieldStyle(.plain).disabled(!draft.canEdit)

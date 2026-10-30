@@ -95,6 +95,20 @@ check(body.contains("2026-10-23T11:19:00+02:00"), "capture seconds and local tim
 check(body.contains("2026-10-23T11:19:13+02:00 · meeting +00:10:13"), "first image keeps its own acquisition time")
 check(body.contains("2026-10-23T11:19:03+02:00 · meeting +00:10:03"), "reordered image time is not renumbered")
 check(body.contains("2026-10-23T11:19:17+02:00 · meeting +00:10:17"), "OCR timestamp precedes completion")
+check(!body.contains(" · transcript "), "unset transcript start preserves existing output")
+let transcriptFixture = try Fixture()
+let transcriptImage = transcriptFixture.images.appendingPathComponent("01.png")
+try Data("fixture image".utf8).write(to: transcriptImage)
+for (seconds, expected) in [(13.0, "+00:00:03"), (3.0, "−00:00:07"), (10.0, "+00:00:00")] {
+    let snapshot = Store.Snapshot(id: UUID(), startedAt: began, label: "", text: "",
+        meeting: .init(title: "Meeting", start: began.addingTimeInterval(-600), note: nil,
+                       transcriptStart: began.addingTimeInterval(10)),
+        images: [.init(id: UUID(), capturedAt: began.addingTimeInterval(seconds), file: transcriptImage)], extracts: [])
+    committed(transcriptFixture.store().publish(snapshot))
+    let output = String(decoding: try transcriptFixture.contents(), as: UTF8.self)
+    check(output.contains(" · transcript " + expected + " · " + transcriptImage.path),
+          "signed transcript offset retains screenshot path format")
+}
 check(body.contains("First paragraph\n\nSecond line\nThird line"), "thought paragraphs preserved")
 check(body.contains("````text\ncolumn A\ncolumn B\n```code```\n````"), "OCR line breaks and embedded fences preserved")
 check(body.contains("[Weekly \\[review\\]](<meetings/Meeting%20%5Breview%5D.md>)"), "existing note receives internal relative link")

@@ -34,6 +34,7 @@ struct NotchQuickCaptureStore {
         let title: String
         let start: Date
         let note: URL?
+        var transcriptStart: Date? = nil
     }
 
     struct Image: Sendable {
@@ -168,7 +169,7 @@ struct NotchQuickCaptureStore {
                 try checkScreenshotLocation(image.file)
                 let info = try image.file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
                 guard info.isRegularFile == true, info.isSymbolicLink != true else { throw Failure.unsafeLocation }
-                block += "- " + attachmentTime(image.capturedAt, meeting: snapshot.meeting)
+                block += "- " + attachmentTime(image.capturedAt, meeting: snapshot.meeting) + transcriptOffset(image.capturedAt, start: snapshot.meeting?.transcriptStart)
                     + " · " + image.file.path + "\n"
             }
             block += "\n"
@@ -203,6 +204,15 @@ struct NotchQuickCaptureStore {
         guard offset.isFinite, abs(offset) < Double(Int.max) else { return timestamp(date) }
         let seconds = Int(abs(offset).rounded(.down))
         return timestamp(date) + " · meeting " + (offset < 0 ? "−" : "+")
+            + String(format: "%02d:%02d:%02d", seconds / 3600, (seconds / 60) % 60, seconds % 60)
+    }
+
+    private func transcriptOffset(_ date: Date, start: Date?) -> String {
+        guard let start else { return "" }
+        let offset = date.timeIntervalSince(start)
+        guard offset.isFinite, abs(offset) < Double(Int.max) else { return "" }
+        let seconds = Int(abs(offset).rounded(.down))
+        return " · transcript " + (offset < 0 ? "−" : "+")
             + String(format: "%02d:%02d:%02d", seconds / 3600, (seconds / 60) % 60, seconds % 60)
     }
 
