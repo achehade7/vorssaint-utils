@@ -28,6 +28,7 @@ full_charge = "Sources/Vorssaint/UI/Notch/NotchFullChargeEdge.swift"
 unlock = "Sources/Vorssaint/UI/Notch/NotchUnlockHandoff.swift"
 device = "Sources/Vorssaint/UI/Notch/NotchDeviceFeedback.swift"
 production = "\n".join(declaration(path, marker) for path, markers in [
+    ("Sources/Vorssaint/Services/Notch/NotchLockScreenSupport.swift", ["struct NotchLockScreenMusicRetention"]),
     (view, ["final class NotchLockScreenModel:", "struct NotchLockScreenIsland:",
             "private struct NotchLockScreenEdgePulse:", "private enum NotchLockScreenSurface"]),
     (neon, ["enum NotchNeonPalette", "enum NotchChargingSignal", "struct NotchChargingEdge:"]),
@@ -48,9 +49,6 @@ import SwiftUI
 final class NotchService { static let shared = NotchService(); let nightPalette = 0.0 }
 struct NotchPlayback { let isPlaying = false }
 final class NotchMusicService: ObservableObject { static let shared = NotchMusicService(); let playback: NotchPlayback? = nil }
-enum NotchLockScreenSupport {
-    static func showsMusic(isPlaying: Bool, playedWhileLocked: Bool) -> Bool { isPlaying || playedWhileLocked }
-}
 enum NotchEvent { case accessory, microphone, battery; var duration: TimeInterval { self == .accessory ? 4 : 1.6 } }
 struct NotchNotice: Equatable {
     let event: NotchEvent, title: String, detail: String, symbol: String

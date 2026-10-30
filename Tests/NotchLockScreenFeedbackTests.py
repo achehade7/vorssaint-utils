@@ -37,7 +37,7 @@ methods = "\n".join(declaration(service, marker).replace("private ", "", 1) for 
     "    private func showDeviceFeedback(", "    private func showDisplayArrival(",
     "    private func showLowBattery(", "    private func clearLowBattery()",
     "    private func showFullCharge()", "    private func clearFullCharge()",
-    "    private func clearFeedback()", "    private func powerChanged()", "    private func hide(",
+    "    private func scheduleMusicExpiry()", "    private func clearFeedback()", "    private func powerChanged()", "    private func hide(",
 ])
 swift = r'''
 import AppKit
@@ -54,6 +54,7 @@ BATTERY_SIGNAL
 FULL_CHARGE_SIGNAL
 DISPLAY_SUPPORT
 CHARGE_ARRIVAL
+MUSIC_RETENTION
 struct NotchAccessoryArrival { let symbol: String; let percent: Int? }
 enum NotchSupport {
     static var enabled: Set<NotchEvent> = [.accessory, .microphone, .battery]
@@ -99,7 +100,7 @@ final class NotchLockScreenModel {
     var chargingArrivalID: UUID?, lockRippleID: UUID?, trackShimmerID: UUID?
     var chargingPercent: Int?
     var padlockOpen = false
-    var playedWhileLocked = false
+    var musicRetention = NotchLockScreenMusicRetention()
 }
 struct Reading { let percent: Int; var isOnBattery = true; var isOnExternalPower = false }
 enum SystemInfo { static var reading: Reading?; static func batterySnapshot() -> Reading? { reading } }
@@ -112,7 +113,7 @@ final class LockService {
     var chargeArrival = NotchLockScreenChargeArrival()
     var batteryPercent: Int?
     var batteryExternal: Bool?
-    var fullChargeWork: DispatchWorkItem?
+    var fullChargeWork: DispatchWorkItem?, musicExpiryWork: DispatchWorkItem?
     var unlockHandoffGeneration = 0
     var wasLocked = false, shows = 0
     func show(closingPadlock: Bool) {
@@ -147,6 +148,29 @@ func expect(_ condition: Bool, _ description: String) {
     precondition(condition, description)
 }
 func drain() { RunLoop.main.run(until: Date().addingTimeInterval(0.015)) }
+let musicLock = LockService()
+let expiredPause = Date().addingTimeInterval(-301)
+musicLock.model.musicRetention.observe(isPlaying: true, at: expiredPause)
+musicLock.model.musicRetention.observe(isPlaying: false, at: expiredPause)
+musicLock.scheduleMusicExpiry(); drain()
+expect(!musicLock.model.musicRetention.played, "expiry redraws without another playback event")
+musicLock.model.musicRetention.observe(isPlaying: true, at: Date())
+musicLock.model.musicRetention.observe(isPlaying: false, at: Date())
+musicLock.scheduleMusicExpiry()
+let musicExpiry = musicLock.musicExpiryWork
+let pauseDeadline = musicLock.model.musicRetention.pauseDeadline
+musicLock.hide(unlocking: false, stopsSources: true)
+expect(musicExpiry?.isCancelled == true, "sleep cancels the scene expiry callback")
+expect(musicLock.model.musicRetention.pauseDeadline == pauseDeadline, "sleep preserves the original pause deadline")
+musicLock.space = Space(); musicLock.scene = [Panel()]
+musicLock.scheduleMusicExpiry()
+musicLock.model.musicRetention.observe(isPlaying: true, at: Date())
+musicLock.scheduleMusicExpiry()
+expect(musicLock.musicExpiryWork == nil, "resume cancels pause expiry")
+musicLock.hide(unlocking: false, stopsSources: true)
+expect(musicLock.model.musicRetention.pauseDeadline != nil, "sleep while playing bounds retention while the reader is stopped")
+musicLock.sync(NotchSessionState())
+expect(!musicLock.model.musicRetention.played, "unlock forgets music retention")
 let lock = LockService()
 lock.syncFeedbackSources()
 expect(lock.accessorySubscription != nil && lock.microphoneSubscription != nil, "awake lock starts event subscriptions")
@@ -338,6 +362,7 @@ swift = swift.replace("BATTERY_SIGNAL", declaration(battery, "enum NotchBatteryS
 swift = swift.replace("FULL_CHARGE_SIGNAL", declaration(full_charge, "enum NotchFullChargeSignal"))
 swift = swift.replace("DISPLAY_SUPPORT", display)
 swift = swift.replace("CHARGE_ARRIVAL", declaration(support, "struct NotchLockScreenChargeArrival"))
+swift = swift.replace("MUSIC_RETENTION", declaration(support, "struct NotchLockScreenMusicRetention"))
 swift = swift.replace("LOCK_METHODS", methods)
 swift = swift.replace("MIC_FINISH", declaration(mic, "    private func finish(").replace("private ", "", 1)
                       .replace("UserDefaults.standard", "defaults"))

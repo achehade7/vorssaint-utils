@@ -21,9 +21,8 @@ final class NotchLockScreenModel: ObservableObject {
     }
 
     @Published var gates = Gates()
-    /// Kept for the whole time the Mac stays locked, across the display
-    /// sleeping and waking, and cleared once it unlocks.
-    @Published var playedWhileLocked = false
+    /// Pause age survives display sleep, but not unlocking.
+    @Published var musicRetention = NotchLockScreenMusicRetention()
     @Published var padlockOpen = false
     @Published var unlockHandoffAt: Date?
     @Published var lockRippleID: UUID?
@@ -38,7 +37,7 @@ final class NotchLockScreenModel: ObservableObject {
 
     func showsMusic(_ playback: NotchPlayback?) -> Bool {
         gates.music && playback.map {
-            NotchLockScreenSupport.showsMusic(isPlaying: $0.isPlaying, playedWhileLocked: playedWhileLocked)
+            musicRetention.showsMusic(isPlaying: $0.isPlaying, at: Date())
         } == true
     }
 }
@@ -388,6 +387,9 @@ struct NotchLockScreenPlayer: View {
                 .contentTransition(.symbolEffect(.replace))
                 .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: symbol)
                 .frame(width: 48, height: 44)
+                // WindowServer passes clear pixels through this panel before
+                // SwiftUI sees them. Back the whole target, not just the glyph.
+                .background(.black.opacity(0.01), in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(NotchButtonStyle(cornerRadius: 8))

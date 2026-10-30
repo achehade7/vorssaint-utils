@@ -31,6 +31,7 @@ final class NotchLockScreenService {
     private var island: NotchLockScreenPanel?
     private var space: NotchOverlaySpace?
     private var playbackSubscription: AnyCancellable?
+    private var musicExpiryWork: DispatchWorkItem?
     private var trackSubscription: AnyCancellable?
     private var accessorySubscription: AnyCancellable?
     private var microphoneSubscription: AnyCancellable?
@@ -56,7 +57,7 @@ final class NotchLockScreenService {
     func sync(_ session: NotchSessionState) {
         let locking = session.locked && !wasLocked
         wasLocked = session.locked
-        if !session.locked { model.playedWhileLocked = false }
+        if !session.locked { model.musicRetention = .init() }
         if session.showsLockScreen, NotchLockScreenSupport.isEnabled(), !NotchService.shared.quietMode {
             // Locked at the Mac, the padlock is seen closing; back from a
             // dark display it is simply closed.
@@ -72,7 +73,7 @@ final class NotchLockScreenService {
     /// The island is off: nothing it started keeps running.
     func close() {
         wasLocked = false
-        model.playedWhileLocked = false
+        model.musicRetention = .init()
         hide(unlocking: false, stopsSources: true)
     }
 
@@ -170,8 +171,9 @@ final class NotchLockScreenService {
         playbackSubscription = NotchMusicService.shared.$playback
             .receive(on: DispatchQueue.main)
             .sink { [weak self] playback in
-                guard let self, playback?.isPlaying == true, !self.model.playedWhileLocked else { return }
-                self.model.playedWhileLocked = true
+                guard let self, self.space != nil else { return }
+                self.model.musicRetention.observe(isPlaying: playback?.isPlaying, at: Date())
+                self.scheduleMusicExpiry()
             }
         if gates.music {
             // The music service already excludes its initial snapshot,
@@ -205,6 +207,18 @@ final class NotchLockScreenService {
 
     private var currentDisplayFrames: [CGDirectDisplayID: CGRect] {
         Dictionary(NSScreen.screens.map { ($0.notchDisplayID, $0.frame) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    private func scheduleMusicExpiry() {
+        musicExpiryWork?.cancel()
+        musicExpiryWork = nil
+        guard let deadline = model.musicRetention.pauseDeadline else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.space != nil else { return }
+            self.model.musicRetention.expire(at: Date())
+        }
+        musicExpiryWork = work
+        DispatchQueue.main.asyncAfter(wallDeadline: .now() + max(0, deadline.timeIntervalSinceNow), execute: work)
     }
 
     private var acceptsFeedback: Bool {
@@ -392,11 +406,16 @@ final class NotchLockScreenService {
     }
 
     private func hide(unlocking: Bool, stopsSources: Bool) {
+        musicExpiryWork?.cancel()
+        musicExpiryWork = nil
         if !unlocking {
             unlockHandoffGeneration += 1
             model.unlockHandoffAt = nil
         }
         if stopsSources, !scene.isEmpty {
+            // Playback is unobserved while asleep. Start the grace period now
+            // rather than granting a new five minutes to an old pause on wake.
+            model.musicRetention.observe(isPlaying: false, at: Date())
             NotchMusicService.shared.stop()
             NotchDownloadService.shared.stop()
             NotchCalendarService.shared.stop()

@@ -27,6 +27,32 @@ struct NotchLockScreenChargeArrival {
     }
 }
 
+/// A pause remains resumable briefly, including time spent with the display asleep.
+/// Repeated metadata must not extend that pause; actual playback starts a fresh one.
+struct NotchLockScreenMusicRetention {
+    static let pauseDuration: TimeInterval = 5 * 60
+    private(set) var played = false
+    private(set) var pauseDeadline: Date?
+
+    mutating func observe(isPlaying: Bool?, at now: Date) {
+        guard let isPlaying else { return }
+        if isPlaying {
+            played = true
+            pauseDeadline = nil
+        } else if played, pauseDeadline == nil {
+            pauseDeadline = now.addingTimeInterval(Self.pauseDuration)
+        }
+    }
+
+    func showsMusic(isPlaying: Bool, at now: Date) -> Bool {
+        isPlaying || (played && pauseDeadline.map { now < $0 } == true)
+    }
+
+    mutating func expire(at now: Date) {
+        if let pauseDeadline, now >= pauseDeadline { self = .init() }
+    }
+}
+
 enum NotchLockScreenSupport {
     /// The Space level macOS gives the notifications it shows over the lock
     /// screen, one step above the lock screen's own 300. A window in a Space
@@ -46,12 +72,6 @@ enum NotchLockScreenSupport {
     /// island that rests empty still has music to show when locked.
     static func showsMusic(in defaults: UserDefaults = .standard) -> Bool {
         NotchSupport.modules(in: defaults).contains(.music)
-    }
-
-    /// A paused song stays while the Mac is locked once it has played there,
-    /// so it can be resumed; one paused long before never takes the screen.
-    static func showsMusic(isPlaying: Bool, playedWhileLocked: Bool) -> Bool {
-        isPlaying || playedWhileLocked
     }
 
     /// The timer is suspended while locked, so a countdown that reaches its
