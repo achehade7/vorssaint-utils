@@ -635,7 +635,7 @@ final class NotchQuickCaptureService: ObservableObject {
         case 15: captureRegion()
         case 17: captureText()
         case 1 where modifiers == .command: save()
-        case 13 where modifiers == .command: discard()
+        case 2 where modifiers == .command, 13 where modifiers == .command: discard()
         default: return false
         }
         return true

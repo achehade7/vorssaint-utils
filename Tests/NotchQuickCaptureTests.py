@@ -123,6 +123,7 @@ func key(_ code: UInt16, _ flags: NSEvent.ModifierFlags = [], target: NSWindow? 
     case 15: characters = "r"
     case 17: characters = "t"
     case 1: characters = "s"
+    case 2: characters = "d"
     case 6: characters = "z"
     case 13: characters = "w"
     case 40: characters = "k"
@@ -175,7 +176,7 @@ func openTextPreview() -> (NSWindow, NSTextView) {
 draft.text = "A thought about the capture flow."
 let editor = focusEditor(); editor.undoManager?.removeAllActions()
 var expectedTyping = draft.text
-for (code, letter): (UInt16, String) in [(5, "g"), (15, "r"), (17, "t")] {
+for (code, letter): (UInt16, String) in [(5, "g"), (15, "r"), (17, "t"), (2, "d"), (1, "s")] {
     key(code)
     expectedTyping += letter
     waitUntil("ordinary \(letter) reaches the paragraph: \(editorState())") {
@@ -282,10 +283,11 @@ let foreignEditor = NSTextView(frame: NSRect(x: 0, y: 0, width: 120, height: 90)
 selectorWindow.contentView = foreignEditor
 selectorWindow.makeKeyAndOrderFront(nil); selectorWindow.makeFirstResponder(foreignEditor)
 let savesBeforeForeignKeys = island.signals.count
-key(1, .command, target: selectorWindow); key(13, .command, target: selectorWindow)
+key(1, .command, target: selectorWindow); key(2, .command, target: selectorWindow)
+key(13, .command, target: selectorWindow)
 expect(draft.extracts[0].text == editedExtract && draft.images.map(\.id) == originalImages
        && draft.text == originalThought && island.signals.count == savesBeforeForeignKeys,
-       "Cmd-S and Cmd-W in an unrelated window cannot save or discard the capture")
+       "Cmd-S, Cmd-D and Cmd-W in an unrelated window cannot save or discard the capture")
 expect(!selectorWindow.isVisible, "unrelated-window Cmd-W keeps native Window Close behavior")
 selectorWindow.orderOut(nil)
 reopen()
@@ -341,6 +343,24 @@ expect(draft.text.isEmpty && draft.images.isEmpty && draft.extracts.isEmpty && d
 expect(window.isVisible, "main Cmd-W is consumed before native Window Close")
 let afterMainClose = try String(contentsOf: note, encoding: .utf8)
 expect(afterMainClose == afterPreviewSave, "main-editor Cmd-W does not publish the discarded draft")
+
+// Cmd-D discards all content from either editor, without publishing.
+for fromPreview in [false, true] {
+    reopen(); draft.text = "Discard with Cmd-D"; screenshot()
+    draft.receiveTextImage(image, capturedAt: clock); waitUntil { draft.pendingCount == 0 }; drain()
+    if fromPreview {
+        let (preview, _) = openTextPreview()
+        key(2, .command, target: preview)
+        waitUntil { currentPreviewWindow() == nil }
+    } else {
+        _ = focusEditor()
+        key(2, .command)
+    }
+    expect(draft.text.isEmpty && draft.images.isEmpty && draft.extracts.isEmpty && draft.meeting == nil
+           && !island.showingQuickCapture, "Cmd-D discards the whole draft from either editor")
+    let afterDiscard = try String(contentsOf: note, encoding: .utf8)
+    expect(afterDiscard == afterPreviewSave, "Cmd-D does not publish discarded content")
+}
 
 // The actual shared menu hands selected or complete editor text to Snip without
 // changing capture state, native undo, or the clipboard.

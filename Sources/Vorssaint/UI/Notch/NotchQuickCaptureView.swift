@@ -110,7 +110,7 @@ struct NotchQuickCaptureView: View {
                     .accessibilityIdentifier("notch.quickCapture.undo")
                 Spacer(minLength: 0)
                 Button(text.discard) { draft.discard() }
-                    .disabled(!draft.canDiscard).help(text.discard + " · ⌘W")
+                    .disabled(!draft.canDiscard).help(text.discard + " · ⌘D")
                     .accessibilityIdentifier("notch.quickCapture.discard")
                 Button(draft.error == .uncertain ? text.retry : text.save) { draft.save() }
                     .foregroundStyle(NotchNeonPalette.purple)
@@ -378,6 +378,10 @@ struct NotchQuickCaptureUndoKeys: NSViewRepresentable {
                 let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
                 if event.keyCode == 53 || (modifiers == .command && event.keyCode == 13) {
                     closePreview(); return true
+                }
+                if modifiers == .command && event.keyCode == 2 {
+                    if let draft, draft.canDiscard { draft.discard(); closePreview() }
+                    return true
                 }
                 if modifiers == .command && event.keyCode == 1 {
                     if let draft, draft.canSave { draft.save(); closePreview() }
