@@ -106,6 +106,7 @@ enum DefaultsKey {
     static let switcherShortcut = "switcherShortcut"      // GlobalShortcut storage value
     static let switcherWindowShortcut = "switcherWindowShortcut" // GlobalShortcut storage value
     static let switcherAllWindowsShortcut = "switcherAllWindowsShortcut"
+    static let switcherAeroSpaceWorkspaceOnly = "switcherAeroSpaceWorkspaceOnly"
     static let switcherAllWindowsShortcutEnabled = "switcherAllWindowsShortcutEnabled"
     static let switcherIconRowMode = "switcherIconRowMode"
     static let switcherSimpleMode = "switcherSimpleMode"  // app-only row without window captures
@@ -1283,6 +1284,7 @@ enum Defaults {
         DefaultsKey.switcherWindowShortcut: GlobalShortcut.switcherWindowDefault.storageValue,
         DefaultsKey.switcherAllWindowsShortcut: GlobalShortcut.switcherAllWindowsDefault.storageValue,
         DefaultsKey.switcherAllWindowsShortcutEnabled: false,
+        DefaultsKey.switcherAeroSpaceWorkspaceOnly: false,
         DefaultsKey.switcherIconRowMode: false,
         DefaultsKey.switcherSimpleMode: false,
         DefaultsKey.switcherMergeTabs: false,

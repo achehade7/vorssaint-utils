@@ -493,6 +493,17 @@ enum SwitcherFullscreenScopeTests {
                                                               snapshot: snapshot, windowsOnly: true)
         suite.expect(allWindows.items.compactMap(\.windowID) == (1...40).map(CGWindowID.init),
                      "all windows excludes windowless apps before capping so they cannot displace real windows")
+        let scoped = Enumerator.enumerateSwitcherWindows(groupByApp: false,
+            preservingGroupedWindows: false, snapshot: snapshot, windowsOnly: true,
+            allowedWindowIDs: [39,40])
+        suite.expect(scoped.items.compactMap(\.windowID) == [39,40],
+                     "workspace membership is applied before the visible cap")
+        suite.expect(scoped.sourceItems.allSatisfy { [39,40].contains($0.windowID ?? 0) },
+                     "workspace source candidates cannot include a different workspace")
+        let emptyScope = Enumerator.enumerateSwitcherWindows(groupByApp: false,
+            preservingGroupedWindows: false, snapshot: snapshot, windowsOnly: true, allowedWindowIDs: [])
+        suite.expect(emptyScope.items.isEmpty && emptyScope.sourceItems.isEmpty,
+                     "empty AeroSpace workspace never falls back to global windows")
         suite.expect(allWindows.sourceItems.allSatisfy { !$0.isAppEntry },
                      "an all-windows session resolves its source from real windows too")
     }

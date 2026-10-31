@@ -12,6 +12,7 @@ struct SwitcherSettings: View {
     @ObservedObject private var secureInput = SecureInputMonitor.shared
     @AppStorage(DefaultsKey.switcherEnabled) private var switcherEnabled = true
     @AppStorage(DefaultsKey.switcherShortcut) private var switcherShortcutStorage = GlobalShortcut.switcherDefault.storageValue
+    @AppStorage(DefaultsKey.switcherAeroSpaceWorkspaceOnly) private var aeroSpaceWorkspaceOnly = false
     @AppStorage(DefaultsKey.switcherAllWindowsShortcutEnabled) private var allWindowsShortcutEnabled = false
     @AppStorage(DefaultsKey.switcherTakeOverSystemShortcuts) private var switcherTakeOverSystemShortcuts = false
     @AppStorage(DefaultsKey.switcherIconRowMode) private var switcherIconRowMode = false
@@ -170,6 +171,8 @@ struct SwitcherSettings: View {
                         }
                 }
                 if allWindowsShortcutEnabled {
+                    Toggle("Current AeroSpace workspace only", isOn: $aeroSpaceWorkspaceOnly)
+                        .disabled(!switcherEnabled)
                     ShortcutPreferenceRow(role: .switcherAllWindows,
                                           isEnabled: switcherEnabled) {
                         AppSwitcher.shared.syncWithPreferences()

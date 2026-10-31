@@ -936,6 +936,8 @@ final class AppSwitcher: ObservableObject {
             discardPendingSessionStart(generation: generation)
             return
         }
+        let workspaceOnly = requested.scope == .allWindows
+            && UserDefaults.standard.bool(forKey: DefaultsKey.switcherAeroSpaceWorkspaceOnly)
         let enumerationSnapshot = WindowEnumerator.snapshot()
         let displayScope = currentDisplayScope
         enumerationQueue.async { [weak self] in
@@ -947,12 +949,19 @@ final class AppSwitcher: ObservableObject {
                       )
                   })
             else { return }
+            let workspace: NotchWorkspaceWindows.FocusedSnapshot?
+            do { workspace = workspaceOnly ? try NotchWorkspaceWindows.focusedSnapshot() : nil }
+            catch {
+                DispatchQueue.main.async { [weak self] in self?.discardPendingSessionStart(generation: generation) }
+                return
+            }
             var focusedSourceWindowID: CGWindowID?
             let enumeration = WindowEnumerator.enumerateSwitcherWindows(
                 groupByApp: groupByApp,
                 preservingGroupedWindows: preservesGroupedWindows,
                 snapshot: enumerationSnapshot,
                 windowsOnly: requested.scope == .allWindows,
+                allowedWindowIDs: workspace?.windowIDs,
                 displayScope: displayScope,
                 scopedToFrontmostPID: requested.scope == .frontmostApp ? reportedFrontPID : nil,
                 resolveSource: { items in
@@ -984,6 +993,14 @@ final class AppSwitcher: ObservableObject {
                     pendingGeneration: self.routePendingSessionStart?.generation
                 )
             }) else { return }
+            if let workspace {
+                // Switching workspaces during enumeration invalidates the request.
+                guard let current = try? NotchWorkspaceWindows.focusedSnapshot(),
+                      current.workspace == workspace.workspace, current.windowIDs == workspace.windowIDs else {
+                    DispatchQueue.main.async { [weak self] in self?.discardPendingSessionStart(generation: generation) }
+                    return
+                }
+            }
             let sessionWindows = SwitcherSupport.windowsForSession(
                 enumeration.items, scope: requested.scope, frontmostPID: reportedFrontPID)
             DispatchQueue.main.async { [weak self] in
