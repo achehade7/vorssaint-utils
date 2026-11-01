@@ -4197,6 +4197,12 @@ final class NotchService: ObservableObject {
         observe(distributed, Notification.Name("com.vorssaint.island.queryQuiet")) { [weak self] in
             self?.publishQuietMode()
         }
+        observe(distributed, Notification.Name("com.vorssaint.island.queryKeepAwake")) { [weak self] in
+            self?.publishKeepAwakeState()
+        }
+        observe(distributed, Notification.Name("com.vorssaint.island.openKeepAwake")) { [weak self] in
+            self?.openKeepAwake()
+        }
         let paletteObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.palette"), object: nil, queue: .main) { [weak self] note in
             guard let value = note.userInfo?["night"] as? Double, value.isFinite else { return }
             self?.nightPalette = min(1, max(0, value))
@@ -4341,6 +4347,19 @@ final class NotchService: ObservableObject {
         refreshPresentation(animated: true)
         publishQuietMode(initial: false)
         NotchLockScreenService.shared.sync(session)
+    }
+
+    private func publishKeepAwakeState() {
+        let awake = KeepAwakeManager.shared
+        let command = Process()
+        command.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/sketchybar")
+        command.arguments = ["--trigger", "island_keep_awake", "ACTIVE=\(awake.isActive ? 1 : 0)",
+                             "END=\(awake.endDate?.timeIntervalSince1970 ?? 0)",
+                             "AT=\(Date().timeIntervalSince1970)"]
+        command.standardInput = FileHandle.nullDevice
+        command.standardOutput = FileHandle.nullDevice
+        command.standardError = FileHandle.nullDevice
+        try? command.run()
     }
 
     private func publishQuietMode(initial: Bool = true) {
@@ -4819,6 +4838,12 @@ final class NotchService: ObservableObject {
         // yawns as it lets go.
         KeepAwakeManager.shared.$isActive.removeDuplicates().dropFirst().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.syncMascotKeepAwake() }
+            .store(in: &subscriptions)
+        // SketchyBar reflects the session even when its island activity is off.
+        let awakeStatus = KeepAwakeManager.shared
+        awakeStatus.$isActive.combineLatest(awakeStatus.$endDate).removeDuplicates { $0 == $1 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.publishKeepAwakeState() }
             .store(in: &subscriptions)
         if NotchKeepAwakeSupport.showsActivity() {
             // A session starting or ending, or its end moving, which can
