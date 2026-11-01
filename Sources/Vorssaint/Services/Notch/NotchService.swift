@@ -4355,6 +4355,7 @@ final class NotchService: ObservableObject {
         command.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/sketchybar")
         command.arguments = ["--trigger", "island_keep_awake", "ACTIVE=\(awake.isActive ? 1 : 0)",
                              "END=\(awake.endDate?.timeIntervalSince1970 ?? 0)",
+                             "LID=\(awake.clamshellActive ? 1 : 0)",
                              "AT=\(Date().timeIntervalSince1970)"]
         command.standardInput = FileHandle.nullDevice
         command.standardOutput = FileHandle.nullDevice
@@ -4841,7 +4842,7 @@ final class NotchService: ObservableObject {
             .store(in: &subscriptions)
         // SketchyBar reflects the session even when its island activity is off.
         let awakeStatus = KeepAwakeManager.shared
-        awakeStatus.$isActive.combineLatest(awakeStatus.$endDate).removeDuplicates { $0 == $1 }
+        awakeStatus.$isActive.combineLatest(awakeStatus.$endDate, awakeStatus.$clamshellActive).removeDuplicates { $0 == $1 }
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.publishKeepAwakeState() }
             .store(in: &subscriptions)

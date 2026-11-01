@@ -14,6 +14,7 @@ final class KeepAwakeManager {
  static let shared = KeepAwakeManager()
  var isActive = false
  var endDate: Date?
+ var clamshellActive = false
 }
 final class Process {
  var executableURL: URL?
@@ -28,17 +29,18 @@ final class Publisher {
 let publisher = Publisher()
 let awake = KeepAwakeManager.shared
 for (active, end) in [(false, Optional<Date>.none), (true, Date(timeIntervalSince1970:1800000000)), (true,nil)] {
- awake.isActive = active; awake.endDate = end
+ awake.isActive = active; awake.endDate = end; awake.clamshellActive = active && end == nil
  publisher.publishKeepAwakeState()
  let args = Process.calls.last!
  precondition(args.prefix(2) == ["--trigger", "island_keep_awake"])
  precondition(args[2] == "ACTIVE=\\(active ? 1 : 0)")
  precondition(args[3] == "END=\\(end?.timeIntervalSince1970 ?? 0)")
- let at = Double(args[4].dropFirst(3))!
+ precondition(args[4] == "LID=\\(awake.clamshellActive ? 1 : 0)")
+ let at = Double(args[5].dropFirst(3))!
  precondition(abs(at - Date().timeIntervalSince1970) < 2)
  precondition(awake.isActive == active && awake.endDate == end)
 }
-print("PASS: 15 Keep Awake bridge checks; no real session or process changed")
+print("PASS: 18 Keep Awake bridge checks; no real session or process changed")
 '''
 with tempfile.TemporaryDirectory(prefix='awake-bridge-') as folder:
     root = Path(folder)
