@@ -890,7 +890,8 @@ final class NotchService: ObservableObject {
         let width = stacked ? widths.max() ?? 0
             : widths.reduce(0, +) + CGFloat(max(0, readings.count - 1)) * NotchAgentSupport.stripReadingSpacing
         let textHeight = stacked ? ceil(size * 1.2) * 2 : size * 0.72
-        let reading = width.rounded(.up) + provisional.compactActivityEdgeInset(boxHeight: textHeight, radius: 0)
+        let reading = width.rounded(.up) + provisional.compactActivityEdgeInset(boxHeight: textHeight, radius: 0,
+                gap: NotchAgentSupport.stripReadingEdgeGap)
         // Two working agents keep their usual mark size even when their
         // readings stack; measure the same frames the strip draws.
         let working = Set(AgentUsageService.shared.snapshot.live.map(\.provider)).count
@@ -4203,6 +4204,11 @@ final class NotchService: ObservableObject {
         observe(distributed, Notification.Name("com.vorssaint.island.openKeepAwake")) { [weak self] in
             self?.openKeepAwake()
         }
+        let locationObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.queryWeatherLocation"), object: nil, queue: .main) { note in
+            guard let id = note.userInfo?["request"] as? String, UUID(uuidString: id) != nil else { return }
+            Task { @MainActor in NotchWeatherLocationService.shared.request(id) }
+        }
+        observers.append((distributed, locationObserver))
         let paletteObserver = distributed.addObserver(forName: Notification.Name("com.vorssaint.island.palette"), object: nil, queue: .main) { [weak self] note in
             guard let value = note.userInfo?["night"] as? Double, value.isFinite else { return }
             self?.nightPalette = min(1, max(0, value))

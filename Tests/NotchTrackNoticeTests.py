@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Vorssaint
 
-"""Render both production compact track notices without starting a music player."""
+"""Render compact track and asymmetric microphone notices with isolated services."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -36,26 +36,42 @@ views += "\n" + (repo / "Sources/Vorssaint/UI/Notch/NotchDecorativeClock.swift")
 views += "\n" + declaration((repo / "Sources/Vorssaint/Services/CommandBar/MeetingNoteService.swift").read_text(),
                               "struct MeetingNoteMark: View")
 
+reference = declaration(notice, "struct NotchNoticeView: View").replace(
+    "struct NotchNoticeView:", "struct NotchNoticeReferenceView:", 1).replace(
+    "        .modifier(NotchDeviceNoticeEffect(notice: notice, clearsCamera: true))\n", "")
+views += "\n" + reference
+feedback = (repo / "Sources/Vorssaint/UI/Notch/NotchDeviceFeedback.swift").read_text().replace(
+    "@Environment(\\.accessibilityReduceMotion) private var reduceMotion", "private let reduceMotion = true")
+views = views.replace("@Environment(\\.accessibilityReduceMotion) private var reduceMotion", "private let reduceMotion = true")
+
 swift = r'''
 import AppKit
 import SwiftUI
-enum NotchEvent { case track, agents, timer, accessory, battery }
+enum NotchEvent { case track, agents, timer, accessory, battery, microphone; var duration: TimeInterval { 3 } }
 enum AgentProvider { case codex; var symbol: String { "terminal" }; var tint: Color { .blue } }
 enum NotchMascotReaction: String { case happy }
 struct NotchNoticeWings: Equatable { var leading: CGFloat, trailing: CGFloat }
-struct NotchNotificationContent {
+struct NotchNotificationContent: Equatable {
     var app = 0, compactTitle = "Notification", compactDetail = "Message"
 }
-struct NotchNotice {
+struct NotchNotice: Equatable {
     let event: NotchEvent, title: String, detail: String, symbol: String
     var meetingReminder = false, meetingNote = false
+    var audioHandoff = false
+    var duration: TimeInterval { event.duration }
     var level: Double?, notification: NotchNotificationContent?, agent: AgentProvider?, mascot: NotchMascotReaction?
     var cameraGap: CGFloat { 6 }
     var readsFromEnds: Bool { true }
     var accessibilityText: String { title + ", " + detail }
-    var preferredWings: NotchNoticeWings { NotchNoticeWings(leading: 240, trailing: 240) }
+    var preferredWings: NotchNoticeWings {
+        if event == .microphone {
+            let width = (detail as NSString).size(withAttributes: [.font:NSFont.monospacedDigitSystemFont(ofSize:11,weight:.medium)]).width
+            return .init(leading: 40, trailing: ceil(width) + 22)
+        }
+        return .init(leading: 240, trailing: 240)
+    }
     func wings(in: NotchGeometry) -> NotchNoticeWings { preferredWings }
-    func inset(wing: CGFloat) -> CGFloat { 12 }
+    func inset(wing: CGFloat) -> CGFloat { 16 }
 }
 struct NotchGeometry {
     var stripHeight: CGFloat = 36
@@ -88,12 +104,7 @@ enum NotchAudioLevelSupport {
     static func barIndex(_ index: Int, of count: Int, bands: Int) -> Int { min(bands - 1, index) }
 }
 enum NotchMotion { struct Motion { var duration = 0.1 }; static let steadyWidth = Motion() }
-struct NotchDeviceFeedback { init?(_ notice: NotchNotice) { return nil }; var tint: Color { .green } }
-struct NotchDeviceNoticeEffect: ViewModifier {
-    let notice: NotchNotice
-    var clearsCamera = false
-    func body(content: Content) -> some View { content }
-}
+DEVICE_FEEDBACK
 enum NotchMascotSupport {
     static let noticeSize: CGFloat = 18
     static func isEnabled() -> Bool { false }
@@ -139,10 +150,12 @@ func expect(_ condition: Bool, _ message: String) {
     checks += 1
     if !condition { print("FAIL: " + message); exit(1) }
 }
-@MainActor func pixels(_ notice: NotchNotice, capsule: Bool, height: CGFloat = 36) -> [UInt8] {
+@MainActor func pixels(_ notice: NotchNotice, capsule: Bool, height: CGFloat = 36, reference: Bool = false) -> [UInt8] {
     let geometry = NotchGeometry(stripHeight: height)
     let view = Group {
-        if capsule {
+        if reference {
+            NotchNoticeReferenceView(notice: notice, geometry: geometry)
+        } else if capsule {
             NotchCapsuleNoticeView(notice: notice, geometry: geometry, size: CGSize(width: 580, height: height))
         } else {
             NotchNoticeView(notice: notice, geometry: geometry)
@@ -168,6 +181,14 @@ func expect(_ condition: Bool, _ message: String) {
 }
 MainActor.assumeIsolated {
     _ = NSApplication.shared
+    for height: CGFloat in [24,32,36,48] {
+        for (symbol, detail) in [("mic.fill", "Mic Mute off"), ("mic.slash.fill", "Mic Mute on"),
+                                  ("mic.fill", "Microphone mute disabled")] {
+            let microphone = NotchNotice(event: .microphone, title: "", detail: detail, symbol: symbol)
+            expect(pixels(microphone, capsule: false, height: height) == pixels(microphone, capsule: false, height: height, reference: true),
+                   "microphone effect must preserve the complete asymmetric notice at height \(height): \(detail)")
+        }
+    }
     let first = NotchNotice(event: .track, title: "Artist One", detail: "First Song", symbol: "music.note")
     let second = NotchNotice(event: .track, title: "Entirely Different Artist", detail: "Unrelated Track Name", symbol: "music.note")
     for capsule in [false, true] {
@@ -186,10 +207,12 @@ MainActor.assumeIsolated {
                "ordinary notices must retain visible message text")
     }
 }
-print("PASS: \(checks) track notice render checks")
-'''.replace("PRODUCTION_VIEWS", views)
+print("PASS: \(checks) track and microphone notice render checks")
+'''.replace("PRODUCTION_VIEWS", views).replace("DEVICE_FEEDBACK", feedback)
 
 with tempfile.TemporaryDirectory(prefix="notch-track-notice-") as directory:
     path = Path(directory) / "main.swift"
     path.write_text(swift)
-    subprocess.run(["xcrun", "swift", str(path)], check=True)
+    binary = Path(directory) / "checks"
+    subprocess.run(["swiftc", "-sdk", "/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk", str(path), "-o", str(binary)], check=True)
+    subprocess.run([str(binary)], check=True)

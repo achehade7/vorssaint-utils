@@ -216,6 +216,8 @@ enum NotchAgentSupport {
     static let stripWingRange: ClosedRange<CGFloat> = 44...80
     /// Air between the camera and what sits beside it.
     static let stripCameraGap: CGFloat = 6
+    /// Extra breathing room between the reading and the curved outer edge.
+    static let stripReadingEdgeGap: CGFloat = NotchLayout.compactEdgeGap + 4
     static let stripReadingSpacing: CGFloat = 10
 
     static func stripTextSize(height: CGFloat, readingCount: Int = 1) -> CGFloat {

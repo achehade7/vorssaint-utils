@@ -53,6 +53,9 @@ struct NotchNoticeView: View {
         }
         .foregroundStyle(.white)
         .frame(height: geometry.stripHeight)
+        // Clip the effect before shifting the asymmetric row to the camera;
+        // clipping after the shift cuts off the longer side's final glyphs.
+        .modifier(NotchDeviceNoticeEffect(notice: notice, clearsCamera: true))
         // Each side is as wide as what it shows, so the island reaches
         // further toward the wider one and the camera's gap stays over it.
         .offset(x: (wings.trailing - wings.leading) / 2)
@@ -61,7 +64,6 @@ struct NotchNoticeView: View {
         // Keyed on the notice's own widths, so a display change does not ease it.
         .animation(reduceMotion ? nil : .spring(duration: NotchMotion.steadyWidth.duration, bounce: 0),
                    value: notice.preferredWings)
-        .modifier(NotchDeviceNoticeEffect(notice: notice, clearsCamera: true))
         .transaction { $0.disablesAnimations = false }
         // Another kind of notice is drawn anew at its place, as the island
         // springs to it, rather than easing out of the last one's layout.
