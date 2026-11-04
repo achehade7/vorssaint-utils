@@ -1627,6 +1627,14 @@ enum NotchTests {
             }
         }
         var selection = NotchActivitySelection()
+        selection.select(.agents, available: [.agents, .calendar])
+        suite.expect(selection.current(available: [.agents, .calendar], imminentMeeting: true) == .calendar,
+                     "final meeting minute overrides even a selected agent")
+        suite.expect(selection.current(available: [.agents, .calendar]) == .agents,
+                     "after urgency ends the selected agent returns")
+        suite.expect(selection.current(available: [.agents], imminentMeeting: true) == .agents,
+                     "hidden or disabled calendar cannot take priority")
+        selection.reconcile(available: [])
         selection.select(.music, available: [.agents, .music])
         selection.reconcile(available: [.timer, .agents, .music])
         suite.expect(selection.current(available: [.timer, .agents, .music]) == .music,
@@ -3762,6 +3770,15 @@ enum NotchTests {
                         lead: TimeInterval = hour) -> Date? {
             NotchCalendarSupport.countdownTransition(events, now: now, starts: starts, ends: ends, leadTime: lead)
         }
+        for seconds: Double in [-1, 0, 1, 60, 61] {
+            let imminent = NotchCalendarCountdown(event: event("priority", seconds, seconds + 1800), ongoing: false)
+            suite.expect(imminent.prioritizesStart(at: now) == (seconds > 0 && seconds <= 60),
+                         "meeting priority is restricted to its final minute")
+            suite.expect(!NotchCalendarCountdown(event: imminent.event, ongoing: true).prioritizesStart(at: now),
+                         "ongoing meetings do not displace agents")
+        }
+        suite.expect(transition([event("priority-boundary", 120, 1800)]) == now.addingTimeInterval(60),
+                     "long lead countdown schedules the final-minute priority boundary")
         suite.expect(countdownFor(entries) == NotchCalendarCountdown(event: later, ongoing: false)
                      && countdownFor([allDay, current]) == nil,
                      "the countdown chooses the next timed start, ignoring all-day and ongoing events")
@@ -3779,8 +3796,8 @@ enum NotchTests {
                      && NotchCalendarSupport.tileEvent([event("next week", 8 * 86_400, 8 * 86_400 + 600)], now: now) == nil,
                      "the tile stops at the week read, where its weekday cannot be mistaken for this week's")
         suite.expect(transition([event("future", hour + 600, hour + 900)]) == now.addingTimeInterval(600)
-                     && transition([later]) == later.start,
-                     "a refresh is scheduled when the hour window opens and when an event starts")
+                     && transition([later]) == later.start.addingTimeInterval(-60),
+                     "a refresh is scheduled when the hour window opens and the final minute begins")
         let in45 = event("in 45", 45 * 60, 75 * 60)
         let in90 = event("in 90", 90 * 60, 120 * 60)
         suite.expect(countdownFor([in45], lead: 1800) == nil && countdownFor([in45])?.event == in45
@@ -3791,8 +3808,8 @@ enum NotchTests {
                      "an event 90 minutes away shows only with a two hour lead")
         suite.expect(transition([in45], lead: 1800) == now.addingTimeInterval(15 * 60)
                      && countdownFor([in45], at: 15 * 60, lead: 1800)?.event == in45
-                     && transition([in90], lead: 7200) == in90.start,
-                     "a refresh is scheduled when the chosen lead opens, not the hour")
+                     && transition([in90], lead: 7200) == in90.start.addingTimeInterval(-60),
+                     "refreshes follow the chosen lead and final-minute priority boundary")
         defaults.set(0, forKey: DefaultsKey.notchCalendarCountdownLead)
         let shortest = NotchCalendarSupport.countdownLeadTime(in: defaults)
         defaults.set(10_000, forKey: DefaultsKey.notchCalendarCountdownLead)

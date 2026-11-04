@@ -289,16 +289,17 @@ final class ScreenshotQuickPreviewController {
         onClose()
     }
 
-    private func showActions() {
+    @discardableResult
+    func showActions() -> Bool {
         guard !closed, !showingActions, !model.sharing, !systemSharing,
               !model.deletingShare, !browsingHistory,
-              AppFeature.screenshot.isAvailable else { return }
+              AppFeature.screenshot.isAvailable else { return false }
         let window: NSWindow?
         if shownInNotch {
-            guard NotchService.shared.isCaptureVisible(id: presentationID) else { return }
+            guard NotchService.shared.isCaptureVisible(id: presentationID) else { return false }
             window = NotchService.shared.presentationWindow
         } else { window = panel }
-        guard let window, window.isVisible, window.attachedSheet == nil else { return }
+        guard let window, window.isVisible, window.attachedSheet == nil else { return false }
         dismissWork?.cancel(); dismissWork = nil
         showingActions = true
         SharedToolActions.present(content: .image(capture.image), title: strings.pageTitle,
@@ -308,6 +309,7 @@ final class ScreenshotQuickPreviewController {
             self.showingActions = false
             self.scheduleAutoDismiss()
         }
+        return true
     }
 
     private func perform(_ requested: Action) {

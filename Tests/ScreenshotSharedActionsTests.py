@@ -69,7 +69,7 @@ final class Controller {
     func scheduleAutoDismiss() { scheduled += 1 }
 '''
 fixture += "".join(declaration(source, prefix).replace("private func", "func", 1) for prefix in [
-    "    func close()", "    private func showActions()", "    private func perform(_ requested:"])
+    "    func close()", "    func showActions()", "    private func perform(_ requested:"])
 fixture += "}\nenum ExternalAnnotation {\n" + r'''
 final class CGImage {
     let width: Int; let height: Int
@@ -127,7 +127,7 @@ for gate in 0..<8 {
     default: controller.shownInNotch = true; NotchService.shared.visible = false
     }
     let count = SharedToolActions.requests.count
-    controller.showActions()
+    expect(!controller.showActions(), "unavailable preview declines global routing")
     expect(SharedToolActions.requests.count == count && !controller.showingActions,
            "source availability and interaction guard \(gate) prevents handoff")
     AppFeature.enabled = true; NotchService.shared.visible = true

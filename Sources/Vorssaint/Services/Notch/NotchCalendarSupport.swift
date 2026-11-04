@@ -39,6 +39,10 @@ struct NotchCalendarCountdown: Equatable, Sendable {
 
     var target: Date { ongoing ? event.end : event.start }
 
+    func prioritizesStart(at now: Date) -> Bool {
+        !ongoing && event.start > now && event.start.timeIntervalSince(now) <= 60
+    }
+
     /// A start shows within `leadTime` before it; an end, during the hour
     /// before it and only once its event has begun.
     func isShown(at now: Date, leadTime: TimeInterval) -> Bool {
@@ -326,7 +330,8 @@ enum NotchCalendarSupport {
             .flatMap { event in
                 followedMoments(event, starts: starts, ends: ends, chosen: chosen).flatMap { ongoing in
                     ongoing ? [max(event.start, event.end.addingTimeInterval(-timeLeftLeadTime)), event.end]
-                        : [event.start.addingTimeInterval(-leadTime), event.start]
+                        : [event.start.addingTimeInterval(-leadTime),
+                           event.start.addingTimeInterval(-min(60, leadTime)), event.start]
                 }
             }
             .filter { $0 > now }.min()

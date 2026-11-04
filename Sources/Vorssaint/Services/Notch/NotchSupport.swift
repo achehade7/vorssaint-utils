@@ -935,7 +935,8 @@ struct NotchActivitySelection {
         return companion
     }
 
-    func current(available: [NotchCompactActivity]) -> NotchCompactActivity? {
+    func current(available: [NotchCompactActivity], imminentMeeting: Bool = false) -> NotchCompactActivity? {
+        if imminentMeeting, available.contains(.calendar) { return .calendar }
         if let preferred, available.contains(preferred) { return preferred }
         return available.first
     }

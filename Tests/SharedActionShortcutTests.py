@@ -100,6 +100,14 @@ final class SharedSelectionActionsService {
     var sourcePIDs: [pid_t] = []
     func trigger(expectedSourcePID: pid_t) { triggers += 1; sourcePIDs.append(expectedSourcePID) }
 }
+final class ScreenshotService {
+    static let shared = ScreenshotService()
+    var visible = false
+    var openings = 0
+    func showPreviewActions() -> Bool {
+        if visible { openings += 1; return true }; return false
+    }
+}
 final class Handler {
     var state = SharedActionKeyState()
     var tap: CFMachPort?
@@ -261,6 +269,16 @@ Task { @MainActor in
            "actual callback opens global selection action once when own regular window is background")
     expect(SharedSelectionActionsService.shared.sourcePIDs == [helper.processIdentifier],
            "global action captures the exact temporary source PID at keydown")
+    ScreenshotService.shared.visible = true
+    handler.state.reset()
+    let screenshotEvent = CGEvent(keyboardEventSource: nil, virtualKey: 50, keyDown: true)!
+    screenshotEvent.flags = .maskAlternate
+    _ = handler.handle(type: .keyDown, event: screenshotEvent)
+    await settle()
+    expect(ScreenshotService.shared.openings == 1 && SharedSelectionActionsService.shared.triggers == 1,
+           "visible unfocused screenshot receives Actions without reading external text")
+    ScreenshotService.shared.visible = false
+    handler.state.reset()
     panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(panelText)
     await until("nonactivating panel becomes key", { panel.isKeyWindow })
     expect(NSWorkspace.shared.frontmostApplication?.processIdentifier == helper.processIdentifier,

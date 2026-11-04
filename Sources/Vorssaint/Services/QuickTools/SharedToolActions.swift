@@ -215,6 +215,7 @@ private final class SharedToolActionMenu: NSObject, NSWindowDelegate {
         previousResponder = parent?.firstResponder
         super.init()
         panel.isReleasedWhenClosed = false
+        panel.allowsToolTipsWhenApplicationIsInactive = true
         panel.delegate = self
         panel.level = parent?.level ?? .floating
         panel.appearance = parent?.effectiveAppearance

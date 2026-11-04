@@ -7,6 +7,10 @@ import Foundation
 /// playback reader. Its last reply deliberately survives stop, so cached music
 /// cannot make the assertions pass merely because a test double cleared it.
 enum NotchMusicVisibilityTests {
+    final class NotchCalendarService {
+        static let shared = NotchCalendarService()
+        var countdown: NotchCalendarCountdown?
+    }
     enum ReviewDefaults { static var current: UserDefaults! }
     final class NotchMusicService {
         static var shared = NotchMusicService()

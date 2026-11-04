@@ -35,6 +35,8 @@ final class ScreenshotService: ObservableObject {
     private let clipboardHotkey = QuickToolHotkey(id: 24)
     private var session: ScreenshotSelectionController?
     private var preview: ScreenshotQuickPreviewController?
+
+    func showPreviewActions() -> Bool { preview?.showActions() ?? false }
     private var editors: [ScreenshotEditorController] = []
     private var countdown: DispatchWorkItem?
     private var countdownRemaining = 0

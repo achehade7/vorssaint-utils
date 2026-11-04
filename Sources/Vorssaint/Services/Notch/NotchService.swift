@@ -593,7 +593,8 @@ final class NotchService: ObservableObject {
 
     var compactActivity: NotchCompactActivity? {
         // A new song waiting for its notice is not drawn yet.
-        activitySelection.current(available: awaitsTrackNotice ? compactActivities.filter { $0 != .music } : compactActivities)
+        activitySelection.current(available: awaitsTrackNotice ? compactActivities.filter { $0 != .music } : compactActivities,
+            imminentMeeting: NotchCalendarService.shared.countdown?.prioritizesStart(at: Date()) ?? false)
     }
 
     var compactActivities: [NotchCompactActivity] {
@@ -4832,7 +4833,8 @@ final class NotchService: ObservableObject {
                 }.store(in: &subscriptions)
         }
         if modules.contains(.calendar) {
-            NotchCalendarService.shared.$countdown.removeDuplicates()
+            // A refresh at the final-minute boundary changes priority even when the event is identical.
+            NotchCalendarService.shared.$countdown
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
                     self?.syncMascotCalendar()

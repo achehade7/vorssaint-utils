@@ -97,6 +97,7 @@ final class SharedActionHotkeyService {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.generation == requestGeneration, self.available,
                       let sourcePID else { return }
+                if ScreenshotService.shared.showPreviewActions() { return }
                 SharedSelectionActionsService.shared.trigger(expectedSourcePID: sourcePID)
             }
             return nil

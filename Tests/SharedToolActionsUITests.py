@@ -278,6 +278,7 @@ func capture(_ window: NSWindow, _ path: String) {
     try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: path))
 }
 func verifyMenuLayout(_ window: NSWindow) {
+    check(window.allowsToolTipsWhenApplicationIsInactive, "nonactivating Actions allows tooltips while source app remains active")
     let content = window.contentView!
     content.layoutSubtreeIfNeeded()
     let actions = actionButtons(window)
