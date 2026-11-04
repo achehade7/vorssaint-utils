@@ -1570,6 +1570,9 @@ def main():
           + "func removeHoverExitMonitors() {}\n"
           + declaration(notch, "    func showScratchpad(")
               .replace("NotchSupport.routesScratchpad()", "NotchSupport.routesScratchpad(in: ReviewDefaults.current)")
+          + declaration(notch, "    func showPageFromShortcut(")
+              .replace("NotchSupport.isEnabled()", "NotchSupport.isEnabled(in: ReviewDefaults.current)")
+              .replace("NotchSupport.modules()", "NotchSupport.modules(in: ReviewDefaults.current)")
           + declaration(notch, "    func showClipboard(")
               .replace("NotchSupport.routesClipboardWindow()", "NotchSupport.routesClipboardWindow(in: ReviewDefaults.current)")
           + declaration(notch, "    func openQuickPanel(")
@@ -1598,6 +1601,7 @@ def main():
           + declaration(notch, "    func openQuickCapture()")
           + declaration(notch, "    func toggleFromShortcut()") + toggle[0]
           + declaration(notch, "    private func syncShortcut()").replace("private func", "func", 1)
+              .replace("NotchSupport.modules()", "NotchSupport.modules(in: ReviewDefaults.current)")
               .replace("NotchSupport.holdsShortcut()", "NotchSupport.holdsShortcut(in: ReviewDefaults.current)")
               .replace("NotchSupport.isEnabled()", "NotchSupport.isEnabled(in: ReviewDefaults.current)")
               .replace("UserDefaults.standard", "ReviewDefaults.current!")

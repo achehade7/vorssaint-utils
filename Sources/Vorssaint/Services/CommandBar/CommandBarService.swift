@@ -1753,6 +1753,13 @@ final class CommandBarService: ObservableObject {
 
     private func searchRows(for trimmed: String) -> [CommandBarEntry] {
         let bar = FeatureStrings.commandBar(L10n.shared.language)
+        if activeCategory == nil, let key = InvestigationNoteLookup.key(in: trimmed) {
+            scriptRunner.cancelPending()
+            fileSearch.cancelPending()
+            meetingSearch.reset()
+            ticketSearch.reset()
+            return noteSearch.rows(for: .investigation(key))
+        }
         if activeCategory == nil, let note = CommandBarNoteSearch.query(trimmed) {
             scriptRunner.cancelPending()
             fileSearch.cancelPending()

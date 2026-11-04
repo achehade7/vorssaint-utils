@@ -19,7 +19,8 @@ enum NotchNeonPalette {
     static func workspace(_ name: String?) -> Color {
         switch name {
         case "1": blue
-        case "G": amber
+        case "C": Color(red: 1, green: 0.56, blue: 0.32)
+        case "G": Color(red: 0.40, green: 0.65, blue: 1)
         case "P": Color(red: 0.95, green: 0.42, blue: 0.73)
         default: purple
         }
@@ -260,11 +261,14 @@ struct NotchNeonEdge: View, Animatable {
         let phase = reduceMotion ? 0.5 : age.map { min(1, $0 / (completion != nil ? 1.35 : 0.7)) }
             ?? workspace.map { min(1, $0 / 0.65) } ?? 0.5
         let peak = max(0.01, min(0.99, phase))
-        let ripple = completion != nil || (workspace != nil && workspaceName == "P")
+        let splitWorkspace = workspace != nil && (workspaceName == "C" || workspaceName == "G")
+        let ripple = completion != nil || splitWorkspace || (workspace != nil && workspaceName == "P")
             || (age != nil && signature == .handoff)
         let sweeps = (workspace != nil && workspaceName != "2")
             || (age != nil && [.agent, .terminalSuccess, .terminalFailure].contains(signature))
-        let rippleRadius = max(0.02, phase * 0.48)
+        // Claude expands from the center; Ghostty converges from both edges.
+        let ripplePhase = splitWorkspace && workspaceName == "G" ? 1 - phase : phase
+        let rippleRadius = max(0.02, ripplePhase * 0.48)
         let rippleWidth = min(0.08, rippleRadius * 0.6)
         let rippleBaseOpacity = completion != nil ? 0.65 : 0.1
         let stops: [Gradient.Stop] = ripple ? [
@@ -305,11 +309,6 @@ struct NotchNeonEdge: View, Animatable {
             if reduceMotion { return 0.75 }
             // Each switch gets one short signature, then the timeline stops.
             if workspaceName == "2" { return max(0, sin(min(1, t / 1.1) * .pi)) }
-            if workspaceName == "G" {
-                if t < 0.12 { return 0.45 }
-                if t < 0.28 { return 0.95 }
-                if t < 0.40 { return 0.30 }
-            }
             return min(1, max(0, (1.1 - t) / 0.35))
         }
         let light = LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)

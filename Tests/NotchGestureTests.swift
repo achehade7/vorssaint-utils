@@ -195,6 +195,17 @@ enum NotchGestureTests {
                && NotchGestureSupport.movement(-1, precise: false, inverted: false) == 24,
                "gesture direction is consistent across natural scrolling and wheel devices")
 
+        let contentOrigin = NotchSupport.gestureIsOverHeader(expanded: true, peeking: false,
+            fromTop: 90, safeTop: 14, height: 30)
+        let headerOrigin = NotchSupport.gestureIsOverHeader(expanded: true, peeking: false,
+            fromTop: 25, safeTop: 14, height: 30)
+        suite.expect(feed(10, 0, began: true, vertical: false, horizontal: false, expanded: true, home: contentOrigin) == nil
+                     && feed(80, 0, vertical: false, horizontal: false, expanded: true, home: headerOrigin) == nil
+                     && !gesture.consumesBackSwipe,
+                     "scrolling back through content cannot become Home after entering the header")
+        suite.expect(feed(10, 0, began: true, vertical: false, horizontal: false, expanded: true, home: headerOrigin) == nil
+                     && feed(30, 0, vertical: false, horizontal: false, expanded: true, home: contentOrigin) == .back,
+                     "a header-origin swipe remains navigation if the pointer enters content")
         suite.expect(feed(10, 1, began: true, vertical: false, horizontal: false, expanded: true, home: true) == nil
                      && gesture.consumesBackSwipe
                      && feed(30, 0, vertical: false, horizontal: false, expanded: true, home: true) == .back,

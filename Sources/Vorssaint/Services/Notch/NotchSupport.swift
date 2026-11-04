@@ -38,10 +38,10 @@ enum NotchModule: String, CaseIterable, Identifiable {
     var shortcutKey: String {
         switch self {
         case .controls: return "c"
-        case .mixer: return "v"
+        case .mixer: return "s"
         case .music: return "m"
-        case .clipboard: return "b"
-        case .captures: return "s"
+        case .clipboard: return "v"
+        case .captures: return "h"
         case .files: return "f"
         case .system: return "i"
         case .tools: return "t"

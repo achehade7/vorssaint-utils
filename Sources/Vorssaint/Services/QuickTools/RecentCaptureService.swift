@@ -32,7 +32,9 @@ final class RecentCaptureService: ObservableObject {
 
     private init() {
         thumbnailCache.countLimit = ScreenshotSupport.recentCaptureLimit
-        hotkey.onPress = { [weak self] in self?.showHistoryWindow() }
+        hotkey.onPress = { [weak self] in
+            if !NotchService.shared.showPageFromShortcut(.captures) { self?.showHistoryWindow() }
+        }
         reload()
     }
 

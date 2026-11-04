@@ -149,6 +149,8 @@ enum NotchDestinationContract {
         func endCaptureControls() {}
         let hotkey = Hotkey()
         let quickCaptureHotkey = Hotkey()
+        let notificationsHotkey = Hotkey()
+        var captureContent: AnyObject?
         var shortcutFailureWrites = 0
         var shortcutRegistrationFailed = false { didSet { shortcutFailureWrites += 1 } }
         var captureControlsExpansions = 0
@@ -203,13 +205,19 @@ enum NotchDestinationContract {
         capture.openQuickCapture()
         suite.expect(!capture.showingQuickCapture, "capture hotkey cannot cover an active region selection")
         NotchQuickCaptureService.shared.isSelecting = false
+        defaults.set(true, forKey: DefaultsKey.notchNotificationsShortcutEnabled)
         defaults.set(true, forKey: DefaultsKey.notchQuickCaptureShortcutEnabled)
         capture.syncShortcut()
         suite.expect(capture.quickCaptureHotkey.requests.last == true, "capture hotkey registers while island runs")
+        suite.expect(capture.notificationsHotkey.requests.last == true, "notifications hotkey registers with its available island page")
         ShortcutCapture.isCapturing = true
         capture.syncShortcut()
         suite.expect(capture.quickCaptureHotkey.requests.last == false, "capture hotkey yields to shortcut recording")
+        suite.expect(capture.notificationsHotkey.requests.last == false, "notifications shortcut yields to shortcut recording")
         ShortcutCapture.isCapturing = false
+        defaults.set(false, forKey: DefaultsKey.notchNotificationsShortcutEnabled)
+        capture.syncShortcut()
+        suite.expect(capture.notificationsHotkey.requests.last == false, "notifications shortcut can be disabled independently")
         scratchpadContracts(defaults: defaults, suite: suite)
         reopeningContracts(defaults: defaults, suite: suite)
         countdownContracts(defaults: defaults, suite: suite)

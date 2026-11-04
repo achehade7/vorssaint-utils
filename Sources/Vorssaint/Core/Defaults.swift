@@ -921,6 +921,8 @@ enum DefaultsKey {
     static let notchOpenOnHover = "notchOpenOnHover"
     static let notchShortcutEnabled = "notchShortcutEnabled"
     static let notchShortcut = "notchShortcut"
+    static let notchNotificationsShortcutEnabled = "notchNotificationsShortcutEnabled"
+    static let notchNotificationsShortcut = "notchNotificationsShortcut"
     static let notchQuickCaptureShortcutEnabled = "notchQuickCaptureShortcutEnabled"
     static let notchQuickCaptureShortcut = "notchQuickCaptureShortcut"
     static let notchHideInFullscreen = "notchHideInFullscreen"
@@ -1531,6 +1533,8 @@ enum Defaults {
         DefaultsKey.notchOpenOnHover: false,
         DefaultsKey.notchShortcutEnabled: false,
         DefaultsKey.notchShortcut: GlobalShortcut.notchDefault.storageValue,
+        DefaultsKey.notchNotificationsShortcutEnabled: false,
+        DefaultsKey.notchNotificationsShortcut: GlobalShortcut.notificationsDefault.storageValue,
         DefaultsKey.notchQuickCaptureShortcutEnabled: true,
         DefaultsKey.notchQuickCaptureShortcut: GlobalShortcut.quickCaptureDefault.storageValue,
         DefaultsKey.notchHideInFullscreen: false,

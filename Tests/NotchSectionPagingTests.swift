@@ -168,8 +168,9 @@ enum NotchSectionPagingTests {
 
     private static func homeRouting(_ suite: TestSuite) {
         func swipe(_ service: Service, x: CGFloat = 45, y: CGFloat = 0,
-                   phase: AppKit.NSEvent.Phase = .began, momentum: AppKit.NSEvent.Phase = []) -> NSEvent {
-            var event = NSEvent(locationInWindow: CGPoint(x: 100, y: 80))
+                   phase: AppKit.NSEvent.Phase = .began, momentum: AppKit.NSEvent.Phase = [], header: Bool = true) -> NSEvent {
+            let top = service.expandedGeometry.headerTopInset + service.expandedGeometry.headerRowHeight / 2
+            var event = NSEvent(locationInWindow: CGPoint(x: 100, y: header ? service.panel!.frame.height - top : 80))
             event.scrollingDeltaX = x
             event.scrollingDeltaY = y
             event.phase = phase
@@ -180,14 +181,24 @@ enum NotchSectionPagingTests {
         service.showingSections = false
         suite.expect(service.handleScroll(swipe(service)) && service.showingSections
                      && service.homeOpenings == 1 && service.gestureCalls == 0,
-                     "the production route returns Home before Music or page handlers can consume the swipe")
+                     "a header-origin swipe returns Home before page handlers")
         suite.expect(service.handleScroll(swipe(service, phase: .changed))
                      && service.handleScroll(swipe(service, x: 0, phase: .ended))
                      && service.handleScroll(swipe(service, y: -100, phase: [], momentum: .began))
                      && service.homeOpenings == 1 && service.movedRows == 0,
                      "the swipe tail and its momentum never toggle Home back or scroll the new gallery")
-        suite.expect(service.handleScroll(swipe(service, x: 0, y: -24)) && service.movedRows == 1,
+        suite.expect(service.handleScroll(swipe(service, x: 0, y: -24, header: false)) && service.movedRows == 1,
                      "a new vertical gesture scrolls Home normally after navigation")
+        for direction: CGFloat in [-45, 45] {
+            let content = Service()
+            content.showingSections = false
+            suite.expect(!content.handleScroll(swipe(content, x: direction, header: false))
+                         && content.homeOpenings == 0 && !content.backGesture.consumesBackSwipe,
+                         "content scrolling in either direction passes through instead of opening Home")
+            suite.expect(!content.handleScroll(swipe(content, x: 80, phase: .changed))
+                         && content.homeOpenings == 0 && !content.backGesture.consumesBackSwipe,
+                         "a content-origin gesture cannot become Home after moving into the header")
+        }
         let capture = Service()
         capture.showingSections = false
         capture.showingQuickCapture = true

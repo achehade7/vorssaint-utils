@@ -93,6 +93,49 @@ try fm.removeItem(at: history[0].file)
 try fm.createSymbolicLink(at: history[0].file, withDestinationURL: outside)
 rows[0].run(nil)
 expect(NSWorkspace.shared.opened.count == 1, "activation rechecks confinement")
+
+expect(InvestigationNoteLookup.key(in: "o sap-123") == "SAP-123", "case-insensitive investigation command")
+expect(InvestigationNoteLookup.key(in: "O AB2-0") == "AB2-0", "contract permits digits in project and numeric key")
+for invalid in ["o", "obsidian SAP-123", "o SAP-123 extra", "o SAP_1-123", "o SAP-123x", "o -1"] {
+    expect(InvestigationNoteLookup.key(in: invalid) == nil, "strict whole-key syntax; bare o remains app alias")
+}
+try write("projects/alpha/investigations/Unrelated title & # café.md", "---\ntype: 'investigation'\njira: [sap-123, 'SAP-456'] # tickets\n---\nSAP-999 must not match this body")
+try write("projects/beta/investigations/SAP-999 Wrong filename.md", "\u{FEFF}---\r\ntype: investigation\r\njira:\r\n  - SAP-123\r\n  - \"SAP-789\"\r\n---\r\nBody")
+try write("projects/alpha/investigations/SAP-123 reference.md", "---\ntype: reference\njira: [SAP-123]\n---\n")
+try write("projects/alpha/investigations/SAP-123 no ticket.md", "---\ntype: investigation\njira: []\n---\nSAP-123")
+try write("projects/alpha/investigations/nested/hidden.md", "---\ntype: investigation\njira: [SAP-123]\n---\n")
+try write("templates/projects/alpha/investigations/template.md", "---\ntype: investigation\njira: [SAP-123]\n---\n")
+try write("meetings/SAP-123.md", "---\ntype: investigation\njira: [SAP-123]\n---\n")
+let exact = root.appendingPathComponent("projects/alpha/investigations/Unrelated title & # café.md")
+try fm.createSymbolicLink(at: root.appendingPathComponent("projects/alpha/investigations/linked.md"), withDestinationURL: exact)
+try fm.createSymbolicLink(at: root.appendingPathComponent("projects/linked-project"), withDestinationURL: root.appendingPathComponent("projects/alpha"))
+try fm.createDirectory(at: root.appendingPathComponent("projects/linked-folder"), withIntermediateDirectories: true)
+try fm.createSymbolicLink(at: root.appendingPathComponent("projects/linked-folder/investigations"), withDestinationURL: exact.deletingLastPathComponent())
+let matching = try CommandBarNoteSearch.read(vault: root, request: .investigation("SAP-123"))
+expect(matching.count == 2, "only scoped investigation frontmatter matches; links and nested folders excluded")
+try expect(try CommandBarNoteSearch.read(vault: root, request: .investigation("SAP-999")).isEmpty, "filenames and body text never match")
+try expect(try CommandBarNoteSearch.read(vault: root, request: .investigation("SAP-12")).isEmpty, "keys match exactly")
+expect(!InvestigationNoteLookup.matches(["description: |", "  type: investigation", "jira: [SAP-123]"], key: "SAP-123"), "nested scalar text cannot impersonate type")
+expect(!InvestigationNoteLookup.matches(["type: investigation", "jira: SAP-123"], key: "SAP-123"), "jira must be a list")
+expect(!InvestigationNoteLookup.matches(["type: investigation", "jira: [SAP-123]", "jira: []"], key: "SAP-123"), "ambiguous duplicate properties rejected")
+let beforeOpen = NSWorkspace.shared.opened.count
+_ = search.rows(for: .investigation("SAP-123")); wait()
+let choices = search.rows(for: .investigation("SAP-123"))
+expect(choices.count == 2 && NSWorkspace.shared.opened.count == beforeOpen, "duplicates show choices without opening anything")
+choices.first { $0.title.contains("café") }!.run(nil)
+let link = URLComponents(url: NSWorkspace.shared.opened.last!, resolvingAgainstBaseURL: false)!
+expect(link.host == "open" && link.queryItems?.first { $0.name == "vault" }?.value == "vault", "registered vault name is used")
+expect(link.queryItems?.first { $0.name == "file" }?.value == "projects/alpha/investigations/Unrelated title & # café", "relative path round-trips punctuation and Unicode without md")
+_ = search.rows(for: .investigation("SAP-789")); wait()
+expect(search.rows(for: .investigation("SAP-789")).count == 1, "secondary keys open the same investigation")
+_ = search.rows(for: .investigation("SAP-000")); wait()
+expect(search.rows(for: .investigation("SAP-000"))[0].title == "No investigation for SAP-000"
+       && search.rows(for: .investigation("SAP-000"))[0].keepsBarOpen, "no-match feedback is explicit and inert")
+try fm.removeItem(at: exact)
+try fm.createSymbolicLink(at: exact, withDestinationURL: outside)
+let beforeUnsafe = NSWorkspace.shared.opened.count
+choices.first { $0.title.contains("café") }!.run(nil)
+expect(NSWorkspace.shared.opened.count == beforeUnsafe, "activation refuses a file replaced by a symlink")
 print("PASS: \(checks) note search checks")
 '''
 with tempfile.TemporaryDirectory(prefix="command-note-tests-") as directory:
@@ -101,6 +144,6 @@ with tempfile.TemporaryDirectory(prefix="command-note-tests-") as directory:
     main.write_text(fixture)
     binary = folder / "test"
     sources = ["Core/MeetingNotePerson.swift", "Services/CommandBar/MeetingNoteStore.swift",
-               "Services/CommandBar/CommandBarNoteSearch.swift"]
+               "Services/CommandBar/CommandBarNoteSearch.swift", "Services/CommandBar/InvestigationNoteLookup.swift"]
     subprocess.run(["swiftc", *(str(repo / "Sources/Vorssaint" / p) for p in sources), str(main), "-o", str(binary)], check=True)
     subprocess.run([str(binary), str(folder / "vault")], check=True)

@@ -36,7 +36,11 @@ enum NotchAeroSpaceTests {
                      && !state.receive(Data("{\"_event\":\"focused-window-changed\",\"workspace\":\"2\"}".utf8), now: 30),
                      "malformed and unrelated events do not change the workspace")
         suite.expect(state.receive(event("Q"), now: 30) && !state.showsStrip(hovered: false, blocked: false, now: 30),
-                     "workspaces outside the selected four do not produce a flash")
+                     "workspaces outside the configured set do not produce a flash")
+        suite.expect(NotchAeroSpaceState.workspaces.contains("C")
+                     && state.receive(event("C"), now: 40)
+                     && state.showsStrip(hovered: false, blocked: false, now: 40.1),
+                     "Claude workspace is selectable and receives the normal workspace flash")
         suite.expect(SettingsBackupSupport.exportKeys().contains(DefaultsKey.notchAeroSpaceEnabled),
                      "the integration toggle is included in settings backups")
         processContracts(suite)
@@ -101,7 +105,7 @@ enum NotchAeroSpaceTests {
                          "confirmed switching publishes the new selection and starts its flash")
             service.select("unlisted")
             suite.expect((try? String(contentsOf: folder.appendingPathComponent("selected"), encoding: .utf8)) == "2",
-                         "only the four configured workspace buttons can send commands")
+                         "only the configured workspace buttons can send commands")
             service.select("G")
             service.togglePrevious()
             suite.expect((try? String(contentsOf: folder.appendingPathComponent("commands"), encoding: .utf8)) == "2\n",
@@ -131,7 +135,7 @@ enum NotchAeroSpaceTests {
                          "the previous-workspace gesture returns from an external workspace")
             service.togglePrevious()
             suite.expect(wait { service.state.current == "Q" && service.state.previous == "2" },
-                         "the gesture can return to a confirmed workspace outside the visible four buttons")
+                         "the gesture can return to a confirmed workspace outside the visible buttons")
             try Data().write(to: holdSwitch)
             service.select("1")
             suite.expect(wait { service.state.current == "1" }, "the disconnect fixture holds a confirmed workspace command")

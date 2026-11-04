@@ -133,6 +133,7 @@ final class NotchService: ObservableObject {
     @Published private(set) var shortcutRegistrationFailed = false
     private let hotkey = QuickToolHotkey(id: 81)
     private let quickCaptureHotkey = QuickToolHotkey(id: 82)
+    private let notificationsHotkey = QuickToolHotkey(id: 83)
     @Published private(set) var peeking = false
     @Published private(set) var dragPlaceholder = false
     @Published private(set) var choosingFileDropDestination = false
@@ -478,6 +479,7 @@ final class NotchService: ObservableObject {
 
     private init() {
         hotkey.onPress = { [weak self] in self?.toggleFromShortcut() }
+        notificationsHotkey.onPress = { [weak self] in self?.showPageFromShortcut(.notifications) }
         quickCaptureHotkey.onPress = { [weak self] in self?.openQuickCapture() }
     }
 
@@ -627,7 +629,8 @@ final class NotchService: ObservableObject {
         inside ? NotchAeroSpaceState.workspaces : NotchAeroSpaceService.shared.state.current.map { [$0] } ?? []
     }
     var aeroSpaceWings: NotchNoticeWings {
-        geometry.noticeWings(NotchNoticeWings(leading: inside ? 148 : 52, trailing: inside ? 40 : 12))
+        geometry.noticeWings(NotchNoticeWings(leading: inside ? max(148, CGFloat(NotchAeroSpaceState.workspaces.count) * 30 + 12) : 52,
+                                               trailing: inside ? 40 : 12))
     }
     private var aeroSpaceSize: CGSize {
         CGSize(width: aeroSpaceWings.leading + aeroSpaceWings.trailing + (geometry.floats ? 0 : geometry.noticeCameraGap),
@@ -1395,6 +1398,11 @@ final class NotchService: ObservableObject {
             && UserDefaults.standard.bool(forKey: DefaultsKey.notchQuickCaptureShortcutEnabled),
             shortcut: GlobalShortcut.saved(for: DefaultsKey.notchQuickCaptureShortcut, fallback: .quickCaptureDefault),
             storageKey: DefaultsKey.notchQuickCaptureShortcut)
+        _ = notificationsHotkey.sync(enabled: NotchSupport.isEnabled() && !ShortcutCapture.isCapturing
+            && NotchSupport.modules().contains(.notifications)
+            && UserDefaults.standard.bool(forKey: DefaultsKey.notchNotificationsShortcutEnabled),
+            shortcut: GlobalShortcut.saved(for: DefaultsKey.notchNotificationsShortcut, fallback: .notificationsDefault),
+            storageKey: DefaultsKey.notchNotificationsShortcut)
     }
 
     private func refreshModules() {
@@ -1413,6 +1421,7 @@ final class NotchService: ObservableObject {
         preferenceSyncWork?.cancel(); preferenceSyncWork = nil
         hotkey.unregister()
         quickCaptureHotkey.unregister()
+        notificationsHotkey.unregister()
         NotchQuickCaptureService.shared.stop()
         if shortcutRegistrationFailed { shortcutRegistrationFailed = false }
         NotchLyricsService.shared.stop()
@@ -1805,6 +1814,18 @@ final class NotchService: ObservableObject {
         guard acceptsUserInteraction, NotchSupport.routesClipboardWindow() else { return false }
         if toggle, expanded, selected == .clipboard, !showingAppPanel, !showingSections, !showingCommandBar { collapse() }
         else { open(.clipboard) }
+        return true
+    }
+
+    /// Global page shortcuts use the island when the requested page is available.
+    @discardableResult
+    func showPageFromShortcut(_ module: NotchModule) -> Bool {
+        guard acceptsUserInteraction, NotchSupport.isEnabled(),
+              NotchSupport.modules().contains(module) else { return false }
+        if expanded, selected == module, !showingAppPanel, !showingSections,
+           !showingCommandBar, !showingQuickCapture, captureControls == nil, captureContent == nil {
+            collapse()
+        } else { open(module) }
         return true
     }
 
@@ -4554,8 +4575,8 @@ final class NotchService: ObservableObject {
         return handleBackScroll(event) || handleRewindScroll(event) || handleSectionScroll(event) || handleGesture(event)
     }
 
-    /// A rightward two-finger swipe steps back one level. This runs
-    /// before page scrolling and music gestures, including over native lists.
+    /// Only a swipe beginning in the header steps back. Content keeps its
+    /// horizontal scrolling, even if the pointer later moves into the header.
     private func handleBackScroll(_ event: NSEvent) -> Bool {
         guard running, !suspended, expanded, NotchGestureSupport.isEnabled(), let panel,
               !trackingMenu, captureControls == nil, !heldDrag,
@@ -4564,6 +4585,13 @@ final class NotchService: ObservableObject {
             backGesture = NotchGestureSupport()
             return false
         }
+        let screenPoint = panel.convertPoint(toScreen: event.locationInWindow)
+        let page = expandedGeometry
+        let row = page.headerRowHeight > 0
+        let inHeader = NotchSupport.gestureIsOverHeader(expanded: true, peeking: false,
+            fromTop: panel.frame.maxY - screenPoint.y,
+            safeTop: row ? page.headerTopInset : 0,
+            height: row ? page.headerRowHeight : page.pageTopInset)
         let x = NotchGestureSupport.movement(Double(event.scrollingDeltaX), precise: event.hasPreciseScrollingDeltas,
                                              inverted: event.isDirectionInvertedFromDevice)
         let y = NotchGestureSupport.movement(Double(event.scrollingDeltaY), precise: event.hasPreciseScrollingDeltas,
@@ -4573,7 +4601,7 @@ final class NotchService: ObservableObject {
                                         ended: !event.phase.intersection([.ended, .cancelled]).isEmpty,
                                         momentum: !event.momentumPhase.isEmpty,
                                         precise: event.hasPreciseScrollingDeltas, hasPhase: !event.phase.isEmpty,
-                                        allowVertical: false, allowHorizontal: false, expanded: true, backOnRight: true)
+                                        allowVertical: false, allowHorizontal: false, expanded: true, backOnRight: inHeader)
         if action == .back { swipeBack() }
         return backGesture.consumesBackSwipe
     }

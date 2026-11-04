@@ -789,7 +789,9 @@ struct SoundOutputSwitcherControls: View {
                     outputSwitcher.syncWithPreferences()
                 }
 
-            Text(l10n.s.soundOutputSwitcherCaption)
+            Text(NotchSupport.isEnabled() && NotchSupport.modules().contains(.mixer)
+                 ? "The shortcut opens the island mixer. Choose an output there."
+                 : l10n.s.soundOutputSwitcherCaption)
                 .font(.system(size: 9.5))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

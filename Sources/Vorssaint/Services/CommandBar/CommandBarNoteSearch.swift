@@ -6,7 +6,7 @@ import AppKit
 /// Reads local Markdown only on an explicit note or ticket query. Results and
 /// file contents are never persisted, and a superseded read cannot update the bar.
 final class CommandBarNoteSearch {
-    enum Request: Equatable { case previous(String), ticket(String) }
+    enum Request: Equatable { case previous(String), ticket(String), investigation(String) }
     struct Note {
         let file: URL
         let title: String
@@ -69,6 +69,12 @@ final class CommandBarNoteSearch {
             // A ticket always keeps its Jira result; absence of local matches
             // needs no extra row beside it.
             if case .ticket = requested { return [] }
+            if case .investigation(let key) = requested {
+                return [CommandBarEntry(id: "action.investigation.empty", title: failed
+                    ? "Could not read investigations" : "No investigation for " + key,
+                    subtitle: "Obsidian · investigations", icon: .symbol("doc.text"),
+                    countsUsage: false, keepsBarOpen: true, run: { _ in })]
+            }
             return [CommandBarEntry(id: "action.note.history.empty",
                                     title: failed ? MeetingNoteStrings.readFailure(L10n.shared.language)
                                         : FeatureStrings.commandBar(L10n.shared.language).noResultsTitle,
@@ -79,6 +85,11 @@ final class CommandBarNoteSearch {
             CommandBarEntry(id: "action.note.file." + note.file.path, title: note.title,
                             subtitle: ["Obsidian", note.date, note.relativePath].filter { !$0.isEmpty }.joined(separator: " · "),
                             icon: .symbol("doc.text"), countsUsage: false, run: { _ in
+                if case .investigation(let key) = requested {
+                    guard let url = InvestigationNoteLookup.openURL(file: note.file, vault: self.vault, key: key) else { return }
+                    NSWorkspace.shared.open(url)
+                    return
+                }
                 // Recheck confinement in case a file was replaced by a symlink
                 // between search and activation.
                 guard note.file.resolvingSymlinksInPath().path.hasPrefix(self.vault.resolvingSymlinksInPath().path + "/"),
@@ -90,11 +101,18 @@ final class CommandBarNoteSearch {
     }
 
     static func read(vault: URL, request: Request) throws -> [Note] {
+        if case .investigation(let key) = request {
+            return try InvestigationNoteLookup.read(vault: vault, key: key).map { file in
+                Note(file: file, title: file.deletingPathExtension().lastPathComponent, date: "",
+                     relativePath: String(file.path.dropFirst(vault.standardizedFileURL.path.count + 1)), titleMatch: false)
+            }
+        }
         let root = vault.resolvingSymlinksInPath()
         let folder: URL
         switch request {
         case .previous: folder = root.appendingPathComponent("meetings")
         case .ticket: folder = root
+        case .investigation: return []
         }
         guard folder.resolvingSymlinksInPath().path == root.path
                 || folder.resolvingSymlinksInPath().path.hasPrefix(root.path + "/") else { throw CocoaError(.fileReadNoPermission) }

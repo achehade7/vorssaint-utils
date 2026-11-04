@@ -2377,6 +2377,10 @@ enum NotchTests {
         defaults.set(true, forKey: AppFeature.scratchpad.availabilityKey)
         defaults.set("mixer,commandBar", forKey: DefaultsKey.notchHiddenControls)
         defaults.set("", forKey: DefaultsKey.notchControlOrder)
+        suite.expect(NotchModule.clipboard.shortcutKey == "v"
+                   && NotchModule.captures.shortcutKey == "h"
+                   && NotchModule.mixer.shortcutKey == "s",
+                     "clipboard, capture history and sound use V/H/S in the island")
         let allModules = NotchModule.allCases
         suite.expect(Set(allModules.map(\.shortcutKey)).count == allModules.count,
                "every section has a unique direct shortcut, including destinations after the ninth")
