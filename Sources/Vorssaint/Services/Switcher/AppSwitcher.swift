@@ -1181,7 +1181,7 @@ final class AppSwitcher: ObservableObject {
             let workspace: NotchWorkspaceWindows.FocusedSnapshot?
             do { workspace = workspaceOnly ? try NotchWorkspaceWindows.focusedSnapshot() : nil }
             catch {
-                DispatchQueue.main.async { [weak self] in self?.discardPendingSessionStart(generation: generation) }
+                DispatchQueue.main.async { [weak self] in self?.discardPendingSessionStart(generation: generation, reason: "workspace_query_failed") }
                 return
             }
             var focusedSourceWindowID: CGWindowID?
@@ -1221,7 +1221,7 @@ final class AppSwitcher: ObservableObject {
                 // Switching workspaces during enumeration invalidates the request.
                 guard let current = try? NotchWorkspaceWindows.focusedSnapshot(),
                       current.workspace == workspace.workspace, current.windowIDs == workspace.windowIDs else {
-                    DispatchQueue.main.async { [weak self] in self?.discardPendingSessionStart(generation: generation) }
+                    DispatchQueue.main.async { [weak self] in self?.discardPendingSessionStart(generation: generation, reason: "workspace_changed") }
                     return
                 }
             }
