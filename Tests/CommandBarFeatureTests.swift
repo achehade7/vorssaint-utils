@@ -760,7 +760,7 @@ enum CommandBarFeatureTests {
                            before: { ScriptRunHost.runScript(earlier) })
             suite.expect(runs(earlier) == 1 && runs(later) == 1 && ScriptRunHost.copied == ["abc123"]
                          && bar.hidden == 1,
-                   "Return on another script while one runs copies the last one picked, found \(ScriptRunHost.copied) and \(bar.hidden)")
+                   "Return on another script while one runs copies the last one picked, found \(ScriptRunHost.copied), \(bar.hidden) hides, and \(runs(earlier))/\(runs(later)) runs")
             // Then Return on a row the field names, which waits for its own
             // answer row: the script still running must not close the bar.
             let named = script("co", printing: "co-out")

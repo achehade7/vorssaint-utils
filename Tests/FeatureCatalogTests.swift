@@ -1736,9 +1736,9 @@ enum FeatureCatalogTests {
                                                   boolFor: { $0 == DefaultsKey.monitorAlertDisk }),
                "an alert with its metric off in the hub stays disarmed")
 
-        suite.expect(GlobalShortcutRole.notchNotifications.defaultShortcut == GlobalShortcut(keyCode: 45, modifiers: [.control, .option, .command])
+        suite.expect(GlobalShortcutRole.notchNotifications.defaultShortcut == GlobalShortcut(keyCode: 45, modifiers: [.control, .option, .shift, .command])
                      && GlobalShortcutRole.notchNotifications.feature == .notchNotifications,
-                     "notifications exposes the global N shortcut in shortcut settings")
+                     "notifications exposes its distinct global default in shortcut settings")
         suite.expect(!GlobalShortcutRole.activeRoles(isOn: { $0 != DefaultsKey.notchNotificationsShortcutEnabled }).contains(.notchNotifications),
                      "notifications shortcut stays inactive when disabled")
         suite.expect(GlobalShortcutRole.activeRoles(isOn: { _ in true }).count

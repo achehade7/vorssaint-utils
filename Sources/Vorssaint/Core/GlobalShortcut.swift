@@ -227,9 +227,11 @@ struct GlobalShortcut: Equatable, Hashable {
     // Space for the wheel, on the same free control-option-command layer.
     static let radialMenuDefault = GlobalShortcut(keyCode: Int64(kVK_Space),
                                                   modifiers: [.control, .option, .command])
-    // N for notes, on the same free control-option-command layer.
+    // Keep the optional notification default distinct from Scratchpad. Personal
+    // settings may assign N when Scratchpad's shortcut is disabled.
     static let notificationsDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_N),
-                                                       modifiers: [.control, .option, .command])
+                                                       modifiers: [.control, .option, .shift, .command])
+    // N for notes, on the same free control-option-command layer.
     static let scratchpadDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_N),
                                                   modifiers: [.control, .option, .command])
     // I for island, on the same free control-option-command layer.

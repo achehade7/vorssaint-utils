@@ -1125,10 +1125,10 @@ enum ScreenshotFeatureTests {
             encoding: .utf8)) ?? ""
         suite.expect(recentCaptureServiceSource.contains("QuickToolHotkey(id: 21)")
                 && recentCaptureServiceSource.contains(
-                    "hotkey.onPress = { [weak self] in self?.showHistoryWindow() }")
+                    "if !NotchService.shared.showPageFromShortcut(.captures) { self?.showHistoryWindow() }")
                 && featureRuntimeSource.components(separatedBy:
                     "RecentCaptureService.shared.syncWithPreferences()").count == 3,
-               "the history shortcut opens its window and follows both capture producers")
+               "the history shortcut prefers the island with a window fallback and follows both capture producers")
         let recentCapturePaletteCode = recentCaptureServiceSource
             .split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
