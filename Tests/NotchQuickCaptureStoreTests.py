@@ -110,6 +110,14 @@ for (seconds, expected) in [(13.0, "+00:00:03"), (3.0, "−00:00:07"), (10.0, "+
           "signed transcript offset retains screenshot path format")
 }
 check(body.contains("First paragraph\n\nSecond line\nThird line"), "thought paragraphs preserved")
+check(Store.inert("a\n```dataviewjs\nx\n```") == "a\n```text\nx\n```", "dataviewjs fence becomes text")
+check(Store.inert("  ~~~~ DataView\n> ```tasks\n- ```dataviewjs\n1. > ```Dataview") == "  ~~~~ text\n> ```text\n- ```text\n1. > ```text",
+      "executable fences in indentation, quotes and lists become text")
+check(Store.inert("```abap\nREPORT z.\n```\n**bold** and - list") == "```abap\nREPORT z.\n```\n**bold** and - list", "other Markdown unchanged")
+let executableFixture = try Fixture()
+committed(executableFixture.store().publish(executableFixture.snapshot("Pasted\n\n```dataviewjs\nglobalThis.ran = true\n```")))
+let executableBody = String(decoding: try executableFixture.contents(), as: UTF8.self)
+check(executableBody.contains("```text\nglobalThis.ran = true\n```") && !executableBody.contains("dataviewjs"), "a pasted dataviewjs block is written as text")
 check(body.contains("````text\ncolumn A\ncolumn B\n```code```\n````"), "OCR line breaks and embedded fences preserved")
 check(body.contains("[Weekly \\[review\\]](<meetings/Meeting%20%5Breview%5D.md>)"), "existing note receives internal relative link")
 check(try files.contentsOfDirectory(atPath: content.images.path).sorted() == ["01.png", "02.png"], "OCR creates no image or sidecar")

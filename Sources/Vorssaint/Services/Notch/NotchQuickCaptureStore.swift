@@ -141,7 +141,7 @@ struct NotchQuickCaptureStore {
     }
 
     private func markdown(_ snapshot: Snapshot) throws -> String {
-        let thought = Self.multiline(snapshot.text)
+        let thought = Self.inert(Self.multiline(snapshot.text))
         guard !thought.isEmpty || !snapshot.images.isEmpty || !snapshot.extracts.isEmpty else { throw Failure.empty }
         let label = Self.singleLine(snapshot.label)
         var block = "## " + timestamp(snapshot.startedAt) + (label.isEmpty ? "" : " · " + label) + "\n\n"
@@ -187,6 +187,24 @@ struct NotchQuickCaptureStore {
             }
         }
         return block
+    }
+
+    /// Captured text is data. Obsidian plugins run some fenced blocks as code when the vault renders Captures.md
+    /// (Dataview's dataviewjs and dataview, Tasks queries), so such a fence becomes a plain text fence; every other
+    /// line, including ordinary code fences, stays as written. Same rule as the vault's capture model (inert()).
+    static func inert(_ text: String) -> String {
+        guard let pattern = try? NSRegularExpression(
+            pattern: #"^([ \t]*(?:(?:>|[-*+][ \t]|\d{1,9}[.)][ \t])[ \t]*)*)(`{3,}|~{3,})([ \t]*)([^\s`]+)"#,
+            options: [.anchorsMatchLines]) else { return text }
+        let executable: Set<String> = ["dataviewjs", "dataview", "tasks"]
+        var result = text
+        let whole = NSRange(result.startIndex..., in: result)
+        for match in pattern.matches(in: result, range: whole).reversed() {
+            guard let language = Range(match.range(at: 4), in: result),
+                  executable.contains(result[language].lowercased()) else { continue }
+            result.replaceSubrange(language, with: "text")
+        }
+        return result
     }
 
     static func multiline(_ text: String) -> String {
