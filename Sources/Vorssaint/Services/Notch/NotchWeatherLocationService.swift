@@ -4,6 +4,7 @@
 import AppKit
 import CoreLocation
 import MapKit
+import os.log
 
 /// A bounded, city-level lookup for the local SketchyBar weather helper.
 /// Coordinates remain in memory here; only a requested reply is published.
@@ -14,6 +15,8 @@ final class NotchWeatherLocationService: NSObject, @preconcurrency CLLocationMan
     private let manager = CLLocationManager()
     private var requests: [String] = []
     private var timeout: DispatchWorkItem?
+    private var retry: DispatchWorkItem?
+    private let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "vorssaint", category: "weather-location")
     private var generation = 0
     private var cached: (at: Date, values: [String: Any])?
 
@@ -59,6 +62,23 @@ final class NotchWeatherLocationService: NSObject, @preconcurrency CLLocationMan
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         guard !requests.isEmpty else { return }
+        let failure = error as NSError
+        log.error("Location lookup failed: domain=\(failure.domain, privacy: .public) code=\(failure.code)")
+        if failure.domain == kCLErrorDomain,
+           failure.code == CLError.locationUnknown.rawValue || failure.code == CLError.network.rawValue {
+            // Startup location/network readiness can lag the bar. Keep the
+            // original deadline, and allow only one delayed retry at a time.
+            guard retry == nil else { return }
+            let current = generation
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.generation == current, !self.requests.isEmpty else { return }
+                self.retry = nil
+                self.updateAuthorization()
+            }
+            retry = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
+            return
+        }
         finish(["status": "unavailable", "description": "Could not determine current location"])
     }
 
@@ -99,6 +119,7 @@ final class NotchWeatherLocationService: NSObject, @preconcurrency CLLocationMan
 
     private func finish(_ values: [String: Any]) {
         timeout?.cancel(); timeout = nil
+        retry?.cancel(); retry = nil
         manager.stopUpdatingLocation()
         generation += 1
         let pending = requests

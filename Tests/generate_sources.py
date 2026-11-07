@@ -47,6 +47,14 @@ def availability_declaration(path, prefix):
 
 def main():
     OUTPUT.mkdir(parents=True, exist_ok=True)
+    weather = "Sources/Vorssaint/Services/Notch/NotchWeatherLocationService.swift"
+    write("NotchWeatherLocation.swift", "import AppKit\nimport CoreLocation\nimport MapKit\nimport os.log\n"
+          + "extension NotchWeatherLocationTests {\n"
+          + declaration(weather, "final class NotchWeatherLocationService:")
+              .replace("final class NotchWeatherLocationService:", "@MainActor\nfinal class NotchWeatherLocationService:")
+              .replace(", @preconcurrency CLLocationManagerDelegate", "")
+              .replace("private ", "")
+          + "}\n")
     write("SettingsCommandDispatch.swift", "import Foundation\n"
           + "extension SettingsFeatureTests.CommandDispatchHost {\nstatic func run() {\n"
           # Both app entry points are named main.swift. Keep diagnostics in

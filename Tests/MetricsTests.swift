@@ -120,6 +120,7 @@ struct MetricsTests {
                 CommandBarSelectionTests.run(suite)
             }),
             ("aerospace", { NotchAeroSpaceTests.run(suite) }),
+            ("weather-location", { NotchWeatherLocationTests.run(suite) }),
             ("transient-paste", { TransientPasteTests.run(suite) }),
             ("notch-music", { NotchMusicExtrasTests.run(suite) }),
             ("notch", {
