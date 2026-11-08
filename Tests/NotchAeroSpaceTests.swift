@@ -140,7 +140,7 @@ enum NotchAeroSpaceTests {
             service.select("1")
             suite.expect(wait { service.state.current == "1" }, "the disconnect fixture holds a confirmed workspace command")
             let disconnectedSwitchPID = Int32(try String(contentsOf: folder.appendingPathComponent("switch-pid"), encoding: .utf8))!
-            service.select("P")
+            service.select("L")
             let pidFile = folder.appendingPathComponent("pid")
             let pid = Int32(try String(contentsOf: pidFile, encoding: .utf8))!
             kill(pid, SIGTERM)
@@ -152,20 +152,20 @@ enum NotchAeroSpaceTests {
             suite.expect(wait(timeout: 5) {
                 service.state.current != nil && (try? String(contentsOf: pidFile, encoding: .utf8)) != String(pid)
             }, "the event stream reconnects after AeroSpace restarts")
-            suite.expect(!(try String(contentsOf: folder.appendingPathComponent("commands"), encoding: .utf8)).split(separator: "\n").contains("P"),
+            suite.expect(!(try String(contentsOf: folder.appendingPathComponent("commands"), encoding: .utf8)).split(separator: "\n").contains("L"),
                          "disconnecting discards the pending target instead of replaying it on reconnect")
             let reconnectedPID = Int32(try String(contentsOf: pidFile, encoding: .utf8))!
             try Data().write(to: holdSwitch)
             service.select("G")
             suite.expect(wait { service.state.current == "G" }, "the stop fixture holds a confirmed workspace command")
             let stoppedSwitchPID = Int32(try String(contentsOf: folder.appendingPathComponent("switch-pid"), encoding: .utf8))!
-            service.select("P")
+            service.select("L")
             service.stop()
             try FileManager.default.removeItem(at: holdSwitch)
             suite.expect(wait { kill(reconnectedPID, 0) != 0 }, "stopping the island terminates its subscription process")
             let stoppedSwitch = wait { kill(stoppedSwitchPID, 0) != 0 }
             let stoppedCommands = try String(contentsOf: folder.appendingPathComponent("commands"), encoding: .utf8)
-            suite.expect(stoppedSwitch && !stoppedCommands.split(separator: "\n").contains("P"),
+            suite.expect(stoppedSwitch && !stoppedCommands.split(separator: "\n").contains("L"),
                          "stopping terminates the active command and discards its pending target")
             suite.expect(service.state.current == nil && service.state.previous == nil
                          && !service.state.showsStrip(hovered: true, blocked: false, now: 0),

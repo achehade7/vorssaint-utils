@@ -4,7 +4,7 @@
 import Foundation
 
 struct NotchAeroSpaceState {
-    static let workspaces = ["1", "2", "C", "G", "P"]
+    static let workspaces = ["1", "2", "C", "G", "L"]
     static let flashDuration: TimeInterval = 1.32
     static let trailDuration: TimeInterval = 0.8
     static let trailFadeDuration: TimeInterval = 0.27

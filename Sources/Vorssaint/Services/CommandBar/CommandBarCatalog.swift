@@ -1454,9 +1454,9 @@ enum CommandBarCatalog {
             CommandBarEntry(
                 id: "link.\(link.id.uuidString)",
                 title: link.name,
-                subtitle: link.kind == .script
+                subtitle: link.subtitle ?? (link.kind == .script
                     ? (link.runsWithoutArgument ? bar.scriptBareSearchHint : bar.scriptSearchHint)
-                    : (link.takesArgument ? bar.linkSearchHint : bar.kindLink),
+                    : (link.takesArgument ? bar.linkSearchHint : bar.kindLink)),
                 keywords: bar.kindLink,
                 icon: .symbol(link.kind.symbolName),
                 // A saved search, or a script, may still need to be told what

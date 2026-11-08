@@ -12,6 +12,11 @@ import ImageIO
 import VMStatisticsCompat
 
 enum CommandBarFeatureTests {
+    enum LinkEntriesHost {
+        static func open(_ link: CommandBarLink) {}
+        static func runScript(_ link: CommandBarLink) {}
+    }
+
     enum CatalogBuildHost {
         final class L10n {
             static let shared = L10n()
@@ -2404,6 +2409,20 @@ enum CommandBarFeatureTests {
         let oldData = Data(#"[{"name":"j","kind":"link","destination":"https://example.com/{query}"}]"#.utf8)
         suite.expect(CommandBarLinks.decode(oldData).first?.emptyQueryDestination == nil,
                      "older saved links decode without a landing page")
+        suite.expect(CommandBarLinks.decode(oldData).first?.subtitle == nil,
+                     "older saved links decode without a custom subtitle")
+        let home = CommandBarLink(name: "o h", kind: .link,
+                                  destination: "obsidian://open?vault=fixture&file=Home.md",
+                                  subtitle: "Home.md")
+        let restoredHome = CommandBarLinks.decode(CommandBarLinks.encode([home]))
+        suite.expect(restoredHome == [home], "custom shortcut subtitles survive a settings round trip")
+        let linkStrings = FeatureStrings.commandBar(.enUS)
+        let homeRow = LinkEntriesHost.linkEntries(restoredHome, bar: linkStrings).first!
+        suite.expect(homeRow.title == "o h" && homeRow.subtitle == "Home.md" && !homeRow.takesArgument,
+                     "a saved note shortcut keeps its trigger and shows its custom subtitle")
+        let plainRow = LinkEntriesHost.linkEntries([oldSearch], bar: linkStrings).first!
+        suite.expect(plainRow.subtitle == linkStrings.linkSearchHint && plainRow.takesArgument,
+                     "links without a custom subtitle retain their search hint and argument behavior")
         typealias ScriptResult = ScriptRunHost.CommandBarScriptRunner.Result
         let currencyResult = ScriptResult.decode(#"{"vorssaintResult":1,"text":"80.00 EUR","detail":"ECB · 2026-10-22","copyText":"80.00"}"#)
         suite.expect(currencyResult?.text == "80.00 EUR" && currencyResult?.detail == "ECB · 2026-10-22"

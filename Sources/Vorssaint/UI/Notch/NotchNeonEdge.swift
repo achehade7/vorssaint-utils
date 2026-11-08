@@ -21,7 +21,7 @@ enum NotchNeonPalette {
         case "1": blue
         case "C": Color(red: 1, green: 0.56, blue: 0.32)
         case "G": Color(red: 0.40, green: 0.65, blue: 1)
-        case "P": Color(red: 0.95, green: 0.42, blue: 0.73)
+        case "L": Color(red: 0.95, green: 0.42, blue: 0.73)
         default: purple
         }
     }
@@ -262,7 +262,7 @@ struct NotchNeonEdge: View, Animatable {
             ?? workspace.map { min(1, $0 / 0.65) } ?? 0.5
         let peak = max(0.01, min(0.99, phase))
         let splitWorkspace = workspace != nil && (workspaceName == "C" || workspaceName == "G")
-        let ripple = completion != nil || splitWorkspace || (workspace != nil && workspaceName == "P")
+        let ripple = completion != nil || splitWorkspace || (workspace != nil && workspaceName == "L")
             || (age != nil && signature == .handoff)
         let sweeps = (workspace != nil && workspaceName != "2")
             || (age != nil && [.agent, .terminalSuccess, .terminalFailure].contains(signature))

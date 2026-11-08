@@ -728,6 +728,11 @@ def main():
           + declaration("Sources/Vorssaint/Services/CommandBar/CommandBarCatalog.swift",
                         "    static func includingEnglishNames(")
           + "}\n")
+    write("CommandBarLinkEntries.swift", "import Foundation\n"
+          + "extension CommandBarFeatureTests.LinkEntriesHost {\n"
+          + declaration("Sources/Vorssaint/Services/CommandBar/CommandBarCatalog.swift",
+                        "    static func linkEntries(")
+          + "}\n")
     write("CommandBarCopyAnswer.swift", "import Foundation\n"
           + "extension CommandBarFeatureTests.CopyAnswerHost {\n"
           + declaration("Sources/Vorssaint/Services/CommandBar/CommandBarCatalog.swift",

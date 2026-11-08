@@ -34,6 +34,8 @@ struct CommandBarLink: Codable, Identifiable, Equatable {
     var kind = Kind.link
     /// The destination, with placeholders still in it.
     var destination = ""
+    /// Optional context shown below this shortcut's name in search results.
+    var subtitle: String? = nil
     /// Optional landing page when a saved search is run without a query.
     var emptyQueryDestination: String? = nil
     /// Whether the bare name is enough to run a script, with nothing after it.
@@ -76,6 +78,7 @@ extension CommandBarLink {
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         kind = try container.decodeIfPresent(Kind.self, forKey: .kind) ?? .link
         destination = try container.decodeIfPresent(String.self, forKey: .destination) ?? ""
+        subtitle = try container.decodeIfPresent(String.self, forKey: .subtitle)
         emptyQueryDestination = try container.decodeIfPresent(String.self, forKey: .emptyQueryDestination)
         runsWithoutArgument = try container.decodeIfPresent(Bool.self,
                                                             forKey: .runsWithoutArgument) ?? false
