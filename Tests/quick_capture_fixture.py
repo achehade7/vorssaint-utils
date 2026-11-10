@@ -166,6 +166,13 @@ enum TextTransformController {
     static func show(text: String) { received.append(text) }
 }
 // Browser destinations are outside the capture fixture; Jira routing has its own suite.
+enum FeatureStrings {
+    struct CommandBar { let openInBrowser = "Open in browser" }
+    static func commandBar(_ language: AppLanguage) -> CommandBar { .init() }
+}
+enum CommandBarLinks {
+    static func typedURL(_ text: String) -> URL? { nil }
+}
 struct CommandBarEntry { let run: (Int?) -> Void }
 enum CommandBarTicketSearch {
     static func ticketKeys(in text: String) -> [String] { [] }
