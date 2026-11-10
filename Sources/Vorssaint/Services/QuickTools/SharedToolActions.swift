@@ -14,11 +14,12 @@ enum SharedToolActions {
     }
 
     enum Action: CaseIterable {
-        case inspect, transform, jira, before, after, saveSnippet, extract, annotate
+        case inspect, transform, openLink, jira, before, after, saveSnippet, extract, annotate
         var title: String {
             switch self {
             case .inspect: return SharedToolActionStrings.inspect
             case .transform: return TextTransformStrings.title
+            case .openLink: return FeatureStrings.commandBar(L10n.shared.language).openInBrowser
             case .jira: return "Jira"
             case .before: return SharedToolActionStrings.before
             case .after: return SharedToolActionStrings.after
@@ -32,6 +33,7 @@ enum SharedToolActions {
             case .saveSnippet: return "s"
             case .inspect: return "i"
             case .transform: return "t"
+            case .openLink: return "o"
             case .jira: return "j"
             case .before: return "l"
             case .after: return "r"
@@ -43,6 +45,7 @@ enum SharedToolActions {
             case .saveSnippet: return "text.badge.plus"
             case .inspect: return "curlybraces"
             case .transform: return "wand.and.stars"
+            case .openLink: return "globe"
             case .jira: return "ticket"
             case .before: return "rectangle.lefthalf.filled"
             case .after: return "rectangle.righthalf.filled"
@@ -112,7 +115,9 @@ enum SharedToolActions {
         case .text(let text):
             return (AppFeature.textSnippets.isAvailable ? [.saveSnippet] : [])
                 + (AppFeature.clipboardHistory.isAvailable
-                   ? [.inspect, .transform] + (jiraEntry(for: text) == nil ? [] : [.jira]) + [.before, .after] : [])
+                   ? [.inspect, .transform]
+                     + (CommandBarLinks.typedURL(text) == nil ? [] : [.openLink])
+                     + (jiraEntry(for: text) == nil ? [] : [.jira]) + [.before, .after] : [])
         case .image, .imageFile:
             return (AppFeature.screenOCR.isAvailable ? [.extract] : [])
                 + (AppFeature.screenshot.isAvailable ? [.annotate, .before, .after] : [])
@@ -131,6 +136,8 @@ enum SharedToolActions {
         switch (action, content) {
         case (.inspect, .text(let text)): PayloadInspectorService.shared.receive(text)
         case (.transform, .text(let text)): TextTransformController.show(text: text)
+        case (.openLink, .text(let text)):
+            if let url = CommandBarLinks.typedURL(text) { NSWorkspace.shared.open(url) }
         case (.jira, .text(let text)): jiraEntry(for: text)?.run(nil)
         case (.before, .text(let text)), (.after, .text(let text)):
             ClipboardDiffService.shared.receive(text, asBefore: action == .before, name: nil)

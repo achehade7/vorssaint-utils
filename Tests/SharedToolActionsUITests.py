@@ -381,6 +381,46 @@ for (letter, code) in letterActions {
     default: check(PayloadInspectorService.shared.received.last == snapshot, "I inspects exact selected text")
     }
 }
+// Browser actions use the captured single web address and never reread the clipboard.
+let beforeBrowserChecks = checks
+let webAddress = "https://example.com/sap/bc/ui2/flp?sap-client=100#Shell-home"
+let browserCalls = TestBrowser.urls.count
+let webMenu = open(.text("  " + webAddress + "\n"))
+check(actionButtons(webMenu).contains { $0.title == "Open in browser" && $0.toolTip?.contains("O") == true },
+      "a selected web address offers the localized browser action and O shortcut")
+verifyMenuLayout(webMenu)
+key(webMenu, code: kVK_ANSI_O, characters: "o")
+check(TestBrowser.urls.count == browserCalls + 1 && TestBrowser.urls.last?.absoluteString == webAddress && menu() == nil,
+      "O opens the captured URL once with its query and fragment intact, then closes Actions")
+let bareURLMenu = open(.text("example.com"))
+click(bareURLMenu, title: "Open in browser")
+check(TestBrowser.urls.last?.absoluteString == "https://example.com" && menu() == nil,
+      "the browser button also opens a bare domain through the existing URL parser")
+for text in ["plain selected text", "javascript:alert(1)", "file:///tmp/test", "someone@example.com",
+             "https://one.example https://two.example"] {
+    let nonURLMenu = open(.text(text))
+    let calls = destinationCalls()
+    check(!actionButtons(nonURLMenu).contains { $0.title == "Open in browser" },
+          "ordinary text, non-web schemes and multiple URLs offer no browser action")
+    key(nonURLMenu, code: kVK_ANSI_O, characters: "o")
+    check(destinationCalls() == calls && menu() != nil, "O cannot open an invalid or ambiguous address")
+    SharedToolActions.cancel(owner: owner)
+}
+let disabledBrowser = open(.text(webAddress))
+AppFeature.available.remove(.clipboardHistory)
+let beforeDisabledBrowser = TestBrowser.urls.count
+key(disabledBrowser, code: kVK_ANSI_O, characters: "o")
+check(TestBrowser.urls.count == beforeDisabledBrowser, "browser dispatch rechecks feature availability")
+AppFeature.available = Set(AppFeature.allCases)
+SharedToolActions.cancel(owner: owner)
+
+if CommandLine.arguments.contains("--browser-only") {
+    check(actualClipboard.changeCount == actualChangeCount, "browser actions never change the system clipboard")
+    parent.close()
+    print("PASS: \(checks - beforeBrowserChecks) native browser action checks")
+    exit(0)
+}
+
 // Jira uses the captured text and saved destination; an absent or ambiguous key never opens anything.
 for text in ["no ticket here", "SAP-0", "SAP-531 OPS-42"] {
     let unavailable = open(.text(text))
@@ -961,6 +1001,9 @@ with tempfile.TemporaryDirectory(prefix='shared-tool-actions-ui-') as temporary:
     folder = Path(temporary)
     source = folder / 'main.swift'
     source.write_text(fixture)
+    actions = folder / 'SharedToolActions.swift'
+    actions.write_text((repo / 'Sources/Vorssaint/Services/QuickTools/SharedToolActions.swift').read_text()
+                       .replace('NSWorkspace.shared.open(url)', 'TestBrowser.open(url)'))
     binary = folder / 'check'
     paths = ['Sources/Vorssaint/Services/QuickTools/SharedToolActions.swift',
              'Sources/Vorssaint/Services/QuickTools/ExtractedTextController.swift',
@@ -973,9 +1016,10 @@ with tempfile.TemporaryDirectory(prefix='shared-tool-actions-ui-') as temporary:
              'Sources/Vorssaint/Core/SharedActionShortcut.swift', 'Sources/Vorssaint/Core/AppKitExtensions.swift',
              'Sources/Vorssaint/Core/SnippetCaptureStrings.swift',
              'Sources/Vorssaint/Services/CommandBar/CommandBarLinks.swift']
-    subprocess.run(['swiftc', *[str(repo / path) for path in paths], str(source), '-o', str(binary)], check=True)
+    subprocess.run(['swiftc', *[str(actions) if path.endswith('/SharedToolActions.swift') else str(repo / path)
+                               for path in paths], str(source), '-o', str(binary)], check=True)
     if '--compile-only' not in sys.argv:
         preferences = folder / 'preferences'
         preferences.mkdir()
-        subprocess.run([str(binary)], check=True, timeout=120,
+        subprocess.run([str(binary), *(['--browser-only'] if '--browser-only' in sys.argv else [])], check=True, timeout=120,
                        env={**os.environ, 'CFFIXED_USER_HOME': str(preferences)})
