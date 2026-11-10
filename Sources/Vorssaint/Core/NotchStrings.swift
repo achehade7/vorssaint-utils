@@ -4,6 +4,7 @@
 import Foundation
 
 struct NotchStrings {
+    var aeroSpace: String { "AeroSpace" }
     let title: String
     let combineActivities: String
     let enable: String

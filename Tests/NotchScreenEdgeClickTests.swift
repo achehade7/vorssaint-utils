@@ -499,7 +499,9 @@ enum NotchScreenEdgeClickTests {
             let capsule = Service()
             capsule.geometry = NotchGeometry(screen: capsule.geometry.screen, safeAreaTop: 0, cameraWidth: 0,
                                              compactSideRoom: 160, silhouette: .capsule)
-            capsule.notice = NotchNotice(event: .track, title: "A long track title that fills the capsule", detail: "Artist", symbol: "music.note")
+            // Personal track notices show artwork, so a long text notice
+            // exercises the wide-to-narrow transition this contract needs.
+            capsule.notice = NotchNotice(event: .timer, title: "A long timer title that fills the capsule", detail: "Timer", symbol: "timer")
             let point = CGPoint(x: top.x + capsule.geometry.cameraWidth / 2 + 8, y: top.y)
             capsule.syncScreenEdgeClicks()
             menuBarEvent(.leftMouseDown, at: point)
@@ -508,7 +510,7 @@ enum NotchScreenEdgeClickTests {
             capsule.applyMenuSpace(room)
             capsule.windowHost?.acceptsPoint = false
             menuBarEvent(.leftMouseUp, at: point)
-            suite.expect(capsule.opened == (room == 0 ? nil : .music),
+            suite.expect(capsule.opened == (room == 0 ? nil : .timer),
                          "a capsule shrinking under a stationary press keeps its action only while the menu bar still has room")
             capsule.removeScreenEdgeClickMonitors()
         }

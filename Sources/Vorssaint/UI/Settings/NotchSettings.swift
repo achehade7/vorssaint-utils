@@ -228,7 +228,7 @@ struct NotchSettings: View {
 
     private var layoutPage: some View {
         VStack(alignment: .leading, spacing: 20) {
-            switchRow("square.grid.2x2", "AeroSpace", isOn: $aeroSpaceEnabled)
+            switchRow("square.grid.2x2", text.aeroSpace, isOn: $aeroSpaceEnabled)
             NotchLayoutEditor(configuration: access, size: $size, width: $customWidth, height: $customHeight) {
                 selectedModule = .controls; tab = .content
             }
