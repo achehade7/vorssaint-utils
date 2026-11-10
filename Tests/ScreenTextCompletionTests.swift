@@ -102,7 +102,7 @@ enum ScreenTextCompletionTests {
     // Execute the actual global capture entry and result dispatcher with an
     // inert chooser; normal text results use the OCR/clipboard fixture above.
     enum ScreenCaptureTool: CaseIterable {
-        case screenshot, recording, text, color
+        case screenshot, scrolling, recording, text, color
         static func available() -> [Self] {
             allCases.filter { $0 != .text || AppFeature.screenOCR.isAvailable }
         }
@@ -139,6 +139,8 @@ enum ScreenTextCompletionTests {
     }
     final class ScreenshotService {
         static let shared = ScreenshotService()
+        var hasActiveCapture = false
+        func finishScrollingCaptureIfActive() -> Bool { false }
         func receiveUnifiedCapture(_ capture: ScreenshotSelectionController.Capture) {}
         func receiveUnifiedScrollingRegion(_ region: Int) {}
     }
@@ -158,6 +160,7 @@ enum ScreenTextCompletionTests {
             selections.append(selected)
         }
         func tickCountdown(tools: [ScreenCaptureTool], selected: ScreenCaptureTool, showsCaptureMenu: Bool) {}
+        func tickCountdown(action: @escaping () -> Void) { action() }
         func showFailure(for tool: ScreenCaptureTool) {}
     }
 
