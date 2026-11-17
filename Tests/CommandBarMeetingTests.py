@@ -78,8 +78,22 @@ final class Permissions {
 }
 final class NSWorkspace {
     static let shared = NSWorkspace()
+    final class OpenConfiguration {
+        var createsNewApplicationInstance = false
+        var arguments: [String] = []
+    }
+    let browser = URL(fileURLWithPath: "/Applications/Brave Browser.app")
     var opened: [URL] = []
+    var newWindows = 0
     func open(_ url: URL) { opened.append(url) }
+    func urlForApplication(toOpen url: URL) -> URL? { browser }
+    func openApplication(at application: URL, configuration: OpenConfiguration) {
+        precondition(application == browser, "meeting opens in the default browser")
+        precondition(configuration.createsNewApplicationInstance, "arguments must reach an already-running browser")
+        precondition(configuration.arguments.count == 2 && configuration.arguments[0] == "--new-window", "meeting requests a separate browser window")
+        newWindows += 1
+        opened.append(URL(string: configuration.arguments[1])!)
+    }
 }
 struct CommandBarEntry {
     enum Icon { case symbol(String) }
@@ -96,7 +110,8 @@ let rows = search.rows()
 precondition(rows.count == 1 && rows[0].title == "Planning" && rows[0].subtitle.contains("meet.google.com"))
 precondition(NSWorkspace.shared.opened.isEmpty && NotchCalendarService.shared.reads == 1)
 rows[0].run(nil)
-precondition(NSWorkspace.shared.opened.count == 1, "only Return opens a call")
+precondition(NSWorkspace.shared.opened == [NotchCalendarService.shared.events[0].meetingURL!], "only Return opens the selected call in a new window")
+precondition(NSWorkspace.shared.newWindows == 1, "Return launches a new browser window instead of using the normal tab opener")
 search.reset()
 _ = search.rows()
 spin(0.01)
