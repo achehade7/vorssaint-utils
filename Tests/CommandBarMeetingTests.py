@@ -82,13 +82,14 @@ final class NSWorkspace {
         var createsNewApplicationInstance = false
         var arguments: [String] = []
     }
-    let browser = URL(fileURLWithPath: "/Applications/Brave Browser.app")
+    let browser = URL(fileURLWithPath: "/Applications/Google Chrome.app")
     var opened: [URL] = []
     var newWindows = 0
     func open(_ url: URL) { opened.append(url) }
-    func urlForApplication(toOpen url: URL) -> URL? { browser }
+    func urlForApplication(withBundleIdentifier identifier: String) -> URL? { identifier == "com.google.Chrome" ? browser : nil }
+    func urlForApplication(toOpen url: URL) -> URL? { URL(fileURLWithPath: "/Applications/Brave Browser.app") }
     func openApplication(at application: URL, configuration: OpenConfiguration) {
-        precondition(application == browser, "meeting opens in the default browser")
+        precondition(application == browser, "meeting opens in Google Chrome")
         precondition(configuration.createsNewApplicationInstance, "arguments must reach an already-running browser")
         precondition(configuration.arguments.count == 2 && configuration.arguments[0] == "--new-window", "meeting requests a separate browser window")
         newWindows += 1

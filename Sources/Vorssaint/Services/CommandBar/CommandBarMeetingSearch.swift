@@ -105,7 +105,8 @@ final class CommandBarMeetingSearch {
                       EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
                 if noteFilter != nil { MeetingNoteService.shared.show(event, joining: false) }
                 else if let url = event.meetingURL,
-                        let browser = NSWorkspace.shared.urlForApplication(toOpen: url) {
+                        let browser = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome")
+                            ?? NSWorkspace.shared.urlForApplication(toOpen: url) {
                     let configuration = NSWorkspace.OpenConfiguration()
                     configuration.createsNewApplicationInstance = true
                     configuration.arguments = ["--new-window", url.absoluteString]
